@@ -98,8 +98,8 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 		filepath.Join("internal", "jobs", "record_effect_test.go"):                jobAcceptanceRecordEffectTestSource,
 		filepath.Join("internal", "jobs", "poison_message.go"):                    jobAcceptancePoisonMessageSource,
 		filepath.Join("internal", "jobs", "poison_message_test.go"):               jobAcceptancePoisonMessageTestSource,
-		filepath.Join("database", "migrations", "000003_job_acceptance.up.sql"):   jobAcceptanceMigrationUp,
-		filepath.Join("database", "migrations", "000003_job_acceptance.down.sql"): jobAcceptanceMigrationDown,
+		filepath.Join("database", "migrations", "000004_job_acceptance.up.sql"):   jobAcceptanceMigrationUp,
+		filepath.Join("database", "migrations", "000004_job_acceptance.down.sql"): jobAcceptanceMigrationDown,
 		filepath.Join(".forge", "job_acceptance.go"):                              jobAcceptanceHelperSource,
 	}
 	for relative, contents := range fixtures {
@@ -145,7 +145,7 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 	})
 	if output, err := generatedCommand(directory, applicationEnvironment, forgeBinary, "migrate"); err != nil {
 		t.Fatalf("migrate isolated job schema: %v\n%s", err, output)
-	} else if !strings.Contains(output, "000003_job_acceptance") {
+	} else if !strings.Contains(output, "000004_job_acceptance") {
 		t.Fatalf("application-owned job migration was not applied:\n%s", output)
 	}
 	for _, gate := range [][]string{{"test", "./..."}, {"vet", "./..."}, {"test", "-race", "./..."}} {

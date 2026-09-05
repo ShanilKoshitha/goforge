@@ -163,8 +163,8 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 			t.Fatalf("concurrent migrate failed: %v\n%s", result.err, result.output)
 		}
 	}
-	if got := strings.Count(combined, "migrated "); got != 4 {
-		t.Fatalf("expected three migrations to be applied exactly once, got %d:\n%s", got, combined)
+	if got := strings.Count(combined, "migrated "); got != 5 {
+		t.Fatalf("expected five migrations to be applied exactly once, got %d:\n%s", got, combined)
 	}
 	if output, err := generatedCommand(directory, environment, forgeBinary, "migrate"); err != nil || !strings.Contains(output, "No pending migrations") {
 		t.Fatalf("idempotent migrate failed: %v\n%s", err, output)
@@ -614,8 +614,8 @@ func TestRelationshipAcceptanceFixtureEmitsInspectableGeneratedApp(t *testing.T)
 		filepath.Join("internal", "models", "tenant_profile.go"),
 		filepath.Join("internal", "models", "project.go"),
 		filepath.Join("internal", "models", "tag.go"),
-		filepath.Join("database", "migrations", "000003_relationship_acceptance.up.sql"),
-		filepath.Join("database", "migrations", "000003_relationship_acceptance.down.sql"),
+		filepath.Join("database", "migrations", "000004_relationship_acceptance.up.sql"),
+		filepath.Join("database", "migrations", "000004_relationship_acceptance.down.sql"),
 		filepath.Join(".forge", "relationship_acceptance.go"),
 	} {
 		if _, err := os.Stat(path); err != nil {
@@ -638,8 +638,8 @@ func writeRelationshipAcceptanceFixture(directory, module string) error {
 		filepath.Join("internal", "models", "tenant_profile.go"):                           relationshipTenantProfileModel,
 		filepath.Join("internal", "models", "project.go"):                                  relationshipProjectModel,
 		filepath.Join("internal", "models", "tag.go"):                                      relationshipTagModel,
-		filepath.Join("database", "migrations", "000003_relationship_acceptance.up.sql"):   relationshipMigrationUp,
-		filepath.Join("database", "migrations", "000003_relationship_acceptance.down.sql"): relationshipMigrationDown,
+		filepath.Join("database", "migrations", "000004_relationship_acceptance.up.sql"):   relationshipMigrationUp,
+		filepath.Join("database", "migrations", "000004_relationship_acceptance.down.sql"): relationshipMigrationDown,
 		filepath.Join(".forge", "relationship_acceptance.go"):                              strings.ReplaceAll(relationshipAcceptanceProgram, "example.com/issueboard", module),
 	}
 	for path, contents := range files {
