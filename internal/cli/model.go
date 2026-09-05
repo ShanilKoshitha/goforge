@@ -21,7 +21,7 @@ type modelSpec struct {
 type modelExclusiveWriter func(string, string) error
 
 func makeModel(name string, stdout io.Writer) error {
-	if err := requireProjectFormatRange(4, 6); err != nil {
+	if err := requireProjectFormatRange(4, 7); err != nil {
 		return err
 	}
 	return makeModelWithWriters(name, stdout, writeExclusive, writeManagedFile)

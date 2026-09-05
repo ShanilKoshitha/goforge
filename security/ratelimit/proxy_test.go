@@ -113,6 +113,9 @@ func TestMalformedOrAmbiguousForwardingFallsBackToDirectPeer(t *testing.T) {
 	}{
 		{name: "both conventions", forwarded: []string{"for=198.51.100.1"}, legacy: []string{"198.51.100.1"}},
 		{name: "repeated field", legacy: []string{"198.51.100.1", "198.51.100.2"}},
+		{name: "empty then valid legacy field", legacy: []string{"", "198.51.100.1"}},
+		{name: "empty then valid Forwarded field", forwarded: []string{"", "for=198.51.100.1"}},
+		{name: "single empty field", legacy: []string{""}},
 		{name: "empty chain member", legacy: []string{"198.51.100.1,,10.0.0.2"}},
 		{name: "unknown node", forwarded: []string{"for=unknown"}},
 		{name: "duplicate for", forwarded: []string{"for=198.51.100.1;for=198.51.100.2"}},

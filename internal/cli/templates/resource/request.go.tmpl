@@ -9,6 +9,8 @@ import (
 
 	"github.com/ShanilKoshitha/goforge/httpx"
 	"github.com/ShanilKoshitha/goforge/validation"
+
+	"[[.Module]]/internal/validationrules"
 )
 
 // WriteRequest owns both transport decoders, normalization, and semantic
@@ -22,12 +24,15 @@ type WriteRequest struct {
 }
 
 func (request *WriteRequest) DecodeJSON(ctx *httpx.Context) error {
-	var body struct {
+	var body *struct {
 		Name    json.RawMessage `json:"name"`
 		Version json.RawMessage `json:"version"`
 	}
 	if err := ctx.BindJSON(&body); err != nil {
 		return err
+	}
+	if body == nil {
+		return httpx.NewHTTPError(http.StatusBadRequest, "JSON body must be an object")
 	}
 	name, nameInput, err := decodeJSONString("name", body.Name)
 	if err != nil {
@@ -95,7 +100,7 @@ func (request WriteRequest) Validate() validation.Report {
 	}
 	return validation.Join(
 		validation.Apply("name", nameInput,
-			validation.Required[string](), validation.StringLength(2, 200)),
+			validation.Required[string](), validation.StringLength(2, 200), validationrules.SafeText()),
 		validation.Apply("version", versionInput,
 			validation.When(versionInput.Provided(),
 				validation.Required[int64](), validation.NumberRange[int64](1, int64(^uint64(0)>>1)))),

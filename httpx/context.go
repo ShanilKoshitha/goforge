@@ -122,15 +122,19 @@ func (ctx *Context) BindJSONLimit(target any, maxBytes int64) error {
 	decoder := json.NewDecoder(ctx.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			return NewHTTPError(http.StatusRequestEntityTooLarge, "JSON body is too large").WithCause(err)
-		}
-		return NewHTTPError(http.StatusBadRequest, "invalid JSON body").WithCause(err)
+		return classifyJSONDecodeError(err, "invalid JSON body")
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return NewHTTPError(http.StatusBadRequest, "request body must contain one JSON value")
+		return classifyJSONDecodeError(err, "request body must contain one JSON value")
 	}
 	return nil
+}
+
+func classifyJSONDecodeError(err error, message string) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return NewHTTPError(http.StatusRequestEntityTooLarge, "JSON body is too large").WithCause(err)
+	}
+	return NewHTTPError(http.StatusBadRequest, message).WithCause(err)
 }

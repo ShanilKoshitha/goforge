@@ -68,6 +68,21 @@ func TestBrowserAuthenticationLifecycle(t *testing.T) {
 	if strings.Contains(invalid.Body.String(), secret) {
 		t.Fatal("registration page redisplayed the submitted password")
 	}
+	mismatched := submitForm(router, http.MethodPost, "/register", url.Values{
+		"_token": {token}, "name": {"Ada"}, "email": {"ada@example.com"},
+		"password": {"a secure passphrase"}, "password_confirmation": {"a different passphrase"},
+	}, cookie)
+	if mismatched.Code != http.StatusUnprocessableEntity || !strings.Contains(mismatched.Body.String(), "must match password") ||
+		strings.Contains(mismatched.Body.String(), "a secure passphrase") || strings.Contains(mismatched.Body.String(), "a different passphrase") {
+		t.Fatalf("password confirmation validation was not safely rendered: %d: %s", mismatched.Code, mismatched.Body.String())
+	}
+	controlText := submitForm(router, http.MethodPost, "/register", url.Values{
+		"_token": {token}, "name": {"Ada\x00Admin"}, "email": {"ada@example.com"},
+		"password": {"a secure passphrase"}, "password_confirmation": {"a secure passphrase"},
+	}, cookie)
+	if controlText.Code != http.StatusUnprocessableEntity || !strings.Contains(controlText.Body.String(), "must not contain control characters") || strings.Contains(controlText.Body.String(), "\x00") {
+		t.Fatalf("control-text form was not safely rejected: %d: %s", controlText.Code, controlText.Body.String())
+	}
 
 	registered := submitForm(router, http.MethodPost, "/register", url.Values{
 		"_token": {token}, "name": {"Ada"}, "email": {"ada@example.com"}, "password": {"a secure passphrase"}, "password_confirmation": {"a secure passphrase"},
@@ -127,6 +142,36 @@ func TestBrowserAuthenticationLifecycle(t *testing.T) {
 	}
 	if cookies := login.Result().Cookies(); len(cookies) != 1 || cookies[0].Value == loginCookie.Value {
 		t.Fatal("browser login did not rotate the session ID")
+	}
+}
+
+func TestRegistrationFormBoundaryHasExactFailures(t *testing.T) {
+	router := httpx.NewRouter()
+	router.POST("/request", func(ctx *httpx.Context) error {
+		var request auth.RegisterRequest
+		return request.DecodeForm(ctx)
+	})
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		want        int
+	}{
+		{name: "wrong media type", contentType: "text/plain", body: "name=Ada", want: http.StatusUnsupportedMediaType},
+		{name: "malformed", contentType: "application/x-www-form-urlencoded", body: "name=%zz", want: http.StatusBadRequest},
+		{name: "repeated scalar", contentType: "application/x-www-form-urlencoded", body: "name=Ada&name=Grace", want: http.StatusBadRequest},
+		{name: "oversized", contentType: "application/x-www-form-urlencoded", body: "name=" + strings.Repeat("x", (1<<20)+1), want: http.StatusRequestEntityTooLarge},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/request", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", test.contentType)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+		})
 	}
 }
 

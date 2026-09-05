@@ -75,8 +75,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.6.0") {
-		t.Fatalf("scaffold does not pin GoForge v0.6.0:\n%s", moduleFile)
+	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.7.0") {
+		t.Fatalf("scaffold does not pin GoForge v0.7.0:\n%s", moduleFile)
 	}
 	requestPath, requestContent, err := requestFile("CreateUser")
 	if err != nil {

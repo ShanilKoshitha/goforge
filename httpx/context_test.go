@@ -74,6 +74,20 @@ func TestBindJSONLimitClassifiesOversizedBodiesAndRejectsInvalidLimits(t *testin
 		}
 	})
 
+	t.Run("oversized trailing data", func(t *testing.T) {
+		handler := httpx.Standard(func(ctx *httpx.Context) error {
+			var payload map[string]string
+			return ctx.BindJSONLimit(&payload, 8)
+		})
+		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`+strings.Repeat(" ", 8)))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413: %s", response.Code, response.Body.String())
+		}
+	})
+
 	t.Run("invalid limit", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 		request.Header.Set("Content-Type", "application/json")

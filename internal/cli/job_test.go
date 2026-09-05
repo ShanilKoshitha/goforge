@@ -205,8 +205,8 @@ func TestMakeJobRollsBackInitiallyMissingManagedArtifactsAndDirectories(t *testi
 	}
 }
 
-func TestMakeJobRequiresFormatSix(t *testing.T) {
-	for _, version := range []string{"5", "7"} {
+func TestMakeJobRequiresSupportedProjectFormat(t *testing.T) {
+	for _, version := range []string{"5", "8"} {
 		t.Run(version, func(t *testing.T) {
 			directory := jobProject(t, version)
 			t.Chdir(directory)

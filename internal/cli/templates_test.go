@@ -42,6 +42,21 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {
 		t.Fatal("PostgreSQL 18 volume must contain its versioned data directory")
 	}
+	for _, setting := range []string{
+		"APP_REQUEST_TIMEOUT=15s", "APP_READ_HEADER_TIMEOUT=5s", "APP_READ_TIMEOUT=30s",
+		"APP_WRITE_TIMEOUT=30s", "APP_IDLE_TIMEOUT=2m", "APP_MAX_HEADER_BYTES=1048576",
+		"APP_ENABLE_HSTS=false", "TRUSTED_PROXIES=",
+	} {
+		if !strings.Contains(files[".env.example"], setting) {
+			t.Errorf("generated .env.example omits %q", setting)
+		}
+	}
+	readme := files["README.md"]
+	for _, guidance := range []string{"APP_ENABLE_HSTS", "always uses HTTPS", "TRUSTED_PROXIES", "comma-separated CIDR", "forwarding headers are ignored"} {
+		if !strings.Contains(readme, guidance) {
+			t.Errorf("generated README omits deployment guidance %q", guidance)
+		}
+	}
 	if !strings.Contains(files["internal/models/user.go"], `forge:"primary,generated,protected,required"`) ||
 		!strings.Contains(files[generatedORMPath], "var UserColumns") {
 		t.Fatal("scaffold must contain its application-owned User and current typed ORM")

@@ -1,0 +1,28 @@
+// Package validationrules contains application-owned validation policy shared
+// by generated request types. Edit these ordinary rules as the domain evolves.
+package validationrules
+
+import (
+	"unicode"
+
+	"github.com/ShanilKoshitha/goforge/validation"
+)
+
+const CodeStringControl = "string.control"
+
+// SafeText rejects control characters before values reach PostgreSQL, logs, or
+// HTML. It deliberately leaves punctuation and Unicode letters to domain rules.
+func SafeText() validation.Rule[string] {
+	return validation.RuleFunc[string](func(input validation.Input[string]) []validation.Issue {
+		value, present := input.Value()
+		if !present {
+			return nil
+		}
+		for _, character := range value {
+			if unicode.IsControl(character) {
+				return []validation.Issue{{Code: CodeStringControl, Message: "must not contain control characters"}}
+			}
+		}
+		return nil
+	})
+}

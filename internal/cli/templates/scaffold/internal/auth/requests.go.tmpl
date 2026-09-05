@@ -9,6 +9,8 @@ import (
 
 	"github.com/ShanilKoshitha/goforge/httpx"
 	"github.com/ShanilKoshitha/goforge/validation"
+
+	"[[.Module]]/internal/validationrules"
 )
 
 type RegisterRequest struct {
@@ -24,7 +26,7 @@ type RegisterRequest struct {
 }
 
 func (request *RegisterRequest) DecodeJSON(ctx *httpx.Context) error {
-	var body struct {
+	var body *struct {
 		Name                 json.RawMessage `json:"name"`
 		Email                json.RawMessage `json:"email"`
 		Password             json.RawMessage `json:"password"`
@@ -32,6 +34,9 @@ func (request *RegisterRequest) DecodeJSON(ctx *httpx.Context) error {
 	}
 	if err := ctx.BindJSON(&body); err != nil {
 		return err
+	}
+	if body == nil {
+		return httpx.NewHTTPError(http.StatusBadRequest, "JSON body must be an object")
 	}
 	var err error
 	if request.Name, request.nameInput, err = decodeString("name", body.Name, strings.TrimSpace); err != nil {
@@ -84,7 +89,7 @@ func (request RegisterRequest) Validate() validation.Report {
 	})
 	return validation.Join(
 		validation.Apply("name", name,
-			validation.Required[string](), validation.StringLength(2, 100)),
+			validation.Required[string](), validation.StringLength(2, 100), validationrules.SafeText()),
 		validation.Apply("email", email,
 			validation.Required[string](), validation.StringLength(3, 320), emailRule()),
 		validation.Apply("password", password,
@@ -103,12 +108,15 @@ type LoginRequest struct {
 }
 
 func (request *LoginRequest) DecodeJSON(ctx *httpx.Context) error {
-	var body struct {
+	var body *struct {
 		Email    json.RawMessage `json:"email"`
 		Password json.RawMessage `json:"password"`
 	}
 	if err := ctx.BindJSON(&body); err != nil {
 		return err
+	}
+	if body == nil {
+		return httpx.NewHTTPError(http.StatusBadRequest, "JSON body must be an object")
 	}
 	var err error
 	if request.Email, request.emailInput, err = decodeString("email", body.Email, normalizeEmail); err != nil {

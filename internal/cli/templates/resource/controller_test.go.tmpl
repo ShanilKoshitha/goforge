@@ -104,6 +104,23 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	}
 	cookie := cookieResponse.Result().Cookies()[0]
 
+	request = httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(`null`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("null JSON root: expected 400, got %d: %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(`{"name":"ab\u0000"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"code":"string.control"`) || repository.item.ID != 0 {
+		t.Fatalf("control-text JSON reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
 	request = httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(`{"name":"x"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)

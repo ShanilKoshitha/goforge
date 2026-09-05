@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.6.0-dev"
+const Version = "0.7.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -77,7 +77,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := requireProjectRoot(); err != nil {
 			return err
 		}
-		if err := requireProjectFormat(6); err != nil {
+		if err := requireProjectFormatRange(6, 7); err != nil {
 			return err
 		}
 		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", args[0], args[1])
@@ -88,7 +88,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := requireProjectRoot(); err != nil {
 			return err
 		}
-		if err := requireProjectFormat(6); err != nil {
+		if err := requireProjectFormatRange(6, 7); err != nil {
 			return err
 		}
 		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", "queue:forget", args[1])
@@ -107,7 +107,7 @@ func requireQueueProject(args []string, usage string) error {
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	return requireProjectFormat(6)
+	return requireProjectFormatRange(6, 7)
 }
 
 func printHelp(w io.Writer) {

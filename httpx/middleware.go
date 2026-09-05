@@ -30,7 +30,8 @@ func Recover(logger *slog.Logger) Middleware {
 					}
 					logger.Error("request panic recovered",
 						"request_id", ctx.RequestID(),
-						"method", ctx.Request.Method,
+						"method", ctx.OriginalMethod(),
+						"route_method", ctx.Request.Method,
 						"route", ctx.RoutePattern(),
 						"stack", string(debug.Stack()),
 					)
@@ -46,10 +47,10 @@ func RequestID(header string) Middleware {
 	if header == "" {
 		header = "X-Request-ID"
 	}
-	header = textproto.CanonicalMIMEHeaderKey(header)
-	if header == "" {
+	if !validHTTPToken(header) {
 		panic("httpx: request ID header is invalid")
 	}
+	header = textproto.CanonicalMIMEHeaderKey(header)
 	return func(next Handler) Handler {
 		return func(ctx *Context) error {
 			values := ctx.Request.Header.Values(header)
@@ -128,9 +129,13 @@ func Logger(logger *slog.Logger) Middleware {
 						status = http.StatusInternalServerError
 					}
 				}
+				if outcome == "success" && status >= http.StatusBadRequest {
+					outcome = "error"
+				}
 				logger.Info("request completed",
 					"request_id", ctx.RequestID(),
-					"method", ctx.Request.Method,
+					"method", ctx.OriginalMethod(),
+					"route_method", ctx.Request.Method,
 					"route", ctx.RoutePattern(),
 					"status", status,
 					"duration", time.Since(started),
@@ -214,7 +219,12 @@ func NewSecureHeaders(config SecurityHeadersConfig) (Middleware, error) {
 }
 
 func validResponseHeaderValue(value string) bool {
-	return !strings.ContainsAny(value, "\r\n")
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x20 || value[index] == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 type CORSConfig struct {
@@ -243,16 +253,15 @@ func NewCORS(config CORSConfig) (Middleware, error) {
 	return func(next Handler) Handler {
 		return func(ctx *Context) error {
 			headers := ctx.Response.Header()
+			// The presence of an Origin header changes whether CORS response
+			// metadata is emitted, including for a wildcard policy.
+			addVary(headers, "Origin")
 			preflight := ctx.Request.Method == http.MethodOptions && ctx.Request.Header.Get("Access-Control-Request-Method") != ""
 			if preflight {
 				addVary(headers, "Access-Control-Request-Method")
 				addVary(headers, "Access-Control-Request-Headers")
 			}
 			wildcard := contains(prepared.AllowedOrigins, "*")
-			if !wildcard {
-				// Caches must also distinguish requests with an absent or denied origin.
-				addVary(headers, "Origin")
-			}
 			origin := ctx.Request.Header.Get("Origin")
 			if origin == "" || !originAllowed(origin, prepared.AllowedOrigins) {
 				return next(ctx)

@@ -1,0 +1,20 @@
+package validationrules_test
+
+import (
+	"testing"
+
+	"github.com/ShanilKoshitha/goforge/validation"
+
+	"[[.Module]]/internal/validationrules"
+)
+
+func TestSafeTextIsReusableApplicationPolicy(t *testing.T) {
+	report := validation.Apply("name", validation.Present("Ada\x00Admin"), validationrules.SafeText())
+	violations := report.Violations()
+	if len(violations) != 1 || violations[0].Path != "name" || violations[0].Code != validationrules.CodeStringControl {
+		t.Fatalf("safe text violations = %#v", violations)
+	}
+	if clean := validation.Apply("name", validation.Present("Ada Lovelace"), validationrules.SafeText()); !clean.Empty() {
+		t.Fatalf("ordinary text was rejected: %#v", clean.Violations())
+	}
+}

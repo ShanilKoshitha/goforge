@@ -77,6 +77,12 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	if missing.Code != http.StatusForbidden {
 		t.Fatalf("missing CSRF: %d: %s", missing.Code, missing.Body.String())
 	}
+	controlText := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", url.Values{
+		"_token": {token}, "name": {"ab\x00"},
+	}, cookie)
+	if controlText.Code != http.StatusUnprocessableEntity || !strings.Contains(controlText.Body.String(), "must not contain control characters") || strings.Contains(controlText.Body.String(), "\x00") || repository.item.ID != 0 {
+		t.Fatalf("control-text form reached persistence: %d item=%+v: %s", controlText.Code, repository.item, controlText.Body.String())
+	}
 
 	created := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", url.Values{
 		"_token": {token}, "name": {"<script>alert(1)</script>"},

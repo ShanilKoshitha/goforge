@@ -77,6 +77,54 @@ func TestRegisterCreatesAuthenticatedSession(t *testing.T) {
 	}
 }
 
+func TestRegistrationJSONBoundaryHasExactSafeFailures(t *testing.T) {
+	users := &fakeUsers{}
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := auth.NewController(users, manager, password.Hasher{Iterations: 1}, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.POST("/auth/register", controller.Register)
+
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		want        int
+	}{
+		{name: "wrong media type", contentType: "text/plain", body: `{}`, want: http.StatusUnsupportedMediaType},
+		{name: "malformed", contentType: "application/json", body: `{"name":`, want: http.StatusBadRequest},
+		{name: "type invalid", contentType: "application/json", body: `{"name":42}`, want: http.StatusBadRequest},
+		{name: "null root", contentType: "application/json", body: `null`, want: http.StatusBadRequest},
+		{name: "unknown field", contentType: "application/json", body: `{"admin":true}`, want: http.StatusBadRequest},
+		{name: "oversized", contentType: "application/json", body: `{"name":"` + strings.Repeat("x", (1<<20)+1) + `"}`, want: http.StatusRequestEntityTooLarge},
+		{name: "control text", contentType: "application/json", body: `{"name":"Ada\u0000Admin","email":"ada@example.com","password":"a secure passphrase","password_confirmation":"a secure passphrase"}`, want: http.StatusUnprocessableEntity},
+		{name: "semantic", contentType: "application/json", body: `{"name":null,"email":"","password":"short","password_confirmation":"different"}`, want: http.StatusUnprocessableEntity},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/auth/register", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", test.contentType)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), "unexpected EOF") || strings.Contains(response.Body.String(), "unknown field") {
+				t.Fatalf("decoder cause reached client: %s", response.Body.String())
+			}
+			if test.name == "semantic" && (!strings.Contains(response.Body.String(), `"path":"name"`) ||
+				!strings.Contains(response.Body.String(), `"code":"required"`) || strings.Contains(response.Body.String(), "different")) {
+				t.Fatalf("structured validation contract is missing or unsafe: %s", response.Body.String())
+			}
+			if test.name == "control text" && (!strings.Contains(response.Body.String(), `"code":"string.control"`) || strings.Contains(response.Body.String(), "Ada\\u0000Admin")) {
+				t.Fatalf("control-text validation contract is missing or unsafe: %s", response.Body.String())
+			}
+		})
+	}
+}
+
 func TestLoginRotatesSessionAndRejectsBadCredentials(t *testing.T) {
 	hasher := password.Hasher{Iterations: 1}
 	encoded, err := hasher.Hash("a secure passphrase")

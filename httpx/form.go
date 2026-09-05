@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 const formMediaType = "application/x-www-form-urlencoded"
@@ -82,10 +83,26 @@ func (ctx *Context) FormLimit(maxBytes int64) (Form, error) {
 		}
 		return Form{}, ctx.formErr
 	}
+	if !utf8.Valid(encoded) {
+		ctx.formErr = NewHTTPError(http.StatusBadRequest, "invalid URL-encoded form body")
+		return Form{}, ctx.formErr
+	}
 	values, err := url.ParseQuery(string(encoded))
 	if err != nil {
 		ctx.formErr = NewHTTPError(http.StatusBadRequest, "invalid URL-encoded form body").WithCause(err)
 		return Form{}, ctx.formErr
+	}
+	for name, entries := range values {
+		if !utf8.ValidString(name) {
+			ctx.formErr = NewHTTPError(http.StatusBadRequest, "invalid URL-encoded form body")
+			return Form{}, ctx.formErr
+		}
+		for _, entry := range entries {
+			if !utf8.ValidString(entry) {
+				ctx.formErr = NewHTTPError(http.StatusBadRequest, "invalid URL-encoded form body")
+				return Form{}, ctx.formErr
+			}
+		}
 	}
 	ctx.formBytes = int64(len(encoded))
 	ctx.Request.PostForm = cloneValues(values)
@@ -98,6 +115,7 @@ func (ctx *Context) FormLimit(maxBytes int64) (Form, error) {
 // matching request paths are eligible. Applications serving cookie-authenticated
 // APIs should scope override to their CSRF-protected browser route prefix.
 func MethodOverride(prefixes ...string) Middleware {
+	prefixes = slices.Clone(prefixes)
 	allowedPath := func(requestPath string) bool {
 		if len(prefixes) == 0 {
 			return true

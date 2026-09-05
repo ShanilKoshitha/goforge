@@ -90,44 +90,48 @@ func TestMigrateRunsGeneratedConsole(t *testing.T) {
 	}
 }
 
-func TestQueueCommandsDelegateOnlyForFormatSix(t *testing.T) {
-	directory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: 6\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(directory)
-	sequence := &processSequence{}
-	for _, args := range [][]string{
-		{"queue:work"},
-		{"queue:failed"},
-		{"queue:retry", "job-id"},
-		{"queue:retry", "--all"},
-		{"queue:forget", "job-id"},
-	} {
-		if err := run(context.Background(), args, nil, io.Discard, io.Discard, sequence); err != nil {
-			t.Fatalf("run(%v): %v", args, err)
-		}
-	}
-	want := []processCall{
-		{name: "go", args: []string{"run", "./cmd/worker"}},
-		{name: "go", args: []string{"run", "./cmd/console", "queue:failed"}},
-		{name: "go", args: []string{"run", "./cmd/console", "queue:retry", "job-id"}},
-		{name: "go", args: []string{"run", "./cmd/console", "queue:retry", "--all"}},
-		{name: "go", args: []string{"run", "./cmd/console", "queue:forget", "job-id"}},
-	}
-	if !reflect.DeepEqual(sequence.calls, want) {
-		t.Fatalf("queue process calls = %#v, want %#v", sequence.calls, want)
-	}
-	if err := run(context.Background(), []string{"queue:forget", "--all"}, nil, io.Discard, io.Discard, sequence); err == nil || err.Error() != "usage: forge queue:forget <id>" {
-		t.Fatalf("queue:forget --all error = %v", err)
-	}
-	if len(sequence.calls) != len(want) {
-		t.Fatal("invalid queue command spawned a process")
+func TestQueueCommandsDelegateForSupportedFormats(t *testing.T) {
+	for _, version := range []string{"6", "7"} {
+		t.Run(version, func(t *testing.T) {
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(directory)
+			sequence := &processSequence{}
+			for _, args := range [][]string{
+				{"queue:work"},
+				{"queue:failed"},
+				{"queue:retry", "job-id"},
+				{"queue:retry", "--all"},
+				{"queue:forget", "job-id"},
+			} {
+				if err := run(context.Background(), args, nil, io.Discard, io.Discard, sequence); err != nil {
+					t.Fatalf("run(%v): %v", args, err)
+				}
+			}
+			want := []processCall{
+				{name: "go", args: []string{"run", "./cmd/worker"}},
+				{name: "go", args: []string{"run", "./cmd/console", "queue:failed"}},
+				{name: "go", args: []string{"run", "./cmd/console", "queue:retry", "job-id"}},
+				{name: "go", args: []string{"run", "./cmd/console", "queue:retry", "--all"}},
+				{name: "go", args: []string{"run", "./cmd/console", "queue:forget", "job-id"}},
+			}
+			if !reflect.DeepEqual(sequence.calls, want) {
+				t.Fatalf("queue process calls = %#v, want %#v", sequence.calls, want)
+			}
+			if err := run(context.Background(), []string{"queue:forget", "--all"}, nil, io.Discard, io.Discard, sequence); err == nil || err.Error() != "usage: forge queue:forget <id>" {
+				t.Fatalf("queue:forget --all error = %v", err)
+			}
+			if len(sequence.calls) != len(want) {
+				t.Fatal("invalid queue command spawned a process")
+			}
+		})
 	}
 }
 
 func TestQueueCommandsRefuseOtherProjectFormatsBeforeSpawning(t *testing.T) {
-	for _, version := range []string{"5", "7"} {
+	for _, version := range []string{"5", "8"} {
 		t.Run(version, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {

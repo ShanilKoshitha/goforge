@@ -95,8 +95,8 @@ func (trusted TrustedProxies) ResolveClientAddress(request *http.Request) (strin
 		return directText, nil
 	}
 
-	forwardedValues := nonemptyHeaderValues(request, "Forwarded")
-	legacyValues := nonemptyHeaderValues(request, "X-Forwarded-For")
+	forwardedValues := headerValues(request, "Forwarded")
+	legacyValues := headerValues(request, "X-Forwarded-For")
 	if len(forwardedValues) == 0 && len(legacyValues) == 0 {
 		return direct.String(), nil
 	}
@@ -107,6 +107,10 @@ func (trusted TrustedProxies) ResolveClientAddress(request *http.Request) (strin
 	// Reject them rather than guessing which hop appended which value.
 	if len(forwardedValues) > 1 || len(legacyValues) > 1 {
 		return directText, fmt.Errorf("%w: repeated forwarding header", ErrInvalidForwardedChain)
+	}
+	if len(forwardedValues) == 1 && strings.TrimSpace(forwardedValues[0]) == "" ||
+		len(legacyValues) == 1 && strings.TrimSpace(legacyValues[0]) == "" {
+		return directText, fmt.Errorf("%w: empty forwarding header", ErrInvalidForwardedChain)
 	}
 
 	var chain []netip.Addr
@@ -132,18 +136,11 @@ func (trusted TrustedProxies) ResolveClientAddress(request *http.Request) (strin
 	return current.String(), nil
 }
 
-func nonemptyHeaderValues(request *http.Request, name string) []string {
+func headerValues(request *http.Request, name string) []string {
 	if request == nil {
 		return nil
 	}
-	values := request.Header.Values(name)
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			result = append(result, value)
-		}
-	}
-	return result
+	return request.Header.Values(name)
 }
 
 func parseDirectAddress(value string) (netip.Addr, error) {

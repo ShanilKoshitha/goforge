@@ -279,24 +279,28 @@ func TestMakeResourceInvalidORMLeavesPreviousApplicationIntact(t *testing.T) {
 }
 
 func TestMakeResourceRefusesOlderProjectFormatBeforeWriting(t *testing.T) {
-	directory := t.TempDir()
-	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 4\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err := makeResource("Issue", &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "upgrade the project to format 5") {
-		t.Fatalf("expected explicit project upgrade error, got %v", err)
-	}
-	if _, err := os.Stat(filepath.Join("internal", "resources", "issue")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("old-format refusal wrote files: %v", err)
+	for _, format := range []string{"4", "5", "6"} {
+		t.Run(format, func(t *testing.T) {
+			directory := t.TempDir()
+			t.Chdir(directory)
+			if err := os.WriteFile("forge.yaml", []byte("version: "+format+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := makeResource("Issue", &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), "upgrade the project to format 7") {
+				t.Fatalf("expected explicit project upgrade error, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join("internal", "resources", "issue")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("old-format refusal wrote files: %v", err)
+			}
+		})
 	}
 }
 
 func TestMakeResourceRefusesNewerProjectFormatBeforeWriting(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 7\n"), 0o644); err != nil {
+	if err := os.WriteFile("forge.yaml", []byte("version: 8\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := makeResource("Issue", &bytes.Buffer{})

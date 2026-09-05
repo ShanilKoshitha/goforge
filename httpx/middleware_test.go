@@ -224,6 +224,21 @@ func TestLegacyCORSFailsEarlyForUnsafePolicy(t *testing.T) {
 	_ = CORS(CORSConfig{AllowedOrigins: []string{"*"}, AllowCredentials: true})
 }
 
+func TestWildcardCORSVariesOnOrigin(t *testing.T) {
+	middleware, err := NewCORS(CORSConfig{AllowedOrigins: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter()
+	router.Use(middleware)
+	router.GET("/", func(ctx *Context) error { return ctx.NoContent(http.StatusNoContent) })
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !headerListContains(response.Header().Values("Vary"), "Origin") {
+		t.Fatalf("wildcard response does not vary on Origin: %v", response.Header())
+	}
+}
+
 func TestRequestIDAcceptsOnlyOneBoundedSafeValue(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -257,6 +272,19 @@ func TestRequestIDAcceptsOnlyOneBoundedSafeValue(t *testing.T) {
 			if !test.kept && (got == "" || containsString(test.values, got) || len(got) != 32) {
 				t.Fatalf("unsafe request ID was not replaced: %q from %v", got, test.values)
 			}
+		})
+	}
+}
+
+func TestRequestIDRejectsInvalidHeaderNamesAtConstruction(t *testing.T) {
+	for _, header := range []string{"X Request ID", "X:Request-ID", "X-Request-ID\nInjected"} {
+		t.Run(header, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("invalid request ID header %q was accepted", header)
+				}
+			}()
+			_ = RequestID(header)
 		})
 	}
 }
@@ -320,12 +348,75 @@ func TestLoggerRecordsOneCorrelatedCompletionForEveryOutcome(t *testing.T) {
 	}
 }
 
+func TestLoggerClassifiesRouterAndDirectErrorStatuses(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		method     string
+		target     string
+		directCode int
+		wantStatus int
+	}{
+		{name: "unmatched route", method: http.MethodGet, target: "/missing", wantStatus: http.StatusNotFound},
+		{name: "method not allowed", method: http.MethodPost, target: "/present", wantStatus: http.StatusMethodNotAllowed},
+		{name: "direct error write", method: http.MethodGet, target: "/present", directCode: http.StatusInternalServerError, wantStatus: http.StatusInternalServerError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&output, nil))
+			router := NewRouter()
+			router.Use(RequestID(""), Logger(logger))
+			router.GET("/present", func(ctx *Context) error {
+				status := http.StatusNoContent
+				if test.directCode != 0 {
+					status = test.directCode
+				}
+				return ctx.NoContent(status)
+			})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(test.method, test.target, nil))
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+			}
+			var record map[string]any
+			if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record); err != nil {
+				t.Fatalf("decode completion log: %v: %s", err, output.String())
+			}
+			if record["outcome"] != "error" || int(record["status"].(float64)) != test.wantStatus || record["method"] != test.method || record["route_method"] != test.method {
+				t.Fatalf("completion record = %#v", record)
+			}
+		})
+	}
+}
+
+func TestLoggerRetainsWireMethodAfterMethodOverride(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	router := NewRouter()
+	router.Use(RequestID(""), Logger(logger), MethodOverride("/app/"))
+	router.DELETE("/app/issues/1", func(ctx *Context) error { return ctx.NoContent(http.StatusNoContent) })
+	request := httptest.NewRequest(http.MethodPost, "/app/issues/1", strings.NewReader("_method=DELETE"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	router.ServeHTTP(httptest.NewRecorder(), request)
+	var record map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["method"] != http.MethodPost || record["route_method"] != http.MethodDelete {
+		t.Fatalf("completion methods = wire %#v route %#v", record["method"], record["route_method"])
+	}
+}
+
 func TestValidatedTimeoutAndSecurityHeaders(t *testing.T) {
 	if _, err := NewTimeout(0); err == nil {
 		t.Fatal("zero timeout was accepted")
 	}
 	if _, err := NewSecureHeaders(SecurityHeadersConfig{ContentSecurityPolicy: "ok\r\nbad"}); err == nil {
 		t.Fatal("header injection policy was accepted")
+	}
+	for _, policy := range []string{"default-src 'self'\x00script-src 'none'", "max-age=1\x7f"} {
+		if _, err := NewSecureHeaders(SecurityHeadersConfig{ContentSecurityPolicy: policy}); err == nil {
+			t.Fatalf("security policy with control byte was accepted: %q", policy)
+		}
 	}
 	middleware, err := NewSecureHeaders(SecurityHeadersConfig{
 		ContentSecurityPolicy:   "default-src 'self'",

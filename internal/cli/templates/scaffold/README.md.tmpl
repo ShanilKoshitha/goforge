@@ -19,6 +19,11 @@ generated local database URL. If it is not already running, start the explicit
 development service with `docker compose up -d` after entering the project.
 GoForge never starts external services implicitly. The generated `.env`
 contains a unique session secret; change the URL and secret for deployment.
+HTTP limits and timeouts are listed in `.env.example`. Enable
+`APP_ENABLE_HSTS` only when production traffic always uses HTTPS, including
+the trusted proxy-to-client path. `TRUSTED_PROXIES` accepts explicit,
+comma-separated CIDR ranges; when it is empty, forwarding headers are ignored
+and authentication throttles use the direct network peer.
 
 Create a persistence model without an HTTP resource using either
 `forge make:model Invoice` or `forge make model Invoice`. This writes ordinary

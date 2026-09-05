@@ -73,6 +73,8 @@ func TestFormRequiresDeclaredMediaTypeAndHonorsLimit(t *testing.T) {
 		{name: "wrong media type", contentType: "text/plain", body: "name=Ada", limit: 1024, wantStatus: http.StatusUnsupportedMediaType},
 		{name: "body too large", contentType: "application/x-www-form-urlencoded", body: "name=Ada", limit: 4, wantStatus: http.StatusRequestEntityTooLarge},
 		{name: "malformed encoding", contentType: "application/x-www-form-urlencoded", body: "name=%zz", limit: 1024, wantStatus: http.StatusBadRequest},
+		{name: "invalid raw UTF-8", contentType: "application/x-www-form-urlencoded", body: "name=\xff", limit: 1024, wantStatus: http.StatusBadRequest},
+		{name: "invalid escaped UTF-8", contentType: "application/x-www-form-urlencoded", body: "name=%FF", limit: 1024, wantStatus: http.StatusBadRequest},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -205,5 +207,24 @@ func TestMethodOverrideCanBeScopedAwayFromAPIRoutes(t *testing.T) {
 	router.ServeHTTP(webResponse, webRequest)
 	if webResponse.Code != http.StatusNoContent {
 		t.Fatalf("scoped browser override status = %d", webResponse.Code)
+	}
+}
+
+func TestMethodOverrideSnapshotsScopedPrefixes(t *testing.T) {
+	prefixes := []string{"/app/"}
+	middleware := httpx.MethodOverride(prefixes...)
+	prefixes[0] = "/api/"
+
+	router := httpx.NewRouter()
+	router.Use(middleware)
+	router.DELETE("/app/issues/1", func(ctx *httpx.Context) error {
+		return ctx.NoContent(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/app/issues/1", strings.NewReader("_method=DELETE"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("snapshotted override status = %d: %s", response.Code, response.Body.String())
 	}
 }
