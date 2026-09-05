@@ -471,8 +471,13 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 	if reclaimStarts != 2 || firstAttempt != 1 || lastAttempt != 2 || effectAttempt != 2 {
 		t.Fatalf("reclaim evidence starts=%d attempts=%d..%d effect_attempt=%d, want two fenced deliveries and attempt-2 effect", reclaimStarts, firstAttempt, lastAttempt, effectAttempt)
 	}
-	if owner.ProcessState == nil || !owner.ProcessState.Exited() {
+	// Wait populates ProcessState on every platform. Unix reports Exited false
+	// for a process terminated by a signal, even though the child was reaped.
+	if owner.ProcessState == nil {
 		t.Fatalf("killed reclaim owner was not reaped: pid=%d", owner.Process.Pid)
+	}
+	if owner.ProcessState.Success() {
+		t.Fatal("killed reclaim owner unexpectedly exited successfully")
 	}
 	stopCommandProcess(t, successor, true)
 	successorRunning = false
