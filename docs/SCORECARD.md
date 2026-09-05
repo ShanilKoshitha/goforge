@@ -1,6 +1,6 @@
 # v0.7 explicit request boundary and hardened HTTP kernel scorecard
 
-Status: **in progress**
+Status: **accepted**
 
 Target:
 
@@ -28,7 +28,7 @@ Target:
 | Authentication throttling is production-shaped | passing | Fresh PostgreSQL applications use an atomic shared store with database time, bounded pruning, hashed keys, restart persistence, and cross-process enforcement; the memory store remains an explicit local/test option |
 | Proxy trust is explicit and spoof-resistant | passing | Only validated configured CIDRs can supply forwarded client addresses; untrusted peers and malformed/ambiguous chains fall back safely to the direct peer, with no automatic forwarding-header trust |
 | Security policy stays inspectable | passing | Generated same-origin defaults include a compatible CSP and existing headers; HSTS is explicit production/TLS policy; every middleware call remains visible, removable, and replaceable in application code |
-| Compatibility and full workflow pass twice | pending public gate | Format-6 auth/CRUD/views/ORM/jobs fixtures retain their behavior; framework tests/vet/race and two fresh format-7 applications pass generated tests/vet/race/build plus two-process PostgreSQL request-boundary journeys without leaked schemas or processes |
+| Compatibility and full workflow pass twice | passing | Format-6 auth/CRUD/views/ORM/jobs fixtures retain their behavior; framework tests/vet/race and two fresh format-7 applications pass generated tests/vet/race/build plus two-process PostgreSQL request-boundary journeys without leaked schemas or processes |
 
 ## Baseline — 2026-09-05
 
@@ -59,7 +59,7 @@ Target:
   rehash, and absolute session lifetime form the next dedicated account-
   security milestone rather than being partially folded into this boundary.
 
-## Candidate evidence — 2026-09-05
+## Accepted evidence — 2026-09-05
 
 - Local `go test ./... -count=1`, `go test -race ./... -count=1`, `go vet
   ./...`, and `git diff --check` pass. The PostgreSQL-only tests skip locally
@@ -71,9 +71,19 @@ Target:
   incompatible source into older applications.
 - Fresh format-7 scaffold and resource tests compile and pass, including exact
   JSON/form failures and the reusable application-owned `SafeText` rule.
-- An independent final read-only review found no remaining P0, P1, or P2 code
-  defect. Public CI must still run both isolated PostgreSQL generated-
-  application journeys twice before this milestone is accepted.
+- Public [CI run 33999322140](https://github.com/ShanilKoshitha/goforge/actions/runs/33999322140)
+  passed formatting, the live PostgreSQL race suite, vet, the CLI build, and
+  both isolated format-7 PostgreSQL generated-application workflows with
+  `-count=2` in 4 minutes 26 seconds. The workflows include generated tests,
+  vet, race builds, cross-process/restart throttling, browser/API CRUD, ORM,
+  jobs, migrations, graceful shutdown, and cleanup.
+- Lightweight unsigned tags `v0.7.0` and `v0.7.1` point to their immutable
+  public commits. A fresh-cache `go run
+  github.com/ShanilKoshitha/goforge/cmd/forge@v0.7.1` generated a format-7 app
+  without `--replace`; that app passed `go test ./...`, `go mod verify`, `go
+  vet ./...`, and `go build ./cmd/...` against the public v0.7.0 runtime.
+- Independent final read-only reviews found no remaining P0, P1, or P2 code or
+  distribution defect.
 
 ## Explicit non-goals for v0.7
 

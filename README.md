@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.6 is PostgreSQL-first and accepted against its written milestone
+GoForge v0.7.1 is PostgreSQL-first and accepted against its written milestone
 scorecard. It includes explicit database wiring, parallel JSON and
 server-rendered authentication, database-backed sessions, CSRF-protected HTML
 forms, production middleware, embedded migrations, owner-scoped JSON and HTML
@@ -32,11 +32,27 @@ diagnostics while emitting ordinary `html/template`. The API can still change
 before v1. Durable typed jobs add transactional dispatch, delays, active
 deduplication, bounded PostgreSQL workers, lease fencing and crash recovery,
 finite retries, failed-job operations, and structured payload-free lifecycle
-events without hidden worker startup or handler discovery.
+events without hidden worker startup or handler discovery. Its explicit request
+boundary adds typed composable validation, exact JSON/form failure semantics,
+bounded HTTP timeouts and headers, correlated completion logs, validated CORS
+and security policy, trusted-proxy parsing, and PostgreSQL authentication
+throttles shared across processes and restarts.
 
 ## Install and try it
 
-From this checkout:
+Install the released CLI and generate an application:
+
+```sh
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.7.1
+forge new myapp --module example.com/myapp
+cd myapp
+docker compose up -d
+forge make:resource Issue
+forge migrate
+forge serve
+```
+
+For framework development from this checkout:
 
 ```sh
 go install ./cmd/forge
@@ -48,8 +64,8 @@ forge migrate
 forge serve
 ```
 
-For a released build, omit `--replace`. Visit `http://localhost:8080/register`
-for the browser workflow or `http://localhost:8080/health` for readiness.
+Visit `http://localhost:8080/register` for the browser workflow or
+`http://localhost:8080/health` for readiness.
 
 ## The generated request path
 

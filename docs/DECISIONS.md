@@ -389,10 +389,11 @@ older formats. A frozen format-6 application is retained as executable source
 and tested against the current framework and CLI.
 
 Fresh format-7 applications pin the public `github.com/ShanilKoshitha/goforge
-v0.7.0` module. The release tag must therefore be a lightweight, unsigned tag
-on the exact commit that passes public CI, followed by an empty-directory smoke
-test without a local `replace`. Until that evidence exists, the scorecard stays
-in progress.
+v0.7.0` runtime module. That lightweight unsigned tag remains immutable. The
+first public clean-cache smoke exposed its missing generated checksum, so the
+fix shipped as a separate lightweight unsigned `v0.7.1` CLI tag rather than
+moving or rewriting `v0.7.0`. The v0.7.1 scaffold carries the verified v0.7.0
+module checksums and passed an empty-directory smoke without a local `replace`.
 
 Reason: silently writing newer APIs into an older project is worse than an
 explicit migration boundary, and checkout-only tests cannot prove that a public
