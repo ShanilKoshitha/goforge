@@ -39,6 +39,14 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["go.mod"], `=> "`) {
 		t.Fatal("local replacement path must be quoted")
 	}
+	for _, checksum := range []string{
+		"github.com/ShanilKoshitha/goforge v0.7.0 h1:FxcLm6Bubmd1tiQifDlgqR41TSTIHZBShc8LfYll8wM=",
+		"github.com/ShanilKoshitha/goforge v0.7.0/go.mod h1:Ju5WVBe7csq7eJpSmlq+0x5OpY163cfrxhlFvd7rZrU=",
+	} {
+		if !strings.Contains(files["go.sum"], checksum) {
+			t.Errorf("generated go.sum omits released framework checksum %q", checksum)
+		}
+	}
 	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {
 		t.Fatal("PostgreSQL 18 volume must contain its versioned data directory")
 	}

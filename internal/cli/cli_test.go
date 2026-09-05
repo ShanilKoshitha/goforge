@@ -9,6 +9,16 @@ import (
 	"testing"
 )
 
+func TestVersionMatchesPatchRelease(t *testing.T) {
+	var output bytes.Buffer
+	if err := Run([]string{"version"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "forge 0.7.1\n" {
+		t.Fatalf("version output = %q", output.String())
+	}
+}
+
 func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "orders")
 	root := projectRoot(t)
