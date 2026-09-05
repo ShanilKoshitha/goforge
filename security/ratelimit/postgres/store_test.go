@@ -224,7 +224,10 @@ func TestPostgresStoreIsAtomicDurableAndBoundedlyPruned(t *testing.T) {
 	}
 
 	concurrentKey := ratelimit.Key("source-login", "198.51.100.7")
-	concurrentPolicy := ratelimit.Policy{Limit: 7, Window: time.Second}
+	// Keep the whole race-instrumented burst in one fixed window. The row-level
+	// conflict is deliberately serialized by PostgreSQL and can exceed one
+	// second on shared CI runners without indicating a second-window allowance.
+	concurrentPolicy := ratelimit.Policy{Limit: 7, Window: 30 * time.Second}
 	var allowed atomic.Int64
 	var group sync.WaitGroup
 	errorsFound := make(chan error, 64)
