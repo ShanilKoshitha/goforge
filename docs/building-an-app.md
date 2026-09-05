@@ -1,0 +1,155 @@
+# Building an application
+
+Create a PostgreSQL application with `forge new`. The generated server loads
+typed settings, connects through pgx's visible `database/sql` adapter, constructs
+the application explicitly, installs middleware, and registers routes.
+
+The generated `.env` targets the PostgreSQL service in `compose.yaml` and contains
+a unique local session secret. Start that service explicitly when needed:
+
+```sh
+docker compose up -d
+```
+
+## Add an endpoint
+
+Generate a controller:
+
+```sh
+forge make:controller Users
+```
+
+Edit `internal/http/controllers/users_controller.go`, inject dependencies into
+`NewUsersController`, and add the route in `routes/routes.go`:
+
+```go
+users := controllers.NewUsersController(repository)
+router.GET("/users", users.Index)
+```
+
+That explicit line is intentional: it is searchable, checked by the compiler,
+debuggable without framework tooling, and trivial to replace.
+
+## Generate an authenticated CRUD resource
+
+```sh
+forge make:resource Issue
+```
+
+This creates an application-owned vertical slice under
+`internal/resources/issue`: model, owner-scoped PostgreSQL repository, request
+validation, JSON and browser controllers, controller tests, and paired SQL
+migration. It also creates `.forge.html` index, new, show, edit, and shared form
+templates under `resources/views/pages/issues` and regenerates the clearly
+marked route and compiled-view registries. Human-owned files are preflighted and
+never overwritten.
+
+Run the generated migrations and server through the thin project wrappers:
+
+```sh
+forge migrate
+forge serve
+```
+
+The wrappers execute `go run ./cmd/console migrate` and `go run ./cmd/server`.
+Those commands remain the direct escape hatches.
+
+Register at `/register`, sign in at `/login`, and use the generated browser
+resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
+`/issues`; handlers do not silently switch behavior based on content negotiation.
+
+GoForge compiles layouts, sections, includes, static components, strict props
+and slots, control directives, page-local stacks, and explicit form helpers into
+the inspectable `resources/views/views_gen.go` artifact. Source mappings retain
+the original file and composition chain for diagnostics. After editing
+`.forge.html` source, run `forge views:compile`; use `forge views:compile
+--check` in CI. `forge serve` performs the same function-aware compilation
+before starting.
+
+Generate a component with `forge make:component Notice`. Application template
+functions live in `resources/views/viewfuncs/functions.go`; the project compiler
+and production renderer use that same editable `template.FuncMap`. See the
+[view language reference](view-language.md) for the complete bounded grammar and
+standard-library escape hatches.
+
+## Run durable background work
+
+Generate a typed, application-owned job and start the generated worker:
+
+```sh
+forge make:job SendWelcome
+forge queue:work
+```
+
+The generator writes the payload, handler, test, explicit registry entry, and
+stable versioned wire name. Dispatch through the generated helper, or use
+`dispatcher.Using(tx)` to enqueue atomically with domain writes. `job.Delay`,
+`job.At`, and explicit active deduplication keys are per-dispatch options.
+
+Delivery is at least once. PostgreSQL leases and generation fencing make crash
+recovery safe for queue state, but handlers remain responsible for idempotent
+external effects. Operate terminal failures with `forge queue:failed`,
+`queue:retry`, and `queue:forget`; payloads are omitted from listings by
+default. The worker, migration, registry, dispatcher, store, and observer all
+remain visible and replaceable. See [durable jobs](jobs.md) for policy,
+configuration, failure behavior, observability, and escape hatches.
+
+## Validate input
+
+Generate a request and bind JSON in the controller:
+
+Clients must send `Content-Type: application/json` (parameters such as
+`charset=utf-8` are accepted). Missing or other media types receive HTTP 415;
+invalid JSON receives HTTP 400, and validation errors receive HTTP 422.
+
+```go
+var request requests.CreateUserRequest
+if err := ctx.BindJSON(&request); err != nil {
+    return err
+}
+if errors := request.Validate(); !errors.Empty() {
+    return httpx.NewHTTPError(422, "validation failed").WithDetails(errors)
+}
+```
+
+## Change the HTTP stack
+
+Pass `app.Handler()` to your own `http.Server`, mount a standard handler with
+`httpx.Adapt`, or replace the GoForge router entirely. Application lifecycle
+helpers are conveniences, not a required host.
+
+## Migrations
+
+Migration files are paired and ordered:
+
+```text
+20260904120000_create_orders.up.sql
+20260904120000_create_orders.down.sql
+```
+
+Embed the directory and construct `migrate.Migrator` with the application's
+`*sql.DB`. Generated v0.3 applications explicitly import pgx's `database/sql`
+adapter, so the selected driver remains visible in `go.mod` and
+`internal/database/database.go`; replace that ordinary code to choose a different
+driver.
+
+## Sessions
+
+`session.Manager` keeps data in an explicit `session.Store`; the browser receives
+only a cryptographically signed random ID. Use `session.MemoryStore` for local
+development and implement the `Get`, `Create`, `Update`, atomic `Rotate`, and
+`Delete` store contract for Redis or SQL. Distinguishing creation from update
+prevents a stale request from restoring a revoked ID. Call `Save` before writing
+the response header. Authentication flows should call `Regenerate` after login
+to stage an atomic rotation during `Save`. Cookies are HTTP-only and
+SameSite=Lax by default; relaxing HTTP-only requires the deliberately named
+`UnsafeAllowJavaScript` option. Secure cookies are also the default; local HTTP
+development must opt out explicitly with `UnsafeAllowHTTP`.
+
+Generated applications use the visible PostgreSQL session adapter in
+`internal/auth/session_store.go`. Registration and login rotate the signed random
+session ID; resource routes are wrapped with the explicit auth middleware and
+repositories scope every query by the authenticated user ID.
+
+Session writes prune up to 100 expired rows, including abandoned sessions. An
+expired session presented by a client is also removed on access.

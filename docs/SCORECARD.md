@@ -1,0 +1,505 @@
+# v0.7 explicit request boundary and hardened HTTP kernel scorecard
+
+Status: **in progress**
+
+Target:
+
+> From an empty directory, generate a PostgreSQL application whose ordinary Go
+> request contracts decode JSON and browser forms, normalize deliberately,
+> validate realistic typed input with reusable application rules, and return
+> stable safe failures. Its explicit HTTP kernel bounds transport resources,
+> correlates every request outcome, rejects unsafe cross-origin policy, and
+> shares authentication throttles across processes without reflection,
+> discovery, or hidden proxy trust.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Validation is application-extensible without reflection | missing | Applications implement an exported rule contract or use `RuleFunc`; rules are explicit values with no tag scanning, discovery, or framework-global registry, while format-6 callers retain their existing API |
+| Real request states and composition are representable | missing | New APIs distinguish missing, explicit null, empty, and present values where policy requires it; numeric ranges, list size/uniqueness/each, nested-prefix merging, and conditional/cross-field custom rules have deterministic tests |
+| Validation failures have a stable safe contract | missing | Each violation retains a field path, stable rule code, and human message without the rejected value; API output is machine-readable and browser helpers render escaped messages from the same result |
+| Generated requests own both transports | missing | One application-owned request type explicitly decodes/normalizes JSON and URL-encoded form input, and JSON/browser controllers delegate to it instead of duplicating field extraction or validation policy |
+| Transport failures are exact | missing | Wrong media type is 415, malformed or type-invalid input is 400, oversized JSON/form input is 413, semantic validation is 422, unknown JSON fields and repeated scalar form fields remain rejected, and causes never reach clients |
+| Middleware configuration is validated and immutable | missing | Safe constructors reject invalid values at application startup, defensively copy caller collections, reject wildcard origins with credentials, and enforce requested preflight method/header policy with correct `Vary` behavior |
+| Request lifecycle is correlated once | missing | Invalid or oversized inbound request IDs are replaced; a typed accessor exposes the accepted ID; success, HTTP error, cancellation, and panic each produce exactly one completion record with the same ID, method, matched route pattern, status, duration, and outcome |
+| The generated HTTP server is bounded | missing | Typed defaults and environment overrides configure header/read/write/idle timeouts, handler deadline, and maximum header bytes; invalid values fail startup; custom `http.Server` and streaming routes remain explicit escape hatches |
+| Browser and API error surfaces stay explicit | missing | Browser middleware failures render safe HTML while API routes retain the stable JSON envelope; no `Accept` negotiation or hidden controller switching is introduced |
+| Authentication throttling is production-shaped | missing | Fresh PostgreSQL applications use an atomic shared store with database time, bounded pruning, hashed keys, restart persistence, and cross-process enforcement; the memory store remains an explicit local/test option |
+| Proxy trust is explicit and spoof-resistant | missing | Only validated configured CIDRs can supply forwarded client addresses; untrusted peers and malformed/ambiguous chains fall back safely to the direct peer, with no automatic forwarding-header trust |
+| Security policy stays inspectable | missing | Generated same-origin defaults include a compatible CSP and existing headers; HSTS is explicit production/TLS policy; every middleware call remains visible, removable, and replaceable in application code |
+| Compatibility and full workflow pass twice | missing | Format-6 auth/CRUD/views/ORM/jobs fixtures retain their behavior; framework tests/vet/race and two fresh format-7 applications pass generated tests/vet/race/build plus two-process PostgreSQL request-boundary journeys without leaked schemas or processes |
+
+## Baseline — 2026-09-05
+
+- The accepted v0.6 worktree passes `go test ./... -count=1`; the slowest
+  package completed in 58.721 seconds.
+- Existing strengths include explicit middleware composition, standard
+  `net/http` escape hatches, strict JSON media-type and unknown-field handling,
+  bounded form parsing, duplicate scalar-form rejection, scoped method
+  override, session-bound CSRF, Unicode-aware strings, and generated request
+  structs shared at the validation-method level.
+- `validation.Field` has an unexported method, so an application package cannot
+  implement the advertised public extension interface. Only string and `int`
+  fields exist; resource version checks already mutate the error map manually.
+- `BindJSONLimit` converts `http.MaxBytesError` to HTTP 400 while the equivalent
+  form boundary returns 413. JSON and browser field decoding/normalization are
+  duplicated across controllers.
+- `httpx.CORS` reflects every origin with credentials when `AllowedOrigins`
+  contains `*` and `AllowCredentials` is true. Its caller-owned slices remain
+  mutable after construction.
+- Generated servers configure only `ReadHeaderTimeout`. Request IDs accept and
+  reflect arbitrary inbound values, access logs omit correlation and route
+  patterns, and panic paths do not produce the same completion record.
+- Generated authentication throttling uses a process-local memory store. It is
+  reset by restarts, multiplied by replicas, and cannot distinguish clients
+  behind a trusted proxy without application-specific replacement code.
+- Independent read-only audits found no P0 defect in the accepted auth/session
+  contract itself. Account-wide revocation, password changes, transparent
+  rehash, and absolute session lifetime form the next dedicated account-
+  security milestone rather than being partially folded into this boundary.
+
+## Explicit non-goals for v0.7
+
+- Reflection/tag validators, runtime validation discovery, database-backed
+  `unique`/`exists` rules, localization, multipart uploads, OpenAPI/schema
+  generation, or client-side validation generation.
+- Password reset, email verification, password change, account-wide session
+  revocation, MFA/WebAuthn, session inventory, signing-key rotation, or an auth
+  event ledger. Those require the dedicated account-security and notification
+  milestones.
+- Middleware aliases, annotations, dependency injection, runtime ordering,
+  tracing exporters, metrics, compression, general host allowlists, or
+  automatic trust of any forwarding header.
+- Schema-driven resource fields, API versioning, bulk CRUD, soft deletion, or
+  speculative JSON conventions unrelated to the request-boundary proof.
+
+# v0.6 durable PostgreSQL jobs scorecard
+
+Status: **accepted**
+
+Target:
+
+> From an empty directory, generate a PostgreSQL application that can define a
+> typed job, enqueue it atomically with domain writes, run it in a conventional
+> project-owned worker, recover from crashes, retry predictably, and operate
+> terminal failures. Delivery is explicitly at least once; every durable state
+> transition is inspectable SQL and every runtime component is replaceable.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Typed jobs are explicit generated Go | passing | `forge make:job SendWelcome` atomically creates an application-owned typed payload/handler/test plus a deterministic generated registry; duplicate names and partial writes are rejected without runtime scanning or reflection |
+| Dispatch composes with transactions | passing | The same API accepts `*sql.DB` and `*sql.Tx`; a job is invisible before commit, durable after commit, and absent after rollback or panic |
+| Claims are concurrent and bounded | passing | PostgreSQL workers claim only available capacity in short `FOR UPDATE SKIP LOCKED` transactions, commit before handlers run, use database time, and respect configured queues and concurrency |
+| Leases recover safely | passing | Heartbeats extend leases; killed workers are reclaimed; every mutation is fenced by job ID, worker ID, and lease generation; stale owners cannot acknowledge, retry, release, or fail a reclaimed job |
+| Retry behavior is durable and finite | passing | Attempts, timeout, maximum attempts, and backoff are snapshotted at dispatch; returned errors, timeouts, panics, explicit permanent failures, and retry-after overrides have deterministic tests; exhausted crashed leases terminate |
+| Failure operations are complete | passing | Terminal jobs move atomically to `failed_jobs`; `forge queue:failed`, `queue:retry`, and `queue:forget` delegate to application-owned code, omit payloads by default, and pass live PostgreSQL tests |
+| Delays and active deduplication are precise | passing | One-off delay/at scheduling uses durable database timestamps; concurrent dispatch with the same explicit key creates one active row and reports enqueued versus duplicate without claiming exactly-once execution |
+| Worker lifecycle is production-shaped | passing | A generated `cmd/worker` runs outside the source tree, stops claiming on shutdown, drains within a configured grace period, cancels afterward, retains heartbeats while draining, and leaves forced work recoverable |
+| Observability is useful and safe | passing | Structured lifecycle events cover dispatch through completion/failure with stable IDs, queue, attempt, timing, and outcome; default logs never contain payloads and observer failures cannot corrupt durable state |
+| Storage boundaries are defensive | passing | Payload/error/name/key sizes are bounded, malformed payloads fail terminally, unknown job versions remain unclaimed for rolling deploys, SQL values are parameterized, and queue state errors preserve causes |
+| Escape hatches remain complete | passing | Public store/observer contracts, raw `database/sql`, transaction dispatch, an application-owned worker main/registry/migration, and inspectable claim/ack primitives allow replacement without framework startup magic |
+| Existing framework contracts remain intact | passing | Format-5 views and format-4 ORM compatibility fixtures retain their behavior; fresh format-6 auth, validation, sessions, owner CRUD, ORM, and view checks pass |
+| Full generated workflow passes twice | passing | Two independent fresh format-6 applications pass tests, vet, race/build checks, generated-artifact inspection, and isolated PostgreSQL job/browser/ORM journeys without leaked schemas or processes |
+
+## Baseline — 2026-09-05
+
+- The accepted v0.5 worktree passes `go test ./... -count=1`; the complete run
+  finished successfully in 62.113 seconds for the slowest package.
+- The repository contains no job runtime, PostgreSQL queue adapter, job
+  generator, worker command, queue migration, or queue operations.
+- Existing `orm.Executor` and `database.Transaction` seams already allow one
+  typed dispatch path to compose with both `*sql.DB` and `*sql.Tx` without
+  coupling jobs to ORM policy.
+- Generated applications already own explicit `cmd/server`, `cmd/console`,
+  database construction, migrations, and generated registries. The worker and
+  queue operations must follow the same inspectable ownership model.
+- PostgreSQL is the only promised durable backend for this milestone. Polling
+  with indexed claims is the correctness baseline; notification-based wakeups
+  are only an optional later optimization with polling retained as fallback.
+
+## Local passing runs — 2026-09-05
+
+- The final worktree passed `go test ./... -count=1`, `go vet ./...`, and
+  `go test -race ./... -count=1`. The slowest framework race package completed
+  in 70.450 seconds.
+- Direct runtime and PostgreSQL adapter suites passed both without and with
+  `GOFORGE_TEST_DATABASE_URL`, including real transaction visibility, lease
+  fencing/reclaim, retry/failure transitions, active-key reuse, unknown-version
+  filtering, schema constraints, and defensive scans.
+- Independent adversarial review found no remaining P0, P1, or P2
+  implementation or acceptance-evidence defect after the final generated-app
+  workflow and CI gate were added.
+- CI runs both generated PostgreSQL workflows twice. Each jobs workflow also
+  runs the fresh application's complete tests, vet, and race suite before its
+  live worker journey.
+
+The final generated jobs journey built the CLI, created a fresh format-6
+application, generated and inspected two typed jobs and the explicit registry,
+and exercised direct and transactional dispatch, commit/error/panic rollback,
+durable `Delay` and `At`, active deduplication, two competing external workers,
+finite retries, safe failed-job output, retry/forget administration, a hard-
+killed lease owner followed by successor reclaim, acknowledgement, graceful
+shutdown, schema cleanup, and process reaping.
+
+1. 2026-09-05 — final strengthened jobs journey passed in 22.943 seconds.
+2. 2026-09-05 — immediate independent fresh jobs journey passed in 23.223 seconds.
+
+The compatibility browser/ORM journey also passed twice without intervening
+edits, in 29.096 and 29.735 seconds. Those fresh applications passed generated
+tests, vet, builds, migrations, relationship execution, JSON and browser auth,
+CSRF, validation, owner-scoped CRUD, contextual escaping, and clean shutdown.
+The exact combined CI command then repeated both workflows twice and passed in
+105.083 seconds.
+
+The isolated PostgreSQL 18 acceptance cluster was stopped and its
+`.tmp/v06-postgres` data directory removed after the final run. Port 55432 no
+longer accepted connections; no host PostgreSQL service was modified.
+
+## Explicit non-goals for v0.6
+
+- Exactly-once execution or automatic idempotency for arbitrary external side
+  effects. Lease fencing protects queue state; handlers remain responsible for
+  business-level idempotency.
+- Recurring cron schedules, time zones/DST, missed-run policy, scheduler leader
+  election, and overlap policy. Those form the separately gated scheduler
+  milestone; one-off delayed dispatch is included here.
+- Chains, batches, workflow orchestration, a web dashboard, Redis/SQS parity,
+  dynamic package discovery, runtime dependency injection, or hidden workers
+  started by the HTTP application.
+- Concurrent generator processes. Generation is atomic and rollback-safe per
+  process, but projects must run generators serially until a project lock or
+  compare-and-swap metadata protocol is introduced.
+
+# v0.5 view authoring core scorecard
+
+Status: **accepted**
+
+Target:
+
+> From an empty directory, generate a server-rendered PostgreSQL application
+> whose first-party `.forge.html` language provides Blade/Twig-class composition,
+> form ergonomics, and diagnostics while compiling deterministically to ordinary
+> contextually escaped `html/template`. Production performs no source discovery
+> or Forge-language interpretation, and applications retain complete standard-Go
+> escape hatches.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| The language has a positioned grammar | passing | A lexer/parser with source spans replaces regex rewriting; nested directives, quoted arguments, balanced pipelines, escaped `@@`, comments, and mismatched closures have exact path/line/column tests |
+| Components are complete compile-time composition | passing | Static components support required and literal-default props, named arguments, default/named slots, nesting, and strict missing/unknown/duplicate/cycle failures; expansion occurs before `html/template` contextual analysis and emits no runtime component machinery |
+| Control flow and stacks are coherent | passing | Nested `@if`/`@elseif`/`@else`, `@for`/`@empty`, and `@with` compile standard Go-template pipelines; page-local `@push`/`@stack` ordering is deterministic and scoped constructs cannot leak across pages |
+| Forms have explicit ergonomic state | passing | `@csrf`, `@method`, `@old`, and `@errors` compile to inspectable markup/actions over explicit `.Form` data; submitted empty values differ from absent values and every validation message remains escaped |
+| Custom functions use one application registry | passing | An editable application-owned `template.FuncMap` is used by the project compiler and production renderer; string results remain escaped, missing functions fail before publication, and `template.HTML` remains conspicuous |
+| Diagnostics survive composition | passing | Compile and render failures identify original source path/line/column plus page-to-layout/include/component/slot expansion context; buffered rendering never commits a partial response |
+| Compilation is deterministic and checkable | passing | `forge views:compile` emits byte-identical gofmt'd source and mappings; `--check` is non-mutating and distinguishes current, stale, and invalid input; every failure preserves the byte-identical last-good artifact |
+| Generated applications use the language | passing | Fresh auth/resource views and `forge make:component` exercise components, props, slots, stacks, control flow, explicit form state, and application functions instead of hand-expanding framework markup |
+| Standard Go remains the escape hatch | passing | Generated output is inspectable canonical `html/template`; ordinary `{{...}}` pipelines remain legal, raw `.html` works through `view.Parse`, callers can use direct `html/template` and `Engine.Templates`, and production runs outside the source tree |
+| Full generated workflow passes twice | passing | Two independent fresh format-5 applications pass tests/vet/build and isolated PostgreSQL browser journeys with adversarial escaping, diagnostics, stale checks, clean shutdown, and no leaked schemas/processes |
+
+## Baseline — 2026-09-05
+
+- v0.4 is accepted. Its fresh applications already compile `.forge.html` into a
+  deterministic generated `views_gen.go`, parse only that artifact in
+  production, use standard-library contextual escaping with `missingkey=error`,
+  and buffer rendering before committing a response.
+- The focused baseline passes: `go test ./view ./internal/cli -run
+  'Forge|View|views' -count=1`.
+- The baseline source language had layouts, named sections/yields, and includes
+  with explicit data. Expressions and control actions are ordinary Go-template
+  pipelines, and direct `view.Parse` remains available.
+- The baseline compiler was a regex/text-rewrite pipeline. It could not safely
+  represent nested components, slots, or control blocks and lost useful source
+  provenance after composition.
+- Baseline generated forms hand-wrote CSRF fields, method overrides, old-input
+  lookups, and error loops. Managed compilation and production both passed a nil FuncMap,
+  so application functions cannot use the complete managed workflow.
+- Baseline `forge serve` performed a compile before startup and retained the last
+  good artifact, but had no non-mutating `views:compile --check` mode.
+
+## Local passing runs — 2026-09-05
+
+- The final merged worktree passed `go test ./...`, `go vet ./...`, and
+  `go test -race ./...` after the positioned compiler, source maps, format-5
+  application compiler, and compatibility fixes landed.
+- Focused adversarial tests cover multiline and Unicode source positions,
+  synthetic-directive clamping, layout/include/component/slot expansion chains,
+  contextual text/attribute/URL escaping, explicit `template.HTML`, strict
+  props/slots/cycles, page-local stacks, submitted-empty form state, missing and
+  corrupt artifact recovery, non-mutating stale checks, and rollback safety.
+- A frozen format-4 compiler retains the v0.4 grammar and artifact shape. A real
+  compatibility fixture passed compile/check/build/serve/last-good behavior
+  while preserving text that only format 5 treats as directives.
+- Independent final review found no remaining P0 or P1 implementation or
+  test-evidence defect.
+
+Each final PostgreSQL run built the CLI, generated a fresh format-5 application,
+generated a component and Issue resource, ran view and ORM freshness checks,
+inspected the mapped artifact for canonical output, proved an exact composed
+source diagnostic and byte-identical last-good artifact, and passed generated
+tests, vet, and builds. Each new isolated schema then passed relationship-rich
+ORM execution, concurrent/idempotent and transactional migrations, JSON/browser
+authentication, explicit-form validation, owner CRUD, contextual escaping,
+optimistic conflict recovery, production startup outside the source tree, and
+clean shutdown.
+
+1. 2026-09-05 — final format-5 journey passed in 33.22 seconds.
+2. 2026-09-05 — immediate independent fresh journey passed in 34.58 seconds.
+
+The isolated PostgreSQL 18 acceptance cluster was stopped and its workspace
+data directory removed after both runs. The host's pre-existing PostgreSQL
+service was not modified.
+
+## Explicit non-goals for v0.5
+
+- A proprietary expression/filter language, dynamic component or include
+  names, macros/compiler plugins, runtime source discovery, or production
+  recompilation.
+- Class-backed/stateful components, dependency injection inside templates,
+  attribute bags/class merging, implicit request globals, or automatic
+  model-to-form binding.
+- Localization, asset bundling, browser live reload/HMR, client hydration,
+  fragment caching, streaming, or templates authored by untrusted users.
+- Automatic upgrades of pre-v1 format-4 generated applications. Their public
+  runtime APIs and existing compiled artifacts remain compatibility evidence.
+
+# v0.4 typed data mapper ORM scorecard
+
+Status: **accepted**
+
+Target:
+
+> From an empty directory, generate a PostgreSQL application whose ordinary Go
+> models support typed querying, partial changes, relationships, eager loading,
+> transactions, locking, and stable persistence errors. Generated mapping and
+> SQL remain deterministic and inspectable; every operation can compose with
+> `database/sql` and handwritten repositories.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Typed mapping covers real field states | passing | Generated models and mappers round-trip required and zero values, nullable values and explicit NULL, database defaults/generated IDs, timestamps, and a `Scanner`/`Valuer` escape-hatch type without runtime reflection |
+| Queries and mutations are complete and safe | passing | Typed create/find/filter/order/paginate/count/exists/partial-update/delete and bulk operations expose deterministic SQL/args; values are always parameters; updates/deletes require predicates or conspicuous `AllRows()` |
+| Relationships are first-class and explicit | passing | Belongs-to, has-one, has-many, and many-to-many generation, eager loading, and attach/detach pass focused and live tests; no lazy I/O and each preload edge has a bounded constant query count |
+| Transactions and concurrency compose | passing | The same generated store works with `*sql.DB` and `*sql.Tx`; cross-model commit/rollback/panic behavior, handwritten SQL in the same transaction, `FOR UPDATE`/`FOR SHARE`, and optimistic conflict handling pass against PostgreSQL |
+| Persistence errors and cancellation are stable | passing | Not-found, unsafe mutation, stale data, unique, foreign-key, check, serialization, and deadlock errors preserve causes; deadlines cancel promptly and leave the pool reusable without leaking submitted values |
+| Ownership and mass-assignment boundaries remain strong | passing | Generated create/change types protect IDs, owner IDs, timestamps, versions, and relationship ownership; CRUD, bulk operations, aggregates, and preloads cannot cross authenticated owners |
+| Generation is deterministic and inspectable | passing | Format-4 `make:model`, relationship/resource generation, `orm:generate`, and `orm:generate --check` emit gofmt'd model/mapping/migration source atomically; stale or invalid declarations fail before writes |
+| Escape hatches remain complete | passing | Callers can inspect `orm.Statement`, supply `*sql.DB`/`*sql.Tx`, execute raw SQL in the same transaction, and replace generated repositories without changing controllers |
+| Existing framework behavior remains compatible | passing | Fresh v4 JSON/browser authentication, sessions, validation, CSRF, throttling, views, resource routes, pagination, migrations, and production lifecycle retain their v0.3 contracts |
+| Full generated workflow passes twice | passing | A fresh relationship-rich application passes tests/vet/build and the isolated PostgreSQL ORM journey twice without regression or leaked schemas/processes |
+
+## Baseline — 2026-09-05
+
+- v0.3 browser applications are accepted; framework tests, vet, race tests,
+  fresh generated applications, and two live PostgreSQL journeys pass.
+- Current generated resources use secure owner-scoped handwritten repositories,
+  not an ORM. Metadata records no fields, nullability, defaults, indexes, or
+  relationships.
+- Repositories hold `*sql.DB`, while transactions expose `*sql.Tx`; composed
+  generated operations cannot currently share a transaction without rebuilding
+  repositories.
+- SQL values are parameterized, request types are explicit write allowlists,
+  authenticated owners are controller-derived, and contexts already propagate.
+  The ORM must preserve these strengths.
+
+## Foundation evidence — 2026-09-05
+
+- The reflection-free `orm` runtime now has typed table/column metadata,
+  immutable query and mutation builders, explicit field states, structured
+  persistence errors, transaction-required row locks, statement observation,
+  and all four common relationship loaders. Its focused race tests and vet pass.
+- The static model parser validates ordinary Go declarations, PostgreSQL names,
+  exact foreign-key types, field states, and relationship metadata without
+  runtime discovery. `forge orm:generate` and `--check` deterministically emit
+  typed mappers, columns, stores, create inputs, and changesets while preserving
+  the last good generated artifact on failure.
+- `forge make:model` now creates a conventional application-owned model, paired
+  plain SQL migration, and current ORM artifact as one rollback-safe generator
+  operation. Fresh scaffolds own their User model, and `make:resource` adds an
+  owner-related model plus an ORM-backed repository while retaining the public
+  controller repository interface.
+- The combined repository race suite and vet passed after the runtime slice.
+  At that foundation checkpoint this was package-level evidence only; the
+  generated-application PostgreSQL acceptance recorded below closes that gap.
+- An isolated PostgreSQL 18 cluster then ran the expanded core ORM journey
+  twice, with the second pass under the race detector. Both passes exercised
+  real generated/default/NULL field behavior, typed single and bulk mutations,
+  aggregates, optimistic success/stale/wrong-owner behavior, raw SQL composed
+  inside commit and rollback transactions, `FOR UPDATE` and `FOR SHARE`
+  blocking, all four relation loaders plus many-to-many attach/detach,
+  classified constraint/serialization/deadlock errors, deadline cancellation
+  with pool reuse, and eager-load query budgeting. The cluster is test-only and
+  separate from the host's existing service. These passes proved the runtime
+  SQL before the generated-application flow was closed below.
+- An early fresh format-4 application completed the live PostgreSQL workflow in
+  14.682 seconds. The final relationship-rich runs below supersede that partial
+  checkpoint and include optimistic HTTP conflicts and all generated relation
+  kinds.
+
+## Local passing runs — 2026-09-05
+
+The final framework verification passed `go test ./...`, `go vet ./...`, and
+`go test -race ./...`. An independent closure review found no remaining P0 or
+P1 implementation defect.
+
+Each final run built the CLI, generated a fresh format-4 application and Issue
+resource, added conventional Tenant, TenantProfile, Project, and Tag models,
+regenerated and checked the inspectable ORM artifact, and passed generated-app
+tests, vet, and builds. Against a new isolated PostgreSQL schema, each run then
+proved concurrent/idempotent migrations, generated nullable belongs-to,
+has-one, has-many, and many-to-many loaders, tenant-scoped preloads, exact query
+budgets, attach/detach, transactional migration recovery, JSON/browser auth and
+owner CRUD, optimistic conflict recovery, production startup, and clean process
+shutdown.
+
+1. 2026-09-05 — final relationship-rich journey passed in 21.97 seconds.
+2. 2026-09-05 — immediate independent fresh journey passed in 22.50 seconds.
+
+The isolated PostgreSQL 18 acceptance cluster was stopped and its workspace
+data directory removed after both runs. The host's pre-existing PostgreSQL
+service was not modified.
+
+## Explicit non-goals for v0.4
+
+- Runtime reflection, package scanning, Active Record `Save`, lazy loading,
+  identity maps, implicit units of work, automatic startup migration, or schema
+  diffing.
+- Hidden validation/hooks, automatic tenant scopes, transparent caching,
+  polymorphic relationships, composite primary keys, nested transactions, or
+  multi-dialect parity.
+- Rewriting the specialized session store or migration bookkeeping through the
+  ORM; they remain deliberate raw-SQL examples.
+
+# v0.3 browser applications scorecard
+
+Status: **accepted**
+
+Target:
+
+> From an empty directory, produce a secure server-rendered application with
+> HTML authentication and owner-scoped CRUD. GoForge templates compile into
+> deterministic, inspectable `html/template` artifacts while retaining
+> contextual escaping and ordinary Go escape hatches.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| GoForge view source compiles deterministically | passing | `.forge.html` layouts, sections, yields, and explicit includes compile to canonical `html/template`; invalid dependency graphs have focused tests |
+| Generated view artifacts are inspectable | passing | Fresh scaffolds contain managed `views_gen.go`; generated production startup parses canonical output rather than the GoForge DSL |
+| HTML authentication is secure end to end | passing | Fresh generated-app and live PostgreSQL tests cover registration, login/logout, CSRF, rotation, validation, sanitized input, redirects, one-request flash, API/browser boundary isolation, and bounded source/account throttling |
+| Generated HTML CRUD is usable end to end | passing | Fresh generated-app and live PostgreSQL tests cover protected paginated index/create/show/edit/update/delete, bounded query parsing, method override, CSRF, owner assignment/isolation, and contextual escaping |
+| Existing JSON behavior remains compatible | passing | Fresh v0.3 applications retain the unchanged JSON tests and run them first in the combined PostgreSQL journey; pre-v1 generated-project upgrades are not claimed |
+| Browser session concurrency is safe | passing | Create/update/atomic-rotate persistence prevents a stale request from restoring a rotated session ID |
+| Fresh generated application passes twice | passing | Two independent fresh v3 applications passed tests/vet/builds, followed by two isolated-schema PostgreSQL browser journeys without regression |
+
+The first grammar is intentionally limited to inheritance, named sections,
+yields, includes with explicit data, and standard Go template actions.
+Components, slots, macros, asset pipelines, and the ORM remain separate later
+milestones; they were not added after this milestone's acceptance gate passed.
+
+## Local passing runs — 2026-09-05
+
+The framework passed `go test ./...`, `go vet ./...`, and `go test -race ./...`.
+Two applications generated independently from the freshly built v0.3 CLI then
+each generated an `Issue` resource and passed `go test ./...`, `go vet ./...`,
+and `go build ./cmd/...`. Inspection confirmed that production startup consumes
+the generated `views_gen.go` artifact rather than the GoForge source grammar.
+
+An isolated PostgreSQL 18 cluster was then used for the written end-to-end
+journey. Both runs generated a fresh application/resource, applied migrations
+concurrently, recovered from failed transactional DDL, exercised JSON and HTML
+authentication plus owner-scoped CRUD, ran the production binary outside the
+source directory, and cleaned their schemas and processes.
+
+1. 2026-09-05 — live PostgreSQL journey passed in 12.871 seconds.
+2. 2026-09-05 — immediate second journey passed in 12.740 seconds.
+
+The temporary acceptance cluster was stopped and removed after both runs. The
+host's pre-existing PostgreSQL service was not modified.
+
+# v0.2 milestone scorecard
+
+## Repository quality review — 2026-09-04
+
+Current goal: review the whole repository for clean, idiomatic Go, understandable
+structure, and concise useful comments; fix identified issues and verify emitted
+applications. This is a quality pass on v0.2, not a feature milestone.
+
+| Requirement | State | Evidence |
+| --- | --- | --- |
+| Review every runtime package | passing | Independent reviews covered HTTP/lifecycle, storage/password/session, and cache/config/validation/views; concrete defects have focused regressions |
+| Separate source templates from generation logic | passing | Embedded scaffold/resource trees and one renderer replace the obsolete overlay and escaped source strings; fresh scaffold/resource tests pass |
+| Use readable names, contracts, and comments | passing | Initialism handling, named repository parameters, concise concurrency/lifecycle contracts, and CONTRIBUTING.md |
+| Verify the integrated runtime and generated app | passing | Full race/vet suite, fresh app tests/vet/builds, healthy generated Compose, and two PostgreSQL journeys in 13.859s and 13.807s |
+| Record the assessment and remaining limitations | passing | CODE_QUALITY.md records findings, evidence, compatibility changes, and serial generator assumption |
+
+Final independent closure review caught one remaining discarded migration-pair
+cleanup error. It now joins the original failure; migration allocation/refusal
+tests and CLI vet passed afterward. The temporary Compose database and volume
+were removed after confirming zero leaked acceptance schemas.
+
+The original v0.2 acceptance record below is retained as historical evidence.
+
+Target:
+
+> From an empty directory, produce a working authenticated PostgreSQL CRUD
+> application in under ten minutes, with migrations, validation, HTML or JSON
+> responses, tests, and production middleware.
+
+Status values are **missing**, **partial**, or **passing**. Evidence must come
+from the current worktree or a freshly generated application.
+
+## Acceptance criteria
+
+| Criterion | Baseline | Required evidence |
+| --- | --- | --- |
+| `forge new issueboard` creates a production-shaped PostgreSQL application | passing | Fresh scaffold contains database configuration, pinned pgx driver, JSON auth, database sessions, embedded migrations, Compose file, console, tests, and compiles |
+| `forge make:resource Issue` creates a complete inspectable resource | passing | Model, owner-scoped PostgreSQL repository, validation, controller, migration, authenticated routes, and tests are generated; duplicate and successive-resource tests pass |
+| `forge migrate` applies pending migrations safely | passing | Real PostgreSQL acceptance applies auth and resource migrations exactly once under two concurrent application processes; failed DDL rolls back and the same version reapplies |
+| `forge serve` runs the generated application | passing | Real PostgreSQL acceptance launches the literal project command and observes readiness; the generated Unix entrypoint handles SIGTERM and lifecycle unit tests cover graceful/failed shutdown |
+| Authentication is usable end to end | passing | Generated unit and real PostgreSQL tests cover registration, duplicate email, live logout/login, login session rotation, invalid credentials, protected routes, bounded expired-session pruning, and password hashing |
+| Generated CRUD is usable end to end | passing | Real PostgreSQL acceptance covers authenticated create/show/update/delete, invalid input, unauthenticated access, and cross-owner isolation |
+| Standard `net/http` compatibility is preserved | passing | `ResponseController` plus direct `Flusher`, `Hijacker`, and `Pusher` capability tests pass through logging middleware; unsupported capabilities are not falsely advertised |
+| High-risk infrastructure is directly tested | passing | Lifecycle shutdown/failure, transaction commit/rollback/panic, failed migration, fake contention, and real PostgreSQL contention tests pass |
+| Claims and CI match reality | passing | Dialect guarantees are precise; README workflow is exercised; CI provisions PostgreSQL and runs the generated-app acceptance twice |
+| Milestone passes twice without regression | passing | Two consecutive isolated-schema PostgreSQL acceptance runs are recorded below |
+
+## Baseline evidence — 2026-09-04
+
+- Existing `go test ./...` passes and the scaffold compilation test is green.
+- Package coverage: application 0%, database transaction helper 0%, migrations
+  19.3%, HTTP 52.3%, CLI 67.4%.
+- CLI exposes `new`, controller/request generation, and migration-file generation.
+- Generated applications have no database construction, auth, project command,
+  resource workflow, or integrated migration execution.
+- The workspace is not a Git repository; release tagging cannot yet be verified.
+
+## Explicitly deferred
+
+- `forge rollback`, `forge routes`, wrapper commands for `forge test` and
+  `forge build`
+- background jobs and workers
+- HTML authentication and resource views
+- field-definition DSLs and additional SQL dialect guarantees
+- release tagging and licensing, which require a Git repository and an explicit
+  project licensing decision
+
+## Passing runs
+
+1. 2026-09-04 — final PostgreSQL 18 acceptance pass completed the literal
+   four-command journey in 12.570 seconds.
+2. 2026-09-04 — an immediate second isolated-schema pass completed in 13.210
+   seconds and left no acceptance schemas behind.
+
+Final verification also passed `go test -race ./...`, `go vet ./...`, and
+`go build ./cmd/forge`. A fresh `issueboard` scaffold with an `Issue` resource
+passed `go test ./...`, `go vet ./...`, and builds of both generated commands.
+Independent architecture review reported no P0 or P1 blockers; its remaining
+P2 findings were fixed before the final two runs above.
