@@ -1,0 +1,175 @@
+package auth_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/security/password"
+	"github.com/ShanilKoshitha/goforge/security/ratelimit"
+	"github.com/ShanilKoshitha/goforge/session"
+
+	"[[.Module]]/internal/auth"
+)
+
+type fakeUsers struct{ user auth.User }
+
+func testAttemptLimiter(t *testing.T) *ratelimit.Limiter {
+	t.Helper()
+	limiter, err := ratelimit.New(ratelimit.NewMemoryStore(100), ratelimit.Policy{Limit: 50, Window: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return limiter
+}
+
+func (users *fakeUsers) Create(_ context.Context, name, email, encoded string) (auth.User, error) {
+	users.user = auth.User{ID: 1, Name: name, Email: email, PasswordHash: encoded, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	return users.user, nil
+}
+
+func (users *fakeUsers) ByEmail(_ context.Context, email string) (auth.User, error) {
+	if users.user.ID == 0 || !strings.EqualFold(users.user.Email, email) {
+		return auth.User{}, auth.ErrUserNotFound
+	}
+	return users.user, nil
+}
+
+func (users *fakeUsers) ByID(_ context.Context, id int64) (auth.User, error) {
+	if users.user.ID != id {
+		return auth.User{}, auth.ErrUserNotFound
+	}
+	return users.user, nil
+}
+
+func TestRegisterCreatesAuthenticatedSession(t *testing.T) {
+	users := &fakeUsers{}
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := auth.NewController(users, manager, password.Hasher{Iterations: 1}, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.POST("/auth/register", controller.Register)
+	router.Group("", auth.Require(manager, users)).GET("/auth/me", controller.Me)
+
+	registration := httptest.NewRequest(http.MethodPost, "/auth/register", strings.NewReader(`{"name":"Ada","email":"ada@example.com","password":"a secure passphrase","password_confirmation":"a secure passphrase"}`))
+	registration.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, registration)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("register: expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected session cookie, got %d", len(cookies))
+	}
+	request := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	request.AddCookie(cookies[0])
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("authenticated request: expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestLoginRotatesSessionAndRejectsBadCredentials(t *testing.T) {
+	hasher := password.Hasher{Iterations: 1}
+	encoded, err := hasher.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := &fakeUsers{user: auth.User{ID: 7, Email: "ada@example.com", PasswordHash: encoded}}
+	manager, _ := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	controller := auth.NewController(users, manager, hasher, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.POST("/auth/login", controller.Login)
+
+	login := func(passwordValue string, cookie *http.Cookie) (*httptest.ResponseRecorder, *http.Cookie) {
+		request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"ada@example.com","password":"`+passwordValue+`"}`))
+		request.Header.Set("Content-Type", "application/json")
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		var next *http.Cookie
+		if cookies := response.Result().Cookies(); len(cookies) > 0 {
+			next = cookies[0]
+		}
+		return response, next
+	}
+	first, firstCookie := login("a secure passphrase", nil)
+	second, secondCookie := login("a secure passphrase", firstCookie)
+	if first.Code != http.StatusOK || second.Code != http.StatusOK || firstCookie == nil || secondCookie == nil {
+		t.Fatalf("login failed: %d, %d", first.Code, second.Code)
+	}
+	if firstCookie.Value == secondCookie.Value {
+		t.Fatal("login did not rotate the session ID")
+	}
+	bad, _ := login("incorrect password", nil)
+	if bad.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", bad.Code)
+	}
+}
+
+func TestAPILogoutRequiresJSONAndPreservesSessionOnFormSubmission(t *testing.T) {
+	users := &fakeUsers{}
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := auth.NewController(users, manager, password.Hasher{Iterations: 1}, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.POST("/auth/register", controller.Register)
+	authenticated := router.Group("", auth.Require(manager, users))
+	authenticated.GET("/auth/me", controller.Me)
+	authenticated.POST("/auth/logout", controller.Logout)
+
+	registration := httptest.NewRequest(http.MethodPost, "/auth/register", strings.NewReader(`{"name":"Ada","email":"ada@example.com","password":"a secure passphrase","password_confirmation":"a secure passphrase"}`))
+	registration.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, registration)
+	cookies := response.Result().Cookies()
+	if response.Code != http.StatusCreated || len(cookies) != 1 {
+		t.Fatalf("register: expected session cookie, got %d and %d cookies", response.Code, len(cookies))
+	}
+
+	formLogout := httptest.NewRequest(http.MethodPost, "/auth/logout", strings.NewReader("confirm=yes"))
+	formLogout.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	formLogout.AddCookie(cookies[0])
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, formLogout)
+	if response.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("form logout: expected 415, got %d: %s", response.Code, response.Body.String())
+	}
+
+	me := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	me.AddCookie(cookies[0])
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, me)
+	if response.Code != http.StatusOK {
+		t.Fatalf("form logout destroyed session: expected 200, got %d", response.Code)
+	}
+
+	jsonLogout := httptest.NewRequest(http.MethodPost, "/auth/logout", strings.NewReader(`{}`))
+	jsonLogout.Header.Set("Content-Type", "application/json")
+	jsonLogout.AddCookie(cookies[0])
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, jsonLogout)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("JSON logout: expected 204, got %d: %s", response.Code, response.Body.String())
+	}
+
+	me = httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	me.AddCookie(cookies[0])
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, me)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("JSON logout left session valid: expected 401, got %d", response.Code)
+	}
+}

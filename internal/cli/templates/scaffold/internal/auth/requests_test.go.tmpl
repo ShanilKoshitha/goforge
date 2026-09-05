@@ -1,0 +1,25 @@
+package auth_test
+
+import (
+	"strings"
+	"testing"
+
+	"[[.Module]]/internal/auth"
+)
+
+func TestRegistrationValidatesTheStoredName(t *testing.T) {
+	request := auth.RegisterRequest{
+		Name: " A ", Email: "ada@example.com",
+		Password: "a secure passphrase", PasswordConfirmation: "a secure passphrase",
+	}
+	if len(request.Validate().For("name")) == 0 {
+		t.Fatal("expected the trimmed name to fail the minimum length")
+	}
+}
+
+func TestLoginRejectsOversizedPasswords(t *testing.T) {
+	request := auth.LoginRequest{Email: "ada@example.com", Password: strings.Repeat("x", 129)}
+	if len(request.Validate().For("password")) == 0 {
+		t.Fatal("expected the registration password limit to apply to login")
+	}
+}

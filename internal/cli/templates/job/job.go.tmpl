@@ -1,0 +1,27 @@
+package jobs
+
+import (
+	"context"
+
+	"github.com/ShanilKoshitha/goforge/job"
+)
+
+// [[.Name]] is the versioned, JSON-encoded payload for [[.Definition]].
+// Add only durable data needed to locate current application state. Handlers
+// are delivered at least once, so make external side effects idempotent.
+type [[.Name]] struct{}
+
+var [[.Name]]Definition = job.MustDefine[ [[.Name]] ]("[[.Definition]]", job.Policy{})
+
+type [[.Name]]Handler struct {
+	Dependencies Dependencies
+}
+
+func (handler [[.Name]]Handler) Handle(ctx context.Context, payload [[.Name]]) error {
+	// TODO: perform the job. Keep the handler safe to run more than once.
+	return nil
+}
+
+func Dispatch[[.Name]](ctx context.Context, dispatcher job.Dispatcher, payload [[.Name]], options ...job.DispatchOption) (job.DispatchResult, error) {
+	return [[.Name]]Definition.Dispatch(ctx, dispatcher, payload, options...)
+}

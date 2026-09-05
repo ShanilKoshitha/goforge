@@ -1,0 +1,129 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	forgeconfig "github.com/ShanilKoshitha/goforge/config"
+)
+
+type Config struct {
+	Environment       string
+	Address           string
+	ShutdownTimeout   time.Duration
+	RequestTimeout    time.Duration
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+	EnableHSTS        bool
+	TrustedProxies    string
+	DatabaseURL       string
+	SessionSecret     string
+}
+
+func Load() (Config, error) {
+	environment, err := reader()
+	if err != nil {
+		return Config{}, err
+	}
+	settings := Config{
+		Environment:       environment.String("APP_ENV", "production"),
+		Address:           environment.String("APP_ADDRESS", ":8080"),
+		ShutdownTimeout:   environment.Duration("APP_SHUTDOWN_TIMEOUT", 10*time.Second),
+		RequestTimeout:    environment.Duration("APP_REQUEST_TIMEOUT", 15*time.Second),
+		ReadHeaderTimeout: environment.Duration("APP_READ_HEADER_TIMEOUT", 5*time.Second),
+		ReadTimeout:       environment.Duration("APP_READ_TIMEOUT", 30*time.Second),
+		WriteTimeout:      environment.Duration("APP_WRITE_TIMEOUT", 30*time.Second),
+		IdleTimeout:       environment.Duration("APP_IDLE_TIMEOUT", 2*time.Minute),
+		MaxHeaderBytes:    environment.Int("APP_MAX_HEADER_BYTES", 1<<20),
+		EnableHSTS:        environment.Bool("APP_ENABLE_HSTS", false),
+		TrustedProxies:    environment.String("TRUSTED_PROXIES", ""),
+		DatabaseURL:       environment.Required("DATABASE_URL"),
+		SessionSecret:     environment.Required("SESSION_SECRET"),
+	}
+	return settings, errors.Join(environment.Err(), settings.validate())
+}
+
+func (settings Config) validate() error {
+	var problems []error
+	for _, value := range []struct {
+		name     string
+		duration time.Duration
+	}{
+		{"APP_SHUTDOWN_TIMEOUT", settings.ShutdownTimeout},
+		{"APP_REQUEST_TIMEOUT", settings.RequestTimeout},
+		{"APP_READ_HEADER_TIMEOUT", settings.ReadHeaderTimeout},
+		{"APP_READ_TIMEOUT", settings.ReadTimeout},
+		{"APP_WRITE_TIMEOUT", settings.WriteTimeout},
+		{"APP_IDLE_TIMEOUT", settings.IdleTimeout},
+	} {
+		if value.duration <= 0 {
+			problems = append(problems, fmt.Errorf("%s must be positive", value.name))
+		}
+	}
+	if settings.RequestTimeout > 0 && settings.WriteTimeout > 0 && settings.RequestTimeout >= settings.WriteTimeout {
+		problems = append(problems, errors.New("APP_REQUEST_TIMEOUT must be shorter than APP_WRITE_TIMEOUT"))
+	}
+	if settings.ReadHeaderTimeout > 0 && settings.ReadTimeout > 0 && settings.ReadHeaderTimeout > settings.ReadTimeout {
+		problems = append(problems, errors.New("APP_READ_HEADER_TIMEOUT cannot exceed APP_READ_TIMEOUT"))
+	}
+	if settings.MaxHeaderBytes < 1024 || settings.MaxHeaderBytes > 16<<20 {
+		problems = append(problems, errors.New("APP_MAX_HEADER_BYTES must be between 1024 and 16777216"))
+	}
+	return errors.Join(problems...)
+}
+
+type DatabaseConfig struct {
+	DatabaseURL string
+}
+
+// LoadDatabase reads only settings required by database console commands.
+func LoadDatabase() (DatabaseConfig, error) {
+	environment, err := reader()
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+	settings := DatabaseConfig{DatabaseURL: environment.Required("DATABASE_URL")}
+	return settings, environment.Err()
+}
+
+type WorkerConfig struct {
+	DatabaseURL          string
+	JobQueues            string
+	JobConcurrency       int
+	JobPollInterval      time.Duration
+	JobLeaseDuration     time.Duration
+	JobHeartbeatInterval time.Duration
+	JobOperationTimeout  time.Duration
+	JobShutdownTimeout   time.Duration
+}
+
+// LoadWorker reads only settings required by the background worker.
+func LoadWorker() (WorkerConfig, error) {
+	environment, err := reader()
+	if err != nil {
+		return WorkerConfig{}, err
+	}
+	settings := WorkerConfig{
+		DatabaseURL:          environment.Required("DATABASE_URL"),
+		JobQueues:            environment.String("JOB_QUEUES", "default"),
+		JobConcurrency:       environment.Int("JOB_CONCURRENCY", 4),
+		JobPollInterval:      environment.Duration("JOB_POLL_INTERVAL", time.Second),
+		JobLeaseDuration:     environment.Duration("JOB_LEASE_DURATION", 30*time.Second),
+		JobHeartbeatInterval: environment.Duration("JOB_HEARTBEAT_INTERVAL", 10*time.Second),
+		JobOperationTimeout:  environment.Duration("JOB_OPERATION_TIMEOUT", 5*time.Second),
+		JobShutdownTimeout:   environment.Duration("JOB_SHUTDOWN_TIMEOUT", 15*time.Second),
+	}
+	return settings, environment.Err()
+}
+
+func reader() (*forgeconfig.Reader, error) {
+	environment := forgeconfig.FromEnvironment()
+	if err := environment.LoadFile(".env"); err != nil {
+		return nil, err
+	}
+	return environment, nil
+}

@@ -1,0 +1,13 @@
+package jobs
+
+import (
+	"context"
+	"testing"
+)
+
+func Test[[.Name]]Handler(t *testing.T) {
+	handler := [[.Name]]Handler{}
+	if err := handler.Handle(context.Background(), [[.Name]]{}); err != nil {
+		t.Fatal(err)
+	}
+}

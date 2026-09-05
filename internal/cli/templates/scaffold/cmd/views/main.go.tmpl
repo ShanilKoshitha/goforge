@@ -1,0 +1,87 @@
+package main
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/ShanilKoshitha/goforge/view"
+
+	"[[.Module]]/resources/views/viewfuncs"
+)
+
+const generatedPath = "resources/views/views_gen.go"
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	check := false
+	switch {
+	case len(args) == 0:
+	case len(args) == 1 && args[0] == "--check":
+		check = true
+	default:
+		return errors.New("usage: go run ./cmd/views [--check]")
+	}
+
+	compiled, err := view.CompileForge(os.DirFS("resources/views"))
+	if err != nil {
+		return fmt.Errorf("compile project views: %w", err)
+	}
+	if _, err := view.ParseCompiled(compiled, viewfuncs.Functions()); err != nil {
+		return fmt.Errorf("validate project views: %w", err)
+	}
+	source, err := view.GoSource("views", compiled)
+	if err != nil {
+		return fmt.Errorf("generate project views: %w", err)
+	}
+	current, err := os.ReadFile(filepath.FromSlash(generatedPath))
+	if err == nil && bytes.Equal(current, []byte(source)) {
+		fmt.Println("resources/views/views_gen.go is current")
+		return nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read generated views: %w", err)
+	}
+	if check {
+		return errors.New("resources/views/views_gen.go is stale; run forge views:compile")
+	}
+	if err := writeManaged(generatedPath, []byte(source)); err != nil {
+		return fmt.Errorf("write generated views: %w", err)
+	}
+	fmt.Println("updated resources/views/views_gen.go")
+	return nil
+}
+
+func writeManaged(name string, content []byte) error {
+	directory := filepath.Dir(name)
+	temporary, err := os.CreateTemp(directory, ".goforge-views-")
+	if err != nil {
+		return err
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if err := temporary.Chmod(0o644); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(content); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryName, name)
+}

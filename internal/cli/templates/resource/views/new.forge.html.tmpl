@@ -1,0 +1,8 @@
+@extends("layouts/app")
+@section("title"){{.Title}}@endsection
+@section("content")
+  @component("components/card", title=.Title)
+    @include("pages/[[.Plural]]/form", .)
+    @slot("actions")<a href="/app/[[.Plural]]">Cancel</a>@endslot
+  @endcomponent
+@endsection

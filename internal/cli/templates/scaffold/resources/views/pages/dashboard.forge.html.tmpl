@@ -1,0 +1,14 @@
+@extends("layouts/app")
+@section("title"){{.Title}}@endsection
+@section("content")
+    @component("components/card", title=.Title)
+      @with(.User)<p>Welcome, {{.Name}}</p>@endwith
+      @if(.Notice)<p role="status">{{.Notice}}</p>@else<p>Your authenticated browser application is ready for resources.</p>@endif
+      @slot("actions")
+        <form action="/logout" method="post">
+          @csrf
+          <button type="submit">Sign out</button>
+        </form>
+      @endslot
+    @endcomponent
+@endsection

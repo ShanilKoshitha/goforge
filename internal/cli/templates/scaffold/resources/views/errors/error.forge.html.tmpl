@@ -1,0 +1,8 @@
+@extends("layouts/app")
+@section("title"){{.Title}}@endsection
+@section("content")
+  @component("components/card", title=.Title, tone="error")
+    <p role="alert">{{.Message}}</p>
+    @slot("actions")<a href="/">Return home</a>@endslot
+  @endcomponent
+@endsection

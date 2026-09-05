@@ -1,0 +1,135 @@
+package [[.Package]]
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/validation"
+)
+
+// WriteRequest owns both transport decoders, normalization, and semantic
+// policy. Controllers do not maintain parallel JSON and browser rules.
+type WriteRequest struct {
+	Name    string `json:"name"`
+	Version *int64 `json:"version,omitempty"`
+
+	nameInput    validation.Input[string]
+	versionInput validation.Input[int64]
+}
+
+func (request *WriteRequest) DecodeJSON(ctx *httpx.Context) error {
+	var body struct {
+		Name    json.RawMessage `json:"name"`
+		Version json.RawMessage `json:"version"`
+	}
+	if err := ctx.BindJSON(&body); err != nil {
+		return err
+	}
+	name, nameInput, err := decodeJSONString("name", body.Name)
+	if err != nil {
+		return err
+	}
+	version, versionInput, err := decodeJSONInt64("version", body.Version)
+	if err != nil {
+		return err
+	}
+	request.Name, request.nameInput = name, nameInput
+	request.Version, request.versionInput = version, versionInput
+	return nil
+}
+
+func (request *WriteRequest) DecodeForm(ctx *httpx.Context) error {
+	form, err := ctx.Form()
+	if err != nil {
+		return err
+	}
+	name, err := form.Value("name")
+	if err != nil {
+		return err
+	}
+	request.Name = strings.TrimSpace(name)
+	switch {
+	case !form.Has("name"):
+		request.nameInput = validation.Missing[string]()
+	case request.Name == "":
+		request.nameInput = validation.Empty[string]()
+	default:
+		request.nameInput = validation.Present(request.Name)
+	}
+	if !form.Has("version") {
+		request.Version = nil
+		request.versionInput = validation.Missing[int64]()
+		return nil
+	}
+	rawVersion, err := form.Value("version")
+	if err != nil {
+		return err
+	}
+	rawVersion = strings.TrimSpace(rawVersion)
+	if rawVersion == "" {
+		request.Version = nil
+		request.versionInput = validation.Empty[int64]()
+		return nil
+	}
+	version, err := strconv.ParseInt(rawVersion, 10, 64)
+	if err != nil {
+		return httpx.NewHTTPError(http.StatusBadRequest, "version must be one integer").WithCause(err)
+	}
+	request.Version = &version
+	request.versionInput = validation.Present(version)
+	return nil
+}
+
+func (request WriteRequest) Validate() validation.Report {
+	nameInput := request.nameInput
+	if nameInput.State() == validation.StateMissing && request.Name != "" {
+		nameInput = validation.Present(strings.TrimSpace(request.Name))
+	}
+	versionInput := request.versionInput
+	if versionInput.State() == validation.StateMissing && request.Version != nil {
+		versionInput = validation.Present(*request.Version)
+	}
+	return validation.Join(
+		validation.Apply("name", nameInput,
+			validation.Required[string](), validation.StringLength(2, 200)),
+		validation.Apply("version", versionInput,
+			validation.When(versionInput.Provided(),
+				validation.Required[int64](), validation.NumberRange[int64](1, int64(^uint64(0)>>1)))),
+	)
+}
+
+func decodeJSONString(field string, raw json.RawMessage) (string, validation.Input[string], error) {
+	if raw == nil {
+		return "", validation.Missing[string](), nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", validation.Null[string](), nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", validation.Missing[string](), httpx.NewHTTPError(http.StatusBadRequest, field+" must be a string").WithCause(err)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", validation.Empty[string](), nil
+	}
+	return value, validation.Present(value), nil
+}
+
+func decodeJSONInt64(field string, raw json.RawMessage) (*int64, validation.Input[int64], error) {
+	if raw == nil {
+		return nil, validation.Missing[int64](), nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, validation.Null[int64](), nil
+	}
+	var value int64
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, validation.Missing[int64](), httpx.NewHTTPError(http.StatusBadRequest, field+" must be an integer").WithCause(err)
+	}
+	return &value, validation.Present(value), nil
+}

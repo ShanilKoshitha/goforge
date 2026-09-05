@@ -1,0 +1,12 @@
+package models
+
+import "time"
+
+// [[.Name]] is ordinary application-owned Go. Add fields and forge tags here,
+// update the paired migration, then run forge orm:generate.
+type [[.Name]] struct {
+	ID        int64     `json:"id" forge:"primary,generated,protected,required"`
+	CreatedAt time.Time `json:"created_at" db:"created_at" forge:"generated,protected,required"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at" forge:"generated,protected,required"`
+	Version   int64     `json:"version" forge:"protected,required,default=1"`
+}

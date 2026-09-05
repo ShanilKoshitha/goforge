@@ -1,0 +1,10 @@
+.env
+/bin/
+/tmp/
+/.cache/
+/.gocache/
+/.tmp/
+*.test
+/coverage.out
+/forge
+/forge.exe

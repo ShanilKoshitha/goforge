@@ -1,0 +1,115 @@
+package cli
+
+import (
+	"go/format"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	jobpostgres "github.com/ShanilKoshitha/goforge/job/postgres"
+)
+
+func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
+	files, err := scaffoldFiles("example.com/app", filepath.Join(t.TempDir(), "framework checkout"), "app: demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{".env", ".env.example", ".gitignore", ".forge/resources.json", ".forge/jobs.json"} {
+		if _, ok := files[name]; !ok {
+			t.Errorf("missing embedded dotfile %s", name)
+		}
+	}
+	for name, content := range files {
+		if filepath.Ext(name) != ".go" {
+			continue
+		}
+		formatted, err := format.Source([]byte(content))
+		if err != nil || string(formatted) != content {
+			t.Errorf("unformatted Go source %s: %v", name, err)
+		}
+	}
+	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
+		t.Fatal("project name must be quoted YAML")
+	}
+	if !strings.Contains(files["resources/views/pages/welcome.forge.html"], "{{.Title}}") {
+		t.Fatal("HTML template expression was altered")
+	}
+	if !strings.Contains(files["go.mod"], `=> "`) {
+		t.Fatal("local replacement path must be quoted")
+	}
+	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {
+		t.Fatal("PostgreSQL 18 volume must contain its versioned data directory")
+	}
+	if !strings.Contains(files["internal/models/user.go"], `forge:"primary,generated,protected,required"`) ||
+		!strings.Contains(files[generatedORMPath], "var UserColumns") {
+		t.Fatal("scaffold must contain its application-owned User and current typed ORM")
+	}
+	if strings.TrimSpace(files["database/migrations/000002_create_jobs.up.sql"]) != strings.TrimSpace(jobpostgres.Schema) {
+		t.Fatal("scaffold queue migration must match the public PostgreSQL adapter schema")
+	}
+	worker := files["cmd/worker/main.go"]
+	for _, want := range []string{"jobpostgres.New(db)", "jobs.NewRegistry", "job.NewWorker", "worker.Run(ctx)", "job.SlogObserver"} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("generated worker omits %q", want)
+		}
+	}
+	dispatcher := files["internal/jobs/dispatcher.go"]
+	if !strings.Contains(dispatcher, "dispatcher.Using(tx)") || !strings.Contains(dispatcher, "job.NewDispatcher(store, db") {
+		t.Fatal("generated dispatcher must teach explicit transaction composition")
+	}
+	console := files["cmd/console/main.go"]
+	for _, want := range []string{"queue:failed", "RetryFailed", "ForgetFailed"} {
+		if !strings.Contains(console, want) {
+			t.Errorf("generated console omits %q", want)
+		}
+	}
+	if strings.Contains(console, "item.Payload") {
+		t.Fatal("generated failed-job listing must not print payloads")
+	}
+	if !strings.Contains(console, "strconv.QuoteToASCII(item.FailureMessage)") {
+		t.Fatal("generated failed-job listing must escape control characters in diagnostics")
+	}
+	authRepository := files["internal/auth/repository.go"]
+	if !strings.Contains(authRepository, "postgres.Classify(err)") || !strings.Contains(authRepository, "errors.Is(err, orm.ErrUnique)") || strings.Contains(authRepository, "pgconn") {
+		t.Fatal("auth repository must classify driver errors without coupling application code to pgx")
+	}
+	second, err := scaffoldFiles("example.com/app", "", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files[".env"] == second[".env"] {
+		t.Fatal("new applications must have different session secrets")
+	}
+}
+
+func TestCreatedProjectProtectsEnvironmentSecrets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose generated Unix permission bits")
+	}
+	directory := filepath.Join(t.TempDir(), "app")
+	if err := createProject(newOptions{directory: directory, module: "example.com/app"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(directory, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf(".env permissions = %04o, want 0600", got)
+	}
+	example, err := os.Stat(filepath.Join(directory, ".env.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := example.Mode().Perm(); got != 0o644 {
+		t.Fatalf(".env.example permissions = %04o, want 0644", got)
+	}
+}
+
+func TestTemplateRejectsMissingData(t *testing.T) {
+	if _, err := renderTemplate("templates/scaffold/forge.yaml.tmpl", "forge.yaml", map[string]string{}); err == nil {
+		t.Fatal("missing template substitutions must fail before publication")
+	}
+}
