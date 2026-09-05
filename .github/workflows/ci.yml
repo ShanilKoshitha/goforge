@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: goforge
+          POSTGRES_USER: goforge
+          POSTGRES_PASSWORD: goforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U goforge -d goforge"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+      - name: Go formatting
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./cmd/forge
+      - name: Generated PostgreSQL applications
+        env:
+          GOFORGE_TEST_DATABASE_URL: postgres://goforge:goforge@localhost:5432/goforge?sslmode=disable
+        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow)$' -count=2 -v
