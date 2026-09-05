@@ -376,3 +376,24 @@ unbounded transport phases, process-local abuse limits, and an unusable custom-
 rule interface contradict the north-star production promise at the public
 request boundary. Password lifecycle/session revocation and schema-driven CRUD
 are separate coherent milestones and are not partially introduced here.
+
+## D022 — Format upgrades are explicit and releases prove public resolution
+
+**Status:** accepted for v0.7
+
+The v0.7 resource templates depend on the structured validation contract, so
+`make:resource` supports format 7 only. Running it in a format-4, format-5, or
+format-6 project returns an explicit upgrade error before writing anything.
+Generators whose emitted contracts remain compatible continue to support their
+older formats. A frozen format-6 application is retained as executable source
+and tested against the current framework and CLI.
+
+Fresh format-7 applications pin the public `github.com/ShanilKoshitha/goforge
+v0.7.0` module. The release tag must therefore be a lightweight, unsigned tag
+on the exact commit that passes public CI, followed by an empty-directory smoke
+test without a local `replace`. Until that evidence exists, the scorecard stays
+in progress.
+
+Reason: silently writing newer APIs into an older project is worse than an
+explicit migration boundary, and checkout-only tests cannot prove that a public
+user can resolve the generated module.

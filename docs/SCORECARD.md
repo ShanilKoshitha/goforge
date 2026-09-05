@@ -16,19 +16,19 @@ Target:
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| Validation is application-extensible without reflection | missing | Applications implement an exported rule contract or use `RuleFunc`; rules are explicit values with no tag scanning, discovery, or framework-global registry, while format-6 callers retain their existing API |
-| Real request states and composition are representable | missing | New APIs distinguish missing, explicit null, empty, and present values where policy requires it; numeric ranges, list size/uniqueness/each, nested-prefix merging, and conditional/cross-field custom rules have deterministic tests |
-| Validation failures have a stable safe contract | missing | Each violation retains a field path, stable rule code, and human message without the rejected value; API output is machine-readable and browser helpers render escaped messages from the same result |
-| Generated requests own both transports | missing | One application-owned request type explicitly decodes/normalizes JSON and URL-encoded form input, and JSON/browser controllers delegate to it instead of duplicating field extraction or validation policy |
-| Transport failures are exact | missing | Wrong media type is 415, malformed or type-invalid input is 400, oversized JSON/form input is 413, semantic validation is 422, unknown JSON fields and repeated scalar form fields remain rejected, and causes never reach clients |
-| Middleware configuration is validated and immutable | missing | Safe constructors reject invalid values at application startup, defensively copy caller collections, reject wildcard origins with credentials, and enforce requested preflight method/header policy with correct `Vary` behavior |
-| Request lifecycle is correlated once | missing | Invalid or oversized inbound request IDs are replaced; a typed accessor exposes the accepted ID; success, HTTP error, cancellation, and panic each produce exactly one completion record with the same ID, method, matched route pattern, status, duration, and outcome |
-| The generated HTTP server is bounded | missing | Typed defaults and environment overrides configure header/read/write/idle timeouts, handler deadline, and maximum header bytes; invalid values fail startup; custom `http.Server` and streaming routes remain explicit escape hatches |
-| Browser and API error surfaces stay explicit | missing | Browser middleware failures render safe HTML while API routes retain the stable JSON envelope; no `Accept` negotiation or hidden controller switching is introduced |
-| Authentication throttling is production-shaped | missing | Fresh PostgreSQL applications use an atomic shared store with database time, bounded pruning, hashed keys, restart persistence, and cross-process enforcement; the memory store remains an explicit local/test option |
-| Proxy trust is explicit and spoof-resistant | missing | Only validated configured CIDRs can supply forwarded client addresses; untrusted peers and malformed/ambiguous chains fall back safely to the direct peer, with no automatic forwarding-header trust |
-| Security policy stays inspectable | missing | Generated same-origin defaults include a compatible CSP and existing headers; HSTS is explicit production/TLS policy; every middleware call remains visible, removable, and replaceable in application code |
-| Compatibility and full workflow pass twice | missing | Format-6 auth/CRUD/views/ORM/jobs fixtures retain their behavior; framework tests/vet/race and two fresh format-7 applications pass generated tests/vet/race/build plus two-process PostgreSQL request-boundary journeys without leaked schemas or processes |
+| Validation is application-extensible without reflection | passing | Applications implement an exported rule contract or use `RuleFunc`; rules are explicit values with no tag scanning, discovery, or framework-global registry, while format-6 callers retain their existing API |
+| Real request states and composition are representable | passing | New APIs distinguish missing, explicit null, empty, and present values where policy requires it; numeric ranges, list size/uniqueness/each, nested-prefix merging, and conditional/cross-field custom rules have deterministic tests |
+| Validation failures have a stable safe contract | passing | Each violation retains a field path, stable rule code, and human message without the rejected value; API output is machine-readable and browser helpers render escaped messages from the same result |
+| Generated requests own both transports | passing | One application-owned request type explicitly decodes/normalizes JSON and URL-encoded form input, and JSON/browser controllers delegate to it instead of duplicating field extraction or validation policy |
+| Transport failures are exact | passing | Wrong media type is 415, malformed or type-invalid input is 400, oversized JSON/form input is 413, semantic validation is 422, unknown JSON fields and repeated scalar form fields remain rejected, and causes never reach clients |
+| Middleware configuration is validated and immutable | passing | Safe constructors reject invalid values at application startup, defensively copy caller collections, reject wildcard origins with credentials, and enforce requested preflight method/header policy with correct `Vary` behavior |
+| Request lifecycle is correlated once | passing | Invalid or oversized inbound request IDs are replaced; a typed accessor exposes the accepted ID; success, HTTP error, cancellation, and panic each produce exactly one completion record with the same ID, method, matched route pattern, status, duration, and outcome |
+| The generated HTTP server is bounded | passing | Typed defaults and environment overrides configure header/read/write/idle timeouts, handler deadline, and maximum header bytes; invalid values fail startup; custom `http.Server` and streaming routes remain explicit escape hatches |
+| Browser and API error surfaces stay explicit | passing | Browser middleware failures render safe HTML while API routes retain the stable JSON envelope; no `Accept` negotiation or hidden controller switching is introduced |
+| Authentication throttling is production-shaped | passing | Fresh PostgreSQL applications use an atomic shared store with database time, bounded pruning, hashed keys, restart persistence, and cross-process enforcement; the memory store remains an explicit local/test option |
+| Proxy trust is explicit and spoof-resistant | passing | Only validated configured CIDRs can supply forwarded client addresses; untrusted peers and malformed/ambiguous chains fall back safely to the direct peer, with no automatic forwarding-header trust |
+| Security policy stays inspectable | passing | Generated same-origin defaults include a compatible CSP and existing headers; HSTS is explicit production/TLS policy; every middleware call remains visible, removable, and replaceable in application code |
+| Compatibility and full workflow pass twice | pending public gate | Format-6 auth/CRUD/views/ORM/jobs fixtures retain their behavior; framework tests/vet/race and two fresh format-7 applications pass generated tests/vet/race/build plus two-process PostgreSQL request-boundary journeys without leaked schemas or processes |
 
 ## Baseline — 2026-09-05
 
@@ -58,6 +58,22 @@ Target:
   contract itself. Account-wide revocation, password changes, transparent
   rehash, and absolute session lifetime form the next dedicated account-
   security milestone rather than being partially folded into this boundary.
+
+## Candidate evidence — 2026-09-05
+
+- Local `go test ./... -count=1`, `go test -race ./... -count=1`, `go vet
+  ./...`, and `git diff --check` pass. The PostgreSQL-only tests skip locally
+  because this workstation has no available PostgreSQL service.
+- A frozen, inspectable format-6 application containing authentication, owner-
+  scoped CRUD, compiled views, typed ORM code, and a typed job passes tests,
+  vet, builds, and the current compatible generators. The v0.7-only resource
+  generator requires an explicit format upgrade instead of emitting
+  incompatible source into older applications.
+- Fresh format-7 scaffold and resource tests compile and pass, including exact
+  JSON/form failures and the reusable application-owned `SafeText` rule.
+- An independent final read-only review found no remaining P0, P1, or P2 code
+  defect. Public CI must still run both isolated PostgreSQL generated-
+  application journeys twice before this milestone is accepted.
 
 ## Explicit non-goals for v0.7
 
