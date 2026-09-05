@@ -1,0 +1,6 @@
+@props(title, tone="neutral")
+<article class="card card--{{$tone}}">
+  <header><h1>{{headline $title}}</h1></header>
+  <div>@slot("default")@endslot</div>
+  <footer>@slot("actions")@endslot</footer>
+</article>

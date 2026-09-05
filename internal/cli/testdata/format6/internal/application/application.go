@@ -1,0 +1,83 @@
+package application
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge"
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/security/ratelimit"
+	ratelimitpostgres "github.com/ShanilKoshitha/goforge/security/ratelimit/postgres"
+	"github.com/ShanilKoshitha/goforge/session"
+
+	"example.com/format6/internal/config"
+	httperrors "example.com/format6/internal/http/errors"
+	views "example.com/format6/resources/views"
+	"example.com/format6/routes"
+)
+
+type Dependencies struct {
+	DB         *sql.DB
+	Sessions   session.Store
+	RateLimits ratelimit.Store
+}
+
+func New(settings config.Config, dependencies Dependencies) (*forge.App, error) {
+	if dependencies.Sessions == nil {
+		return nil, fmt.Errorf("session store is required")
+	}
+	attemptStore := dependencies.RateLimits
+	if attemptStore == nil {
+		var err error
+		attemptStore, err = ratelimitpostgres.New(dependencies.DB)
+		if err != nil {
+			return nil, err
+		}
+	}
+	app, err := forge.NewChecked(forge.Config{
+		Address: settings.Address, ShutdownTimeout: settings.ShutdownTimeout,
+		ReadHeaderTimeout: settings.ReadHeaderTimeout, ReadTimeout: settings.ReadTimeout,
+		WriteTimeout: settings.WriteTimeout, IdleTimeout: settings.IdleTimeout,
+		MaxHeaderBytes: settings.MaxHeaderBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	requestTimeout := settings.RequestTimeout
+	if requestTimeout == 0 {
+		requestTimeout = 15 * time.Second
+	}
+	timeout, err := httpx.NewTimeout(requestTimeout)
+	if err != nil {
+		return nil, err
+	}
+	strictTransport := ""
+	if settings.EnableHSTS {
+		strictTransport = "max-age=31536000; includeSubDomains"
+	}
+	security, err := httpx.NewSecureHeaders(httpx.SecurityHeadersConfig{
+		ContentSecurityPolicy:   "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+		StrictTransportSecurity: strictTransport,
+	})
+	if err != nil {
+		return nil, err
+	}
+	app.Router.Use(
+		httpx.Recover(nil),
+		httpx.RequestID(""),
+		httpx.Logger(nil),
+		security,
+		httpx.MethodOverride("/app/"),
+		timeout,
+	)
+	renderer, err := views.New()
+	if err != nil {
+		return nil, err
+	}
+	app.Router.OnError(httperrors.New(renderer))
+	if err := routes.Register(app.Router, renderer, dependencies.DB, dependencies.Sessions, attemptStore, settings); err != nil {
+		return nil, err
+	}
+	return app, nil
+}

@@ -103,7 +103,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "orm:generate", "--check"); err != nil {
 		t.Fatalf("forge orm:generate --check: %v\n%s", err, output)
 	}
-	for _, command := range [][]string{{"test", "./..."}, {"vet", "./..."}, {"build", "./cmd/..."}} {
+	for _, command := range [][]string{{"test", "./..."}, {"vet", "./..."}, {"test", "-race", "./..."}, {"build", "./cmd/..."}} {
 		if output, err := generatedCommand(directory, baseEnvironment, "go", command...); err != nil {
 			t.Fatalf("fresh application go %s: %v\n%s", strings.Join(command, " "), err, output)
 		}
@@ -112,6 +112,13 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 		t.Fatalf("fresh application relationship acceptance helper build: %v\n%s", err, output)
 	}
 	t.Log("forge new, make:component, make:resource, view/ORM checks, tests, vet, and builds passed")
+	binary := filepath.Join(directory, "app")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	if output, err := generatedCommand(directory, baseEnvironment, "go", "build", "-o", binary, "./cmd/server"); err != nil {
+		t.Fatalf("build server: %v\n%s", err, output)
+	}
 	schema := fmt.Sprintf("goforge_acceptance_%d", time.Now().UnixNano())
 	adminPath := filepath.Join(directory, ".forge", "acceptance_db.go")
 	if err := os.WriteFile(adminPath, []byte(postgresAdminProgram), 0o644); err != nil {
@@ -472,14 +479,101 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	serverRunning = false
 	t.Log("forge serve process stopped")
 
+	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "clear-rate-limits"); err != nil {
+		t.Fatalf("clear rate limits before shared-store acceptance: %v\n%s", err, output)
+	}
+	trustedAddressA := freeAddress(t)
+	trustedAddressB := freeAddress(t)
+	trustedEnvironmentA := append(append([]string{}, environment...),
+		"APP_ADDRESS="+trustedAddressA,
+		"TRUSTED_PROXIES=127.0.0.1/32",
+	)
+	trustedEnvironmentB := append(append([]string{}, environment...),
+		"APP_ADDRESS="+trustedAddressB,
+		"TRUSTED_PROXIES=127.0.0.1/32",
+	)
+	trustedServerA, trustedOutputA := startGeneratedServer(t, binary, directory, trustedEnvironmentA)
+	trustedServerB, trustedOutputB := startGeneratedServer(t, binary, directory, trustedEnvironmentB)
+	waitForHealth(t, "http://"+trustedAddressA, trustedOutputA)
+	waitForHealth(t, "http://"+trustedAddressB, trustedOutputB)
+	badLogin := fmt.Sprintf(`{"email":"ada-%d@example.com","password":"incorrect password"}`, stamp)
+	for attempt := 1; attempt <= 8; attempt++ {
+		target := "http://" + trustedAddressA + "/auth/login"
+		if attempt%2 == 0 {
+			target = "http://" + trustedAddressB + "/auth/login"
+		}
+		response, body = requestJSONFrom(t, plainClient, target, badLogin, "203.0.113.10")
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("shared account attempt %d: expected 401, got %d: %s", attempt, response.StatusCode, body)
+		}
+	}
+	stopCommandProcess(t, trustedServerA, false)
+	restartedAddress := freeAddress(t)
+	restartedEnvironment := append(append([]string{}, environment...),
+		"APP_ADDRESS="+restartedAddress,
+		"TRUSTED_PROXIES=127.0.0.1/32",
+	)
+	restartedServer, restartedOutput := startGeneratedServer(t, binary, directory, restartedEnvironment)
+	waitForHealth(t, "http://"+restartedAddress, restartedOutput)
+	response, body = requestJSONFrom(t, plainClient, "http://"+restartedAddress+"/auth/login", badLogin, "203.0.113.10")
+	if response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") == "" || strings.Contains(body, "203.0.113.10") {
+		t.Fatalf("shared restarted account throttle: expected safe 429 with Retry-After, got %d retry=%q: %s", response.StatusCode, response.Header.Get("Retry-After"), body)
+	}
+	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "clear-rate-limits"); err != nil {
+		t.Fatalf("clear rate limits between shared-store scenarios: %v\n%s", err, output)
+	}
+	for attempt := 1; attempt <= 20; attempt++ {
+		target := "http://" + restartedAddress + "/auth/login"
+		if attempt%2 == 0 {
+			target = "http://" + trustedAddressB + "/auth/login"
+		}
+		response, body = requestRateProbe(t, plainClient, target, "203.0.113.10")
+		if response.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("shared trusted-proxy attempt %d: expected controller 415, got %d: %s", attempt, response.StatusCode, body)
+		}
+	}
+	stopCommandProcess(t, restartedServer, false)
+	sourceRestartAddress := freeAddress(t)
+	sourceRestartEnvironment := append(append([]string{}, environment...),
+		"APP_ADDRESS="+sourceRestartAddress,
+		"TRUSTED_PROXIES=127.0.0.1/32",
+	)
+	sourceRestartServer, sourceRestartOutput := startGeneratedServer(t, binary, directory, sourceRestartEnvironment)
+	waitForHealth(t, "http://"+sourceRestartAddress, sourceRestartOutput)
+	response, body = requestRateProbe(t, plainClient, "http://"+sourceRestartAddress+"/auth/login", "203.0.113.10")
+	if response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") == "" || strings.Contains(body, "203.0.113.10") {
+		t.Fatalf("shared restarted source throttle: expected safe 429 with Retry-After, got %d retry=%q: %s", response.StatusCode, response.Header.Get("Retry-After"), body)
+	}
+	response, body = requestRateProbe(t, plainClient, "http://"+sourceRestartAddress+"/auth/login", "203.0.113.11")
+	if response.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("trusted proxy did not distinguish forwarded clients: expected 415, got %d: %s", response.StatusCode, body)
+	}
+	stopCommandProcess(t, sourceRestartServer, false)
+	stopCommandProcess(t, trustedServerB, false)
+	t.Log("PostgreSQL source and account auth throttles are shared across processes, survive restart, and honor trusted proxies")
+
+	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "clear-rate-limits"); err != nil {
+		t.Fatalf("clear rate limits before untrusted-proxy acceptance: %v\n%s", err, output)
+	}
+	untrustedAddress := freeAddress(t)
+	untrustedEnvironment := append(append([]string{}, environment...), "APP_ADDRESS="+untrustedAddress)
+	untrustedServer, untrustedOutput := startGeneratedServer(t, binary, directory, untrustedEnvironment)
+	waitForHealth(t, "http://"+untrustedAddress, untrustedOutput)
+	for attempt := 1; attempt <= 20; attempt++ {
+		forwarded := fmt.Sprintf("203.0.113.%d", attempt)
+		response, body = requestRateProbe(t, plainClient, "http://"+untrustedAddress+"/auth/register", forwarded)
+		if response.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("untrusted proxy attempt %d: expected controller 415, got %d: %s", attempt, response.StatusCode, body)
+		}
+	}
+	response, body = requestRateProbe(t, plainClient, "http://"+untrustedAddress+"/auth/register", "198.51.100.250")
+	if response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") == "" {
+		t.Fatalf("untrusted forwarding header bypassed direct-peer throttle: got %d retry=%q: %s", response.StatusCode, response.Header.Get("Retry-After"), body)
+	}
+	stopCommandProcess(t, untrustedServer, false)
+	t.Log("untrusted forwarding headers cannot bypass the generated auth throttle")
+
 	// The production entrypoint itself must turn SIGTERM into graceful shutdown.
-	binary := filepath.Join(directory, "app")
-	if runtime.GOOS == "windows" {
-		binary += ".exe"
-	}
-	if output, err := generatedCommand(directory, environment, "go", "build", "-o", binary, "./cmd/server"); err != nil {
-		t.Fatalf("build server: %v\n%s", err, output)
-	}
 	shutdownAddress := freeAddress(t)
 	shutdownEnvironment := append(environment,
 		"APP_ADDRESS="+shutdownAddress,
@@ -576,6 +670,25 @@ func waitForHealth(t *testing.T, baseURL string, serverOutput *synchronizedBuffe
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("server did not become healthy:\n%s", serverOutput.String())
+}
+
+func startGeneratedServer(t *testing.T, binary, directory string, environment []string) (*exec.Cmd, *synchronizedBuffer) {
+	t.Helper()
+	server := exec.Command(binary)
+	server.Dir = directory
+	server.Env = environment
+	configureCommandProcess(server)
+	output := &synchronizedBuffer{}
+	server.Stdout, server.Stderr = output, output
+	if err := server.Start(); err != nil {
+		t.Fatalf("start generated server: %v", err)
+	}
+	t.Cleanup(func() {
+		if server.ProcessState == nil {
+			stopCommandProcess(t, server, false)
+		}
+	})
+	return server, output
 }
 
 func TestRelationshipAcceptanceFixtureEmitsInspectableGeneratedApp(t *testing.T) {
@@ -926,7 +1039,13 @@ func main() {
 		fmt.Println(count)
 		return
 	}
-	panic("usage: acceptance_db <create|drop> <schema> | <seed-expired-session|count-expired-sessions>")
+	if len(os.Args) == 2 && os.Args[1] == "clear-rate-limits" {
+		if _, err := db.ExecContext(ctx, "DELETE FROM goforge_rate_limits"); err != nil {
+			panic(err)
+		}
+		return
+	}
+	panic("usage: acceptance_db <create|drop> <schema> | <seed-expired-session|count-expired-sessions|clear-rate-limits>")
 }
 `
 
@@ -948,6 +1067,45 @@ func requestJSON(t *testing.T, client *http.Client, method, url, body string) (*
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	contents, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response, string(contents)
+}
+
+func requestRateProbe(t *testing.T, client *http.Client, target, forwardedFor string) (*http.Response, string) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("X-Forwarded-For", forwardedFor)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	contents, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response, string(contents)
+}
+
+func requestJSONFrom(t *testing.T, client *http.Client, target, body, forwardedFor string) (*http.Response, string) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-For", forwardedFor)
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)

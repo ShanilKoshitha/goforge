@@ -1,0 +1,75 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
+	"github.com/ShanilKoshitha/goforge/job"
+	jobpostgres "github.com/ShanilKoshitha/goforge/job/postgres"
+
+	"example.com/format6/internal/config"
+	appdatabase "example.com/format6/internal/database"
+	"example.com/format6/internal/jobs"
+)
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("worker stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	settings, err := config.LoadWorker()
+	if err != nil {
+		return fmt.Errorf("load configuration: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	db, err := appdatabase.Open(ctx, settings.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	// Reserve queue bookkeeping capacity in addition to one connection per
+	// configured handler. Applications with different handler pool needs can
+	// replace this ordinary database/sql policy here.
+	db.SetMaxOpenConns(settings.JobConcurrency + 4)
+	store, err := jobpostgres.New(db)
+	if err != nil {
+		return fmt.Errorf("build job store: %w", err)
+	}
+	registry, err := jobs.NewRegistry(jobs.Dependencies{DB: db})
+	if err != nil {
+		return fmt.Errorf("build job registry: %w", err)
+	}
+	worker, err := job.NewWorker(store, registry, job.WorkerConfig{
+		Queues:            queues(settings.JobQueues),
+		Concurrency:       settings.JobConcurrency,
+		PollInterval:      settings.JobPollInterval,
+		LeaseDuration:     settings.JobLeaseDuration,
+		HeartbeatInterval: settings.JobHeartbeatInterval,
+		OperationTimeout:  settings.JobOperationTimeout,
+		ShutdownTimeout:   settings.JobShutdownTimeout,
+		Observer:          job.SlogObserver(slog.Default()),
+	})
+	if err != nil {
+		return fmt.Errorf("build job worker: %w", err)
+	}
+	return worker.Run(ctx)
+}
+
+func queues(value string) []string {
+	var result []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
+}

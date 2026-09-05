@@ -1,0 +1,151 @@
+package auth_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/security/password"
+	"github.com/ShanilKoshitha/goforge/session"
+	"github.com/ShanilKoshitha/goforge/web"
+
+	"example.com/format6/internal/auth"
+	views "example.com/format6/resources/views"
+)
+
+var csrfInput = regexp.MustCompile(`name="_token" value="([^"]+)"`)
+
+func TestBrowserAuthenticationLifecycle(t *testing.T) {
+	users := &fakeUsers{}
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := auth.NewController(users, manager, password.Hasher{Iterations: 1}, testAttemptLimiter(t))
+	browser := auth.NewWebController(controller, renderer)
+	router := httpx.NewRouter()
+	router.Use(httpx.MethodOverride())
+	public := router.Group("", web.Sessions(manager), web.CSRF())
+	public.GET("/register", browser.RegisterForm)
+	public.POST("/register", browser.Register)
+	public.GET("/login", browser.LoginForm)
+	public.POST("/login", browser.Login)
+	private := router.Group("", web.Sessions(manager), web.CSRF(), auth.RequireWeb(users))
+	private.GET("/app", browser.Dashboard)
+	private.POST("/logout", browser.Logout)
+
+	form := httptest.NewRecorder()
+	router.ServeHTTP(form, httptest.NewRequest(http.MethodGet, "/register", nil))
+	if form.Code != http.StatusOK {
+		t.Fatalf("registration form: %d: %s", form.Code, form.Body.String())
+	}
+	token := csrfToken(t, form.Body.String())
+	cookie := form.Result().Cookies()[0]
+
+	missingToken := submitForm(router, http.MethodPost, "/register", url.Values{
+		"name": {"Ada"}, "email": {"ada@example.com"}, "password": {"a secure passphrase"}, "password_confirmation": {"a secure passphrase"},
+	}, cookie)
+	if missingToken.Code != http.StatusForbidden {
+		t.Fatalf("missing CSRF token: %d: %s", missingToken.Code, missingToken.Body.String())
+	}
+
+	const secret = "not-long-enough"
+	invalid := submitForm(router, http.MethodPost, "/register", url.Values{
+		"_token": {token}, "name": {"A"}, "email": {"ada@example.com"}, "password": {secret}, "password_confirmation": {secret},
+	}, cookie)
+	if invalid.Code != http.StatusUnprocessableEntity || !strings.Contains(invalid.Body.String(), "ada@example.com") {
+		t.Fatalf("invalid registration: %d: %s", invalid.Code, invalid.Body.String())
+	}
+	if strings.Contains(invalid.Body.String(), secret) {
+		t.Fatal("registration page redisplayed the submitted password")
+	}
+
+	registered := submitForm(router, http.MethodPost, "/register", url.Values{
+		"_token": {token}, "name": {"Ada"}, "email": {"ada@example.com"}, "password": {"a secure passphrase"}, "password_confirmation": {"a secure passphrase"},
+	}, cookie)
+	if registered.Code != http.StatusSeeOther || registered.Header().Get("Location") != "/app" {
+		t.Fatalf("registration redirect: %d %q: %s", registered.Code, registered.Header().Get("Location"), registered.Body.String())
+	}
+	authenticatedCookie := registered.Result().Cookies()[0]
+	if authenticatedCookie.Value == cookie.Value {
+		t.Fatal("browser registration did not rotate the session ID")
+	}
+
+	dashboard := httptest.NewRecorder()
+	dashboardRequest := httptest.NewRequest(http.MethodGet, "/app", nil)
+	dashboardRequest.AddCookie(authenticatedCookie)
+	router.ServeHTTP(dashboard, dashboardRequest)
+	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), "Welcome, Ada") || !strings.Contains(dashboard.Body.String(), "Welcome to GoForge.") {
+		t.Fatalf("dashboard: %d: %s", dashboard.Code, dashboard.Body.String())
+	}
+	logoutToken := csrfToken(t, dashboard.Body.String())
+	dashboardCookie := dashboard.Result().Cookies()[0]
+
+	again := httptest.NewRecorder()
+	againRequest := httptest.NewRequest(http.MethodGet, "/app", nil)
+	againRequest.AddCookie(dashboardCookie)
+	router.ServeHTTP(again, againRequest)
+	if strings.Contains(again.Body.String(), "Welcome to GoForge.") {
+		t.Fatal("flash notice survived more than one request")
+	}
+
+	loggedOut := submitForm(router, http.MethodPost, "/logout", url.Values{"_token": {logoutToken}}, dashboardCookie)
+	if loggedOut.Code != http.StatusSeeOther || loggedOut.Header().Get("Location") != "/login" {
+		t.Fatalf("logout: %d %q", loggedOut.Code, loggedOut.Header().Get("Location"))
+	}
+	if cookies := loggedOut.Result().Cookies(); len(cookies) != 1 || cookies[0].MaxAge != -1 {
+		t.Fatalf("logout cookie = %+v", cookies)
+	}
+
+	loginForm := httptest.NewRecorder()
+	router.ServeHTTP(loginForm, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if loginForm.Code != http.StatusOK {
+		t.Fatalf("login form: %d: %s", loginForm.Code, loginForm.Body.String())
+	}
+	loginToken := csrfToken(t, loginForm.Body.String())
+	loginCookie := loginForm.Result().Cookies()[0]
+	badLogin := submitForm(router, http.MethodPost, "/login", url.Values{
+		"_token": {loginToken}, "email": {"ada@example.com"}, "password": {"wrong password"},
+	}, loginCookie)
+	if badLogin.Code != http.StatusUnprocessableEntity || !strings.Contains(badLogin.Body.String(), "invalid credentials") {
+		t.Fatalf("bad login: %d: %s", badLogin.Code, badLogin.Body.String())
+	}
+	login := submitForm(router, http.MethodPost, "/login", url.Values{
+		"_token": {loginToken}, "email": {"ada@example.com"}, "password": {"a secure passphrase"},
+	}, loginCookie)
+	if login.Code != http.StatusSeeOther || login.Header().Get("Location") != "/app" {
+		t.Fatalf("login redirect: %d %q: %s", login.Code, login.Header().Get("Location"), login.Body.String())
+	}
+	if cookies := login.Result().Cookies(); len(cookies) != 1 || cookies[0].Value == loginCookie.Value {
+		t.Fatal("browser login did not rotate the session ID")
+	}
+}
+
+func csrfToken(t *testing.T, body string) string {
+	t.Helper()
+	match := csrfInput.FindStringSubmatch(body)
+	if len(match) != 2 {
+		t.Fatalf("response has no CSRF field: %s", body)
+	}
+	return match[1]
+}
+
+func submitForm(router http.Handler, method, target string, values url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, target, strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}

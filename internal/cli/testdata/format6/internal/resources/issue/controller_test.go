@@ -1,0 +1,160 @@
+package issue_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/session"
+
+	"example.com/format6/internal/auth"
+	resource "example.com/format6/internal/resources/issue"
+)
+
+type fakeRepository struct {
+	item              resource.Issue
+	pageNumber        int
+	pageSize          int
+	paginationUserID  int64
+	paginationHasNext bool
+}
+
+func (repository *fakeRepository) List(context.Context, int64) ([]resource.Issue, error) {
+	return []resource.Issue{repository.item}, nil
+}
+
+func (repository *fakeRepository) Paginate(_ context.Context, userID int64, page, perPage int) (resource.IssuePage, error) {
+	repository.paginationUserID = userID
+	repository.pageNumber = page
+	repository.pageSize = perPage
+	items := []resource.Issue{}
+	if repository.item.ID != 0 {
+		items = append(items, repository.item)
+	}
+	return resource.IssuePage{
+		Items: items, Number: page, PerPage: perPage,
+		HasPrevious: page > 1, HasNext: repository.paginationHasNext,
+	}, nil
+}
+
+func (repository *fakeRepository) Create(_ context.Context, userID int64, name string) (resource.Issue, error) {
+	repository.item = resource.Issue{ID: 1, UserID: userID, Name: name, CreatedAt: time.Now(), UpdatedAt: time.Now(), Version: 1}
+	return repository.item, nil
+}
+
+func (repository *fakeRepository) Find(context.Context, int64, int64) (resource.Issue, error) {
+	return repository.item, nil
+}
+
+func (repository *fakeRepository) Update(_ context.Context, userID, id int64, name string, expectedVersion *int64) (resource.Issue, error) {
+	if expectedVersion != nil && *expectedVersion != repository.item.Version {
+		return resource.Issue{}, resource.ErrStale
+	}
+	repository.item.UserID, repository.item.ID, repository.item.Name = userID, id, name
+	repository.item.Version++
+	return repository.item, nil
+}
+
+func (repository *fakeRepository) Delete(context.Context, int64, int64) error { return nil }
+
+type fakeUsers struct{ user auth.User }
+
+func (users fakeUsers) Create(context.Context, string, string, string) (auth.User, error) {
+	return users.user, nil
+}
+
+func (users fakeUsers) ByEmail(context.Context, string) (auth.User, error) { return users.user, nil }
+func (users fakeUsers) ByID(context.Context, int64) (auth.User, error)     { return users.user, nil }
+
+func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
+	store := session.NewMemoryStore()
+	manager, err := session.NewManager(store, []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := fakeUsers{user: auth.User{ID: 9, Email: "ada@example.com"}}
+	repository := &fakeRepository{}
+	controller := resource.NewController(repository)
+	router := httpx.NewRouter()
+	router.POST("/issues", auth.Require(manager, users)(controller.Create))
+	router.PUT("/issues/{id}", auth.Require(manager, users)(controller.Update))
+
+	request := httptest.NewRequest(http.MethodPost, "/issues", strings.NewReader(`{"name":"Valid name"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", response.Code)
+	}
+
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", int64(9)); err != nil {
+		t.Fatal(err)
+	}
+	cookieResponse := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), cookieResponse, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := cookieResponse.Result().Cookies()[0]
+
+	request = httptest.NewRequest(http.MethodPost, "/issues", strings.NewReader(`{"name":"x"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/issues", strings.NewReader(`{"name":"Valid name"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || repository.item.UserID != 9 {
+		t.Fatalf("expected owner-scoped create, got %d and user %d", response.Code, repository.item.UserID)
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/issues/1", strings.NewReader(`{"name":"Legacy update"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || repository.item.Name != "Legacy update" || repository.item.Version != 2 {
+		t.Fatalf("versionless update compatibility: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/issues/1", strings.NewReader(`{"name":"Guarded update","version":2}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || repository.item.Name != "Guarded update" || repository.item.Version != 3 {
+		t.Fatalf("guarded update: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/issues/1", strings.NewReader(`{"name":"Stale overwrite","version":2}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || repository.item.Name != "Guarded update" || repository.item.Version != 3 {
+		t.Fatalf("stale update changed state: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/issues/1", strings.NewReader(`{"name":"Invalid version","version":0}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid version: %d: %s", response.Code, response.Body.String())
+	}
+}

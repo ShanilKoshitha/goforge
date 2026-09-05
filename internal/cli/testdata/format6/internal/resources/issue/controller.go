@@ -1,0 +1,121 @@
+package issue
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+
+	"example.com/format6/internal/auth"
+)
+
+type Controller struct{ repository Repository }
+
+func NewController(repository Repository) *Controller {
+	return &Controller{repository: repository}
+}
+
+func (controller *Controller) Index(ctx *httpx.Context) error {
+	user, ok := auth.UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	items, err := controller.repository.List(ctx.Request.Context(), user.ID)
+	if err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"data": items})
+}
+
+func (controller *Controller) Create(ctx *httpx.Context) error {
+	user, ok := auth.UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	var request WriteRequest
+	if err := request.DecodeJSON(ctx); err != nil {
+		return err
+	}
+	if problems := request.Validate(); !problems.Empty() {
+		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
+	}
+	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Name)
+	if err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusCreated, map[string]any{"data": item})
+}
+
+func (controller *Controller) Show(ctx *httpx.Context) error {
+	user, ok := auth.UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	id, err := resourceID(ctx)
+	if err != nil {
+		return err
+	}
+	item, err := controller.repository.Find(ctx.Request.Context(), user.ID, id)
+	if errors.Is(err, ErrNotFound) {
+		return httpx.NewHTTPError(http.StatusNotFound, "issue not found")
+	}
+	if err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"data": item})
+}
+
+func (controller *Controller) Update(ctx *httpx.Context) error {
+	user, ok := auth.UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	id, err := resourceID(ctx)
+	if err != nil {
+		return err
+	}
+	var request WriteRequest
+	if err := request.DecodeJSON(ctx); err != nil {
+		return err
+	}
+	if problems := request.Validate(); !problems.Empty() {
+		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
+	}
+	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Name, request.Version)
+	if errors.Is(err, ErrNotFound) {
+		return httpx.NewHTTPError(http.StatusNotFound, "issue not found")
+	}
+	if errors.Is(err, ErrStale) {
+		return httpx.NewHTTPError(http.StatusConflict, "issue was changed; fetch the latest version and retry")
+	}
+	if err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"data": item})
+}
+
+func (controller *Controller) Delete(ctx *httpx.Context) error {
+	user, ok := auth.UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	id, err := resourceID(ctx)
+	if err != nil {
+		return err
+	}
+	if err := controller.repository.Delete(ctx.Request.Context(), user.ID, id); errors.Is(err, ErrNotFound) {
+		return httpx.NewHTTPError(http.StatusNotFound, "issue not found")
+	} else if err != nil {
+		return err
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
+func resourceID(ctx *httpx.Context) (int64, error) {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil || id < 1 {
+		return 0, httpx.NewHTTPError(http.StatusBadRequest, "invalid issue ID")
+	}
+	return id, nil
+}

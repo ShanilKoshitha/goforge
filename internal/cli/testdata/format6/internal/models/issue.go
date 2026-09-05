@@ -1,0 +1,15 @@
+package models
+
+import "time"
+
+// Issue is application-owned and may be extended without changing the
+// generated HTTP resource package.
+type Issue struct {
+	ID        int64     `json:"id" forge:"primary,generated,protected,required"`
+	UserID    int64     `json:"user_id" db:"user_id" forge:"protected,required,index,references=User.ID,on_delete=cascade"`
+	Name      string    `json:"name" forge:"required"`
+	CreatedAt time.Time `json:"created_at" db:"created_at" forge:"generated,protected,required"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at" forge:"generated,protected,required"`
+	Version   int64     `json:"version" forge:"protected,required,default=1"`
+	Owner     *User     `json:"-" forge:"belongs_to,target=User,foreign_key=UserID,references=ID"`
+}

@@ -1,0 +1,10 @@
+{
+  "resources": [
+    {
+      "name": "Issue",
+      "package": "issue",
+      "plural": "issues",
+      "migration_version": "20260905231056"
+    }
+  ]
+}

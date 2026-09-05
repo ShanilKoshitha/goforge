@@ -1,0 +1,54 @@
+package config
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestHTTPConfigurationHasBoundedDefaultsAndRejectsInvalidLimits(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/application")
+	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
+	settings, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.RequestTimeout != 15*time.Second || settings.ReadTimeout != 30*time.Second ||
+		settings.WriteTimeout != 30*time.Second || settings.IdleTimeout != 2*time.Minute ||
+		settings.MaxHeaderBytes != 1<<20 {
+		t.Fatalf("unexpected HTTP defaults: %+v", settings)
+	}
+
+	t.Setenv("APP_REQUEST_TIMEOUT", "31s")
+	t.Setenv("APP_WRITE_TIMEOUT", "30s")
+	t.Setenv("APP_MAX_HEADER_BYTES", "1")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "APP_REQUEST_TIMEOUT") || !strings.Contains(err.Error(), "APP_MAX_HEADER_BYTES") {
+		t.Fatalf("invalid HTTP limits were not accumulated: %v", err)
+	}
+}
+
+func TestBackgroundConfigurationDoesNotRequireHTTPSessionSecret(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/application")
+	t.Setenv("SESSION_SECRET", "")
+	for key, value := range map[string]string{
+		"JOB_QUEUES":             "default",
+		"JOB_CONCURRENCY":        "4",
+		"JOB_POLL_INTERVAL":      "1s",
+		"JOB_LEASE_DURATION":     "30s",
+		"JOB_HEARTBEAT_INTERVAL": "10s",
+		"JOB_OPERATION_TIMEOUT":  "5s",
+		"JOB_SHUTDOWN_TIMEOUT":   "15s",
+	} {
+		t.Setenv(key, value)
+	}
+	if _, err := LoadDatabase(); err != nil {
+		t.Fatalf("database config unexpectedly required HTTP settings: %v", err)
+	}
+	settings, err := LoadWorker()
+	if err != nil {
+		t.Fatalf("worker config unexpectedly required HTTP settings: %v", err)
+	}
+	if settings.JobConcurrency != 4 || settings.JobQueues != "default" {
+		t.Fatalf("unexpected worker defaults: %+v", settings)
+	}
+}

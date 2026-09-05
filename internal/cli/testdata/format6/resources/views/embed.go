@@ -1,0 +1,9 @@
+package views
+
+import "embed"
+
+// Files contains application-owned GoForge source templates for development
+// recompilation and inspection. Production rendering uses Compiled below.
+//
+//go:embed all:*
+var Files embed.FS

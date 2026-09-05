@@ -1,0 +1,4 @@
+version: 6
+name: "goforge-v06-fixture"
+database: postgres
+layout: standard

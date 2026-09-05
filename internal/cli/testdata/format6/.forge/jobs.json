@@ -1,0 +1,9 @@
+{
+  "jobs": [
+    {
+      "name": "SendWelcome",
+      "file": "send_welcome",
+      "definition": "send_welcome.v1"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+@extends("layouts/app")
+@section("title"){{.Title}}@endsection
+@push("head")<meta name="description" content="Issue index">@endpush
+@section("content")
+  @component("components/card", title=.Title, tone="resource")
+    @if(.Notice)<p role="status">{{.Notice}}</p>@endif
+    <ul>
+      @for(.Items)<li><a href="/app/issues/{{.ID}}">{{.Name}}</a></li>@empty<li>No issues yet.</li>@endfor
+    </ul>
+    <nav aria-label="Pagination">
+      {{if .PreviousURL}}<a href="{{.PreviousURL}}">Previous</a>{{end}}
+      <span>Page {{.Page}}</span>
+      {{if .NextURL}}<a href="{{.NextURL}}">Next</a>{{end}}
+    </nav>
+    @slot("actions")<a href="/app/issues/new">New Issue</a>@endslot
+  @endcomponent
+@endsection

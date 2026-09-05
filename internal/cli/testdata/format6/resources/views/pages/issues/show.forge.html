@@ -1,0 +1,16 @@
+@extends("layouts/app")
+@section("title"){{.Title}}@endsection
+@section("content")
+  @component("components/card", title=.Item.Name, tone="resource")
+    @if(.Notice)<p role="status">{{.Notice}}</p>@endif
+    <form action="/app/issues/{{.Item.ID}}" method="post">
+      @csrf
+      @method("DELETE")
+      <button type="submit">Delete</button>
+    </form>
+    @slot("actions")
+      <a href="/app/issues/{{.Item.ID}}/edit">Edit</a>
+      <a href="/app/issues">Back to issues</a>
+    @endslot
+  @endcomponent
+@endsection

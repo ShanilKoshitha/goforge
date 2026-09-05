@@ -1,0 +1,9 @@
+@extends("layouts/app")
+@section("title"){{.Title}}@endsection
+@push("head")<meta name="description" content="GoForge application">@endpush
+@section("content")
+    @component("components/card", title=.Title, tone="welcome")
+      @include("partials/tagline", .Tagline)
+      @slot("actions")<a href="/login">Sign in</a>@endslot
+    @endcomponent
+@endsection

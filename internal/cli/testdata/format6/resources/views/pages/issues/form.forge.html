@@ -1,0 +1,11 @@
+<form action="{{.Action}}" method="post">
+  @csrf
+  {{if .Method}}<input type="hidden" name="_method" value="{{.Method}}">{{end}}
+  {{if .Version}}<input type="hidden" name="version" value="{{.Version}}">{{end}}
+  <label>Name
+    <input name="name" value="@old("name", .Name)" required minlength="2" maxlength="200">
+  </label>
+  @errors("name")<p role="alert">{{.}}</p>@enderrors
+  @errors("version")<p role="alert">{{.}}</p>@enderrors
+  <button type="submit">{{.Submit}}</button>
+</form>

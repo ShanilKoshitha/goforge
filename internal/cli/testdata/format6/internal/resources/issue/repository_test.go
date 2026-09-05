@@ -1,0 +1,196 @@
+package issue
+
+import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"io"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge/orm"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+var registerRepositoryDriver sync.Once
+
+func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := NewPostgresRepository(db)
+	assertBoundedOwnerList(t, repository)
+	connection := lastRepositoryConnection()
+	connection.queryError = &pgconn.PgError{Code: "23505", ConstraintName: "issues_name_key"}
+	if _, err := repository.List(context.Background(), 9); !errors.Is(err, orm.ErrUnique) {
+		t.Fatalf("PostgreSQL error was not classified at repository boundary: %v", err)
+	}
+	connection.queryError = nil
+	connection.updateFound = true
+	expectedVersion := int64(3)
+	updated, err := repository.Update(context.Background(), 9, 41, "updated", &expectedVersion)
+	if err != nil || updated.Version != 4 {
+		t.Fatalf("guarded update did not return one incremented version: %+v %v", updated, err)
+	}
+	if !strings.Contains(connection.query, `"version" = "version" +`) ||
+		!strings.Contains(connection.query, `"version" = $`) ||
+		!strings.Contains(connection.query, `"user_id" = $`) {
+		t.Fatalf("guarded update SQL is incomplete: %s", connection.query)
+	}
+	connection.updateFound = false
+	connection.exists = true
+	if _, err := repository.Update(context.Background(), 9, 41, "stale", &expectedVersion); !errors.Is(err, ErrStale) || !errors.Is(err, orm.ErrStale) {
+		t.Fatalf("owned guarded miss is not stale: %v", err)
+	}
+	if !strings.Contains(connection.query, `"user_id" = $`) {
+		t.Fatalf("stale existence probe lost owner scope: %s", connection.query)
+	}
+	connection.exists = false
+	if _, err := repository.Update(context.Background(), 10, 41, "hidden", &expectedVersion); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrStale) {
+		t.Fatalf("wrong-owner guarded miss leaked staleness: %v", err)
+	}
+
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	assertBoundedOwnerList(t, NewPostgresRepository(tx))
+	if err := NewPostgresRepository(tx).Delete(context.Background(), 9, 41); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertBoundedOwnerList(t *testing.T, repository *PostgresRepository) {
+	t.Helper()
+	items, err := repository.List(context.Background(), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != 41 || items[0].UserID != 9 || items[0].Version != 3 {
+		t.Fatalf("mapped items = %+v", items)
+	}
+	connection := repositoryConnectionFrom(t, repository.Executor)
+	if !strings.Contains(connection.query, `WHERE "issues"."user_id" = $1`) || !strings.Contains(connection.query, "LIMIT $2") {
+		t.Fatalf("list is not bounded and owner-scoped: %s", connection.query)
+	}
+	if !reflect.DeepEqual(connection.args, []driver.NamedValue{{Ordinal: 1, Value: int64(9)}, {Ordinal: 2, Value: int64(maximumPageSize)}}) {
+		t.Fatalf("list args = %#v", connection.args)
+	}
+}
+
+func repositoryConnectionFrom(t *testing.T, executor any) *repositoryConnection {
+	t.Helper()
+	var db *sql.DB
+	switch value := executor.(type) {
+	case *sql.DB:
+		db = value
+	case *sql.Tx:
+		// The driver records the last statement globally because database/sql
+		// intentionally does not expose a transaction's underlying connection.
+		return lastRepositoryConnection()
+	default:
+		t.Fatalf("unexpected executor %T", executor)
+	}
+	if err := db.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	return lastRepositoryConnection()
+}
+
+var (
+	repositoryConnectionMu sync.Mutex
+	repositoryLast         *repositoryConnection
+)
+
+func lastRepositoryConnection() *repositoryConnection {
+	repositoryConnectionMu.Lock()
+	defer repositoryConnectionMu.Unlock()
+	return repositoryLast
+}
+
+type repositoryDriver struct{}
+
+func (repositoryDriver) Open(string) (driver.Conn, error) {
+	connection := &repositoryConnection{}
+	repositoryConnectionMu.Lock()
+	repositoryLast = connection
+	repositoryConnectionMu.Unlock()
+	return connection, nil
+}
+
+type repositoryConnection struct {
+	query       string
+	args        []driver.NamedValue
+	queryError  error
+	updateFound bool
+	exists      bool
+}
+
+func (*repositoryConnection) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (*repositoryConnection) Close() error                        { return nil }
+func (*repositoryConnection) Begin() (driver.Tx, error)           { return repositoryTransaction{}, nil }
+func (connection *repositoryConnection) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	connection.query = query
+	connection.args = append([]driver.NamedValue(nil), args...)
+	if connection.queryError != nil {
+		return nil, connection.queryError
+	}
+	if strings.HasPrefix(query, "UPDATE ") {
+		if !connection.updateFound {
+			return &repositoryRows{sent: true}, nil
+		}
+		return &repositoryRows{values: repositoryModelValues(4)}, nil
+	}
+	if strings.HasPrefix(query, "SELECT EXISTS") {
+		return &repositoryRows{values: []driver.Value{connection.exists}}, nil
+	}
+	return &repositoryRows{values: repositoryModelValues(3)}, nil
+}
+func (connection *repositoryConnection) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	connection.query = query
+	connection.args = append([]driver.NamedValue(nil), args...)
+	return repositoryResultValue(1), nil
+}
+
+type repositoryTransaction struct{}
+
+func (repositoryTransaction) Commit() error   { return nil }
+func (repositoryTransaction) Rollback() error { return nil }
+
+type repositoryRows struct {
+	sent   bool
+	values []driver.Value
+}
+
+func (rows *repositoryRows) Columns() []string {
+	if len(rows.values) == 1 {
+		return []string{"exists"}
+	}
+	return []string{"id", "user_id", "name", "created_at", "updated_at", "version"}
+}
+func (*repositoryRows) Close() error { return nil }
+func (rows *repositoryRows) Next(values []driver.Value) error {
+	if rows.sent {
+		return io.EOF
+	}
+	rows.sent = true
+	copy(values, rows.values)
+	return nil
+}
+
+func repositoryModelValues(version int64) []driver.Value {
+	return []driver.Value{int64(41), int64(9), "mapped", time.Unix(1, 0), time.Unix(2, 0), version}
+}
+
+type repositoryResultValue int64
+
+func (value repositoryResultValue) LastInsertId() (int64, error) { return 0, nil }
+func (value repositoryResultValue) RowsAffected() (int64, error) { return int64(value), nil }

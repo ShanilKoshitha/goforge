@@ -1,0 +1,75 @@
+package routes_test
+
+import (
+	"database/sql"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/security/ratelimit"
+	"github.com/ShanilKoshitha/goforge/session"
+
+	"example.com/format6/internal/config"
+	views "example.com/format6/resources/views"
+	"example.com/format6/routes"
+)
+
+func TestRegisterWiresBrowserMiddlewareAndViews(t *testing.T) {
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := httpx.NewRouter()
+	router.Use(httpx.MethodOverride("/app/"))
+	err = routes.Register(router, renderer, &sql.DB{}, session.NewMemoryStore(), ratelimit.NewMemoryStore(20_000), config.Config{
+		Environment: "local", SessionSecret: strings.Repeat("s", 32), ShutdownTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registration := httptest.NewRecorder()
+	router.ServeHTTP(registration, httptest.NewRequest(http.MethodGet, "/register", nil))
+	if registration.Code != http.StatusOK || !strings.Contains(registration.Body.String(), `name="_token"`) || len(registration.Result().Cookies()) != 1 {
+		t.Fatalf("registration route: %d cookies=%d: %s", registration.Code, len(registration.Result().Cookies()), registration.Body.String())
+	}
+
+	dashboard := httptest.NewRecorder()
+	router.ServeHTTP(dashboard, httptest.NewRequest(http.MethodGet, "/app", nil))
+	if dashboard.Code != http.StatusSeeOther || dashboard.Header().Get("Location") != "/login" {
+		t.Fatalf("protected browser route: %d %q", dashboard.Code, dashboard.Header().Get("Location"))
+	}
+
+	for attempt := 1; attempt <= 21; attempt++ {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		router.ServeHTTP(response, request)
+		if attempt <= 20 && response.Code != http.StatusUnsupportedMediaType {
+			t.Fatalf("source-limited attempt %d: expected controller 415, got %d", attempt, response.Code)
+		}
+		if attempt == 21 {
+			if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") == "" {
+				t.Fatalf("source limiter response: %d retry=%q: %s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), request.RemoteAddr) {
+				t.Fatal("source limiter response disclosed its key")
+			}
+		}
+	}
+}
+
+func TestRegisterRejectsInvalidTrustedProxyCIDRs(t *testing.T) {
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = routes.Register(httpx.NewRouter(), renderer, &sql.DB{}, session.NewMemoryStore(), ratelimit.NewMemoryStore(10), config.Config{
+		Environment: "local", SessionSecret: strings.Repeat("s", 32), TrustedProxies: "127.0.0.1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "trusted proxy CIDR") {
+		t.Fatalf("invalid trusted proxy configuration was accepted: %v", err)
+	}
+}
