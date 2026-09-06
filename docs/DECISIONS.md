@@ -513,7 +513,7 @@ behavior when processes overlap or dependencies fail.
 
 ## D026 — Test and build are non-mutating freshness gates
 
-**Status:** accepted for v0.9 implementation
+**Status:** accepted for v0.9
 
 `forge test` and `forge build` are no-argument project commands for formats 4
 through 8. Both first prove that the inspectable ORM artifact is current and

@@ -42,7 +42,8 @@ hash upgrades, immediate cross-process session revocation, and independently
 configured idle and absolute session lifetimes. Credential writes are ordinary
 application-owned compare-and-swap SQL, and stale concurrent requests cannot
 restore an old password or overwrite a winning rotated browser session.
-The v0.9 developer-loop milestone is in progress. It adds opinionated,
+The v0.9 developer-loop source milestone is accepted for the next public
+release. It adds opinionated,
 non-mutating `forge test` and `forge build` gates while retaining the underlying
 Go commands as complete escape hatches.
 

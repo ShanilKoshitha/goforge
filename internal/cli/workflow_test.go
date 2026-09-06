@@ -217,6 +217,7 @@ func TestForgeBuildRealProcessCancellationPreservesLastGoodArtifact(t *testing.T
 	ready := filepath.Join(t.TempDir(), "ready")
 	t.Setenv("GOFORGE_WORKFLOW_BUILD_HELPER_READY", ready)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	result := make(chan error, 1)
 	go func() {
 		result <- run(ctx, []string{"build"}, nil, io.Discard, io.Discard, blockingWorkflowProcess{})
