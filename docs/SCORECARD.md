@@ -1,6 +1,6 @@
 # Post-v0.8 P1 and production-hardening scorecard
 
-Status: **implemented; PostgreSQL acceptance rerun pending** — 2026-09-06
+Status: **accepted** — 2026-09-06
 
 ## Acceptance criteria
 
@@ -23,8 +23,9 @@ The PostgreSQL workflow contains the atomic-signup and readiness probes but was
 not executed locally because `GOFORGE_TEST_DATABASE_URL` and a Docker engine
 were unavailable. The first branch run correctly rejected an acceptance binary
 built before the transactional probe migration existed; the fixture now
-rebuilds that binary against the final embedded migration manifest. CI supplies
-PostgreSQL and must pass the corrected workflow before this work is accepted.
+rebuilds that binary against the final embedded migration manifest. The
+corrected branch passed the race suite and both generated PostgreSQL workflows
+twice in [CI run 34054530630](https://github.com/ShanilKoshitha/goforge/actions/runs/34054530630).
 
 # v0.8 account integrity and bounded sessions scorecard
 
