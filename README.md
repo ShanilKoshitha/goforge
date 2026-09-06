@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.7.1 is PostgreSQL-first and accepted against its written milestone
+GoForge v0.8.1 is PostgreSQL-first and accepted against its written milestone
 scorecard. It includes explicit database wiring, parallel JSON and
 server-rendered authentication, database-backed sessions, CSRF-protected HTML
 forms, production middleware, embedded migrations, owner-scoped JSON and HTML
@@ -37,13 +37,18 @@ boundary adds typed composable validation, exact JSON/form failure semantics,
 bounded HTTP timeouts and headers, correlated completion logs, validated CORS
 and security policy, trusted-proxy parsing, and PostgreSQL authentication
 throttles shared across processes and restarts.
+Account integrity now includes JSON and browser password change, transparent
+hash upgrades, immediate cross-process session revocation, and independently
+configured idle and absolute session lifetimes. Credential writes are ordinary
+application-owned compare-and-swap SQL, and stale concurrent requests cannot
+restore an old password or overwrite a winning rotated browser session.
 
 ## Install and try it
 
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.7.1
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.8.1
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d

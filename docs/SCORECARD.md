@@ -1,6 +1,6 @@
 # v0.8 account integrity and bounded sessions scorecard
 
-Status: **in progress**
+Status: **accepted** — 2026-09-05
 
 Target:
 
@@ -15,16 +15,16 @@ Target:
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| Password change is complete on both transports | missing | One application-owned request explicitly decodes JSON and form fields, applies the same validation policy, verifies the current password, never redisplays password values, and drives both an authenticated API endpoint and a CSRF-protected browser form |
-| Credential mutation is atomic and race-safe | missing | PostgreSQL replaces the hash and increments a visible credential generation with a compare-and-swap predicate; concurrent stale changes and logins cannot restore an obsolete hash or both succeed; a same-cookie loser cannot erase the winner's rotated session |
-| Revocation is immediate and global | missing | Password change preserves only a rotated current session, while sign-out-everywhere performs an unconditional atomic generation advance that remains linearizable with password change; stale API and browser cookies fail on another process and after restart |
-| Authenticated sessions prove current credentials | missing | Sessions carry the observed credential generation, both authentication middleware compare it with the current user before protected work, and mismatches invalidate server state without emitting an out-of-order cookie that could overwrite a concurrent rotation |
-| Password hashes upgrade transparently | partial | `password.Hasher` recognizes weaker parameterized hashes; successful login conditionally persists a current-strength replacement, while failed weak-hash verification is padded to current work and concurrent password change remains authoritative |
-| Idle and absolute lifetime are independent | missing | A validated explicit session policy lets activity slide idle expiry without crossing the original absolute deadline; fresh applications expose both durations as typed environment configuration |
-| Failures remain safe and bounded | partial | Current transport limits, validation results, CSRF, account/source throttles, and safe error rendering remain; current-password failures are disclosure-safe and rate-limited without logging submitted secrets |
-| Generated behavior stays inspectable | partial | Credential generation, repository compare-and-swap methods, routes, controllers, requests, configuration, views, and SQL are ordinary application-owned files; the generic session store and password hasher remain replaceable |
-| Compatibility is explicit | missing | A frozen format-7 application passes current framework and compatible CLI checks; generators refuse unsupported project formats before writes rather than injecting format-8 auth contracts |
-| Full workflow passes twice | missing | Framework tests/vet/race and two fresh format-8 applications pass generated tests/vet/race/build plus isolated two-process PostgreSQL password, revocation, rehash, expiry, migration, browser, and API journeys without leaked processes or schemas |
+| Password change is complete on both transports | passing | One application-owned request explicitly decodes JSON and form fields, applies the same validation policy, verifies the current password, never redisplays password values, and drives both an authenticated API endpoint and a CSRF-protected browser form |
+| Credential mutation is atomic and race-safe | passing | PostgreSQL replaces the hash and increments a visible credential generation with a compare-and-swap predicate; deterministic SQL and same-cookie tests prove stale changes and logins cannot restore an obsolete hash, both win, or erase the winning rotated session |
+| Revocation is immediate and global | passing | Password change preserves only a rotated current session, while sign-out-everywhere performs an unconditional atomic generation advance linearizable with password change; stale API and browser cookies fail on another process and after restart |
+| Authenticated sessions prove current credentials | passing | Sessions carry the observed credential generation, both authentication middleware compare it with the current user before protected work, and mismatches invalidate server state without emitting an out-of-order cookie that could overwrite a concurrent rotation |
+| Password hashes upgrade transparently | passing | Successful login conditionally persists a current-strength replacement without advancing the credential generation; failed weak-hash verification is padded to bounded current work and concurrent password change remains authoritative |
+| Idle and absolute lifetime are independent | passing | A validated explicit session policy lets activity slide idle expiry without crossing durable issuance plus the absolute deadline; fresh applications expose both durations as typed environment configuration |
+| Failures remain safe and bounded | passing | Exact JSON/form failures, authenticated-before-CSRF ordering, account/source throttles, safe current-password errors, and generated HTML tests prevent password, hash, identity, and implementation-cause disclosure |
+| Generated behavior stays inspectable | passing | Credential generation, repository compare-and-swap methods, routes, controllers, requests, configuration, views, and SQL are ordinary application-owned files; the generic session store and password hasher remain replaceable |
+| Compatibility is explicit | passing | An application generated by immutable v0.7.1 passes current runtime tests and compatible CLI checks; format-8 resource and future-format generators refuse before writes instead of injecting incompatible contracts |
+| Full workflow passes twice | passing | Framework race/vet/build and two fresh format-8 PostgreSQL applications pass the complete password, revocation, rehash, expiry, migration, browser, API, CRUD, ORM, and job journeys on both the runtime and final distribution commits |
 
 ## Baseline — 2026-09-05
 
@@ -61,6 +61,29 @@ Target:
 - `forge test`, `forge build`, or a development watcher. Conventional Go
   commands already work; their cohesive CLI milestone remains next in product
   priority after account integrity.
+
+## Acceptance evidence — 2026-09-05
+
+- Public CI passed on the immutable `v0.8.0` runtime commit `cf4a66d` in
+  [run 34002623263](https://github.com/ShanilKoshitha/goforge/actions/runs/34002623263).
+  The final `v0.8.1` distribution commit `c4d206a` passed the same gates in
+  [run 34002985340](https://github.com/ShanilKoshitha/goforge/actions/runs/34002985340).
+  Each run executes the fresh PostgreSQL application workflows with `-count=2`.
+- A clean-cache `go run
+  github.com/ShanilKoshitha/goforge/cmd/forge@v0.8.1 new` generated a format-8
+  application without `--replace`. Its public `v0.8.0` dependency passed
+  `go mod verify`, `go test ./... -count=1`, `go vet ./...`, and
+  `go build ./cmd/...`.
+- The immutable `v0.7.1` CLI at commit `415449c` generated a real format-7
+  application. Pointed at the v0.8 runtime, it passed `go test ./...`, current
+  `views:compile --check`, and `orm:generate --check`; `make:resource` required
+  format 8 and left no files behind.
+- Two independent final read-only reviews reported no remaining P0, P1, or P2
+  defect after the concurrency, stale-cookie, middleware-ordering, weak-hash
+  timing, request-boundary, and template-disclosure fixes.
+- Lightweight unsigned tags `v0.8.0` and `v0.8.1` point to their immutable
+  runtime and distribution commits. The public v0.8.0 checksums embedded by
+  v0.8.1 were resolved through the Go proxy and checksum database.
 
 # v0.7 explicit request boundary and hardened HTTP kernel scorecard
 

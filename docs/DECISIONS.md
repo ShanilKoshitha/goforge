@@ -452,3 +452,22 @@ using the database read already required by authentication, without teaching a
 generic session package about application users. Compare-and-swap credential
 writes and a non-sliding absolute deadline close the important recovery races
 while keeping every policy and mutation visible in ordinary Go and SQL.
+
+## D024 — v0.8 uses a runtime tag followed by a checksum-bearing CLI tag
+
+**Status:** accepted for v0.8
+
+The public lightweight unsigned `v0.8.0` tag fixes the reviewed runtime and
+format-8 generator source at commit `cf4a66d`. After that immutable module was
+available through the Go proxy and checksum database, the scaffold requirement
+and checksums were updated to v0.8.0 and the CLI was released as lightweight
+unsigned `v0.8.1` at commit `c4d206a`.
+
+Both commits passed public race, vet, build, and twice-run fresh PostgreSQL
+application workflows. A separate clean module cache then installed the public
+v0.8.1 CLI, generated without a local replacement, verified modules, and passed
+the generated tests, vet, and command builds.
+
+Reason: a module cannot embed its own public zip checksum before the tag exists.
+Keeping the runtime tag immutable and shipping only the resolved checksum pin in
+a patch CLI tag makes that bootstrap boundary explicit and reproducible.
