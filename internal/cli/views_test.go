@@ -292,6 +292,12 @@ func TestFormatFourFrozenCompilerBuildServeCheckAndLastGood(t *testing.T) {
 	files := map[string]string{
 		"forge.yaml": "version: 4\n",
 		"go.mod":     "module example.com/legacy\n\ngo 1.25.0\n\nrequire github.com/ShanilKoshitha/goforge v0.5.0\n\nreplace github.com/ShanilKoshitha/goforge => " + filepath.ToSlash(root) + "\n",
+		filepath.Join("internal", "models", "legacy.go"): `package models
+
+type Legacy struct {
+	ID int64 ` + "`forge:\"primary,generated,protected,required\"`" + `
+}
+`,
 		filepath.Join("resources", "views", "layouts", "app.forge.html"):      `<body>@yield("content")</body>`,
 		filepath.Join("resources", "views", "partials", "message.forge.html"): `<span>{{.}}</span>`,
 		filepath.Join("resources", "views", "pages", "home.forge.html"): `@extends("layouts/app")
@@ -333,6 +339,10 @@ func main() {
 	}
 	t.Chdir(directory)
 	var output bytes.Buffer
+	if err := Run([]string{"orm:generate"}, &output, &output); err != nil {
+		t.Fatalf("format-4 ORM generation: %v\n%s", err, output.String())
+	}
+	output.Reset()
 	if err := Run([]string{"views:compile"}, &output, &output); err != nil {
 		t.Fatalf("format-4 compile: %v\n%s", err, output.String())
 	}
@@ -358,6 +368,25 @@ func main() {
 		"GOMODCACHE="+filepath.Join(root, ".cache", "go-mod"),
 		"GOWORK=off",
 	)
+	t.Setenv("GOCACHE", filepath.Join(root, ".cache", "go-build"))
+	t.Setenv("GOMODCACHE", filepath.Join(root, ".cache", "go-mod"))
+	t.Setenv("GOWORK", "off")
+	ormBefore, err := os.ReadFile(filepath.FromSlash(generatedORMPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewsBefore := append([]byte(nil), artifact...)
+	for _, command := range []string{"test", "build"} {
+		output.Reset()
+		if err := RunContext(context.Background(), []string{command}, nil, &output, &output); err != nil {
+			t.Fatalf("format-4 forge %s: %v\n%s", command, err, output.String())
+		}
+	}
+	assertArtifactBytes(t, generatedORMPath, ormBefore)
+	assertArtifactBytes(t, generatedViewsPath, viewsBefore)
+	if _, err := os.Stat(workflowBuildDestination()); err != nil {
+		t.Fatalf("format-4 forge build did not publish server: %v", err)
+	}
 	if result, err := generatedCommand(directory, baseEnvironment, "go", "build", "./cmd/server"); err != nil {
 		t.Fatalf("format-4 application build: %v\n%s", err, result)
 	}

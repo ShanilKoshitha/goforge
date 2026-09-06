@@ -1,3 +1,80 @@
+# v0.9 cohesive test and build loop scorecard
+
+Status: **accepted** — 2026-09-06
+
+Target:
+
+> From a generated format-4 through format-8 application, use one explicit
+> command to prove the inspectable ORM and compiled views are current before
+> running the complete Go test suite, and one explicit command to publish a
+> production server binary without replacing the last-good artifact on failure.
+> Both workflows remain non-mutating freshness gates over conventional Go
+> commands with direct, documented escape hatches.
+
+## Acceptance criteria
+
+| Criterion | State | Evidence |
+| --- | --- | --- |
+| Command boundaries are exact | passing | Focused tests prove both commands accept no arguments, require a project root, support formats 4 through 8, and reject older, future, or malformed manifests before spawning a child or creating `bin` |
+| Freshness is checked before execution | passing | Both commands check ORM first and views second; format 4 uses the frozen compiler while formats 5 through 8 delegate to application-owned `cmd/views`; missing, stale, and invalid artifacts stop execution |
+| Preflight never rewrites source | passing | Unit, frozen-format, released-format, and fresh PostgreSQL tests retain generated ORM and view artifacts byte for byte; stale diagnostics name `forge orm:generate` or `forge views:compile` |
+| Testing remains ordinary Go | passing | Runner tests prove exact `go test ./...` delegation with inherited context and streams; CLI tests preserve child exit codes without duplicate diagnostics |
+| Production output is canonical | passing | `forge build` uses `go build -trimpath -o <staged-output> ./cmd/server` and publishes only `bin/app` or `bin/app.exe`; Linux and native Windows CI both execute the command |
+| Failed builds preserve the last-good binary | passing | Simulated compiler failures, post-compile cancellation, a real cancelled child process, and a deliberately invalid fresh application all leave the canonical binary byte-identical and remove temporary output |
+| Escape hatches remain complete | passing | Framework and generated-project guides give exact ORM/view checks plus direct `go test`, `go build`, and `go run` alternatives for custom flags, packages, tags, targets, and outputs |
+| Existing projects remain compatible | passing | A hand-built frozen format-4 application and the frozen format-6 fixture execute both workflows; CI also installs public v0.8.1, generates a no-`replace` format-8 application, and retains its module and generated artifacts unchanged |
+| Full workflow passes twice | passing | Public push and pull-request runs each passed framework race/vet/build, released-format compatibility, native Windows checks, and two fresh format-8 PostgreSQL journeys with canonical out-of-tree binary execution and failure-preservation probes |
+
+## Passing evidence — 2026-09-06
+
+- Local `go test -race ./...`, `go vet ./...`, and `go build ./cmd/forge`
+  passed. The complete CLI package also passed after the frozen-format and real
+  process-cancellation additions.
+- A locally installed public v0.8.1 CLI generated a format-8 application with
+  its public v0.8.0 dependency and no local replacement. The current CLI ran
+  `forge test` and `forge build`, left ORM/views unchanged, and published a
+  working `bin/app.exe`.
+- [Push CI run 34057241836](https://github.com/ShanilKoshitha/goforge/actions/runs/34057241836)
+  passed the Linux/PostgreSQL job in 5m41s and native Windows in 2m44s.
+- [Pull-request CI run 34057252760](https://github.com/ShanilKoshitha/goforge/actions/runs/34057252760)
+  independently passed the Linux/PostgreSQL job in 5m42s and native Windows in
+  3m19s. Each Linux job ran both generated PostgreSQL workflows twice.
+- Final independent review found no P0, P1, or P2 blocker after the frozen
+  format, public release, real cancellation, version, and evidence closures and
+  approved the source milestone for merge and the v0.9.0 runtime tag.
+
+## Baseline — 2026-09-06
+
+- Post-v0.8 production hardening is accepted. The merged `main` branch passed
+  the framework race/vet/build gates and both generated PostgreSQL workflows
+  twice in public CI.
+- `forge serve` already checks the project root, compiles views, and delegates
+  to `go run ./cmd/server`; the CLI has no `test` or `build` command.
+- Generated documentation currently sends developers directly to `go test
+  ./...` and `go build -trimpath -o bin/app ./cmd/server`. These conventional
+  commands work but do not first prove that inspectable ORM and view artifacts
+  match their source inputs.
+- ORM and view compilers already expose deterministic, non-mutating `--check`
+  behavior. Format-4 view semantics are frozen, while formats 5 through 8 own
+  an application compiler with the production function map.
+
+## Explicit non-goals for v0.9
+
+- `forge doctor`, environment diagnosis, dependency installation, or toolchain
+  repair.
+- File watching, process reload, browser LiveReload/HMR, frontend asset
+  bundling, or a multi-process `forge dev` command.
+- Starting or stopping Compose/PostgreSQL, provisioning a test database, or
+  changing `.env`.
+- Applying migrations before tests, builds, or server startup. Database state
+  remains an explicit `forge migrate` operation.
+- Test arguments, package selection, coverage policy, test watching, build
+  tags, cross-compilation, release archives, signing, or container images.
+- Building the worker or console. Their conventional `go build` commands remain
+  documented escape hatches.
+- A new runtime abstraction, generated application contract, project-format
+  version, or automatic upgrade of older projects.
+
 # Post-v0.8 P1 and production-hardening scorecard
 
 Status: **accepted** — 2026-09-06

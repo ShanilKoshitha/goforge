@@ -510,3 +510,42 @@ Reason: local correctness under one coordinator or one happy process is not a
 production guarantee. Cross-process mutation, shutdown, readiness, schema
 identity, authentication commits, and durable failure surfaces must retain safe
 behavior when processes overlap or dependencies fail.
+
+## D026 — Test and build are non-mutating freshness gates
+
+**Status:** accepted for v0.9
+
+`forge test` and `forge build` are no-argument project commands for formats 4
+through 8. Both first prove that the inspectable ORM artifact is current and
+then prove that compiled views are current. Formats 5 through 8 delegate view
+checking to the application-owned `cmd/views` compiler so custom functions and
+the production renderer retain one contract; format 4 retains its frozen
+compiler semantics. A missing, stale, or invalid generated artifact stops the
+workflow with the explicit generation command needed to repair it.
+
+These preflights never write generated source. `forge test` then delegates
+exactly to `go test ./...`. `forge build` compiles only `./cmd/server` with
+`-trimpath` into a temporary file beside the destination, then publishes
+`bin/app` on Unix or `bin/app.exe` on Windows only after compilation succeeds.
+A failed or cancelled build removes its temporary file and preserves any
+last-good canonical binary byte for byte.
+
+The commands do not start services, apply migrations, modify `.env`, select a
+test database, or infer deployment policy. `forge test` intentionally does not
+accept package or test flags, and `forge build` does not add targets, tags,
+cross-compilation, or release packaging. Developers use `go test` and `go build`
+directly when the opinionated default does not fit. Workers and the console also
+retain their direct build commands. No runtime API or generated source contract
+changes, so format 8 remains current and formats 4 through 8 can share the
+workflow.
+
+Watch/reload, browser LiveReload or HMR, frontend assets, a multi-process
+development supervisor, service orchestration, migration automation, and a
+diagnostic `doctor` command remain separate milestones. `forge serve` keeps its
+visible compile-then-`go run ./cmd/server` behavior.
+
+Reason: a thin alias alone would not improve correctness, while silently
+regenerating source during a test or release build would hide a dirty checkout.
+Explicit non-mutating checks close the stale-artifact gap and the staged binary
+closes the partial-publication gap without replacing Go's tools or adding
+runtime magic.
