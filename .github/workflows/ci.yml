@@ -39,3 +39,18 @@ jobs:
       - run: go build -o "$RUNNER_TEMP/forge" ./cmd/forge
       - name: Generated PostgreSQL applications
         run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow)$' -count=2 -v
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+      - name: Windows CLI tests
+        run: go test ./cmd/forge ./internal/cli
+      - name: Windows CLI vet
+        run: go vet ./cmd/forge ./internal/cli
+      - name: Windows CLI build
+        run: go build -o "$env:RUNNER_TEMP\forge.exe" ./cmd/forge

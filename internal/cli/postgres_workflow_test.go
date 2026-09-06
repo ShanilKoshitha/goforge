@@ -107,6 +107,47 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "orm:generate", "--check"); err != nil {
 		t.Fatalf("forge orm:generate --check: %v\n%s", err, output)
 	}
+	generatedORM, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(generatedORMPath)))
+	if err != nil {
+		t.Fatalf("read generated ORM before workflow commands: %v", err)
+	}
+	generatedViews, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(generatedViewsPath)))
+	if err != nil {
+		t.Fatalf("read generated views before workflow commands: %v", err)
+	}
+	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "test"); err != nil {
+		t.Fatalf("forge test: %v\n%s", err, output)
+	}
+	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "build"); err != nil {
+		t.Fatalf("forge build: %v\n%s", err, output)
+	}
+	assertGeneratedArtifactUnchanged(t, directory, generatedORMPath, generatedORM)
+	assertGeneratedArtifactUnchanged(t, directory, generatedViewsPath, generatedViews)
+
+	binary := filepath.Join(directory, workflowBuildDestination())
+	lastGoodBinary, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatalf("read forge build output: %v", err)
+	}
+	brokenSource := filepath.Join(directory, "internal", "application", "build_failure_probe.go")
+	if err := os.WriteFile(brokenSource, []byte("package application\n\nfunc buildFailureProbe(\n"), 0o644); err != nil {
+		t.Fatalf("write failed-build probe: %v", err)
+	}
+	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "build"); err == nil {
+		t.Fatalf("forge build unexpectedly accepted invalid Go source:\n%s", output)
+	}
+	if err := os.Remove(brokenSource); err != nil {
+		t.Fatalf("remove failed-build probe: %v", err)
+	}
+	afterFailedBuild, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatalf("read last-good binary after failed build: %v", err)
+	}
+	if !bytes.Equal(lastGoodBinary, afterFailedBuild) {
+		t.Fatal("failed forge build replaced the last-good application binary")
+	}
+	assertNoGeneratedBuildTemps(t, directory)
+
 	for _, command := range [][]string{{"test", "./..."}, {"vet", "./..."}, {"test", "-race", "./..."}, {"build", "./cmd/..."}} {
 		if output, err := generatedCommand(directory, baseEnvironment, "go", command...); err != nil {
 			t.Fatalf("fresh application go %s: %v\n%s", strings.Join(command, " "), err, output)
@@ -115,14 +156,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(directory, baseEnvironment, "go", "build", "./.forge/relationship_acceptance.go"); err != nil {
 		t.Fatalf("fresh application relationship acceptance helper build: %v\n%s", err, output)
 	}
-	t.Log("forge new, make:component, make:resource, view/ORM checks, tests, vet, and builds passed")
-	binary := filepath.Join(directory, "app")
-	if runtime.GOOS == "windows" {
-		binary += ".exe"
-	}
-	if output, err := generatedCommand(directory, baseEnvironment, "go", "build", "-o", binary, "./cmd/server"); err != nil {
-		t.Fatalf("build server: %v\n%s", err, output)
-	}
+	t.Log("forge new, make:component, make:resource, forge test/build, direct Go escape hatches, and failed-build preservation passed")
 	schema := fmt.Sprintf("goforge_acceptance_%d", time.Now().UnixNano())
 	adminPath := filepath.Join(directory, ".forge", "acceptance_db.go")
 	if err := os.WriteFile(adminPath, []byte(postgresAdminProgram), 0o644); err != nil {
@@ -209,8 +243,8 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	}
 	// The server embeds its migration manifest. Refresh the standalone binary
 	// after adding the probe so later readiness checks see the current schema.
-	if output, err := generatedCommand(directory, baseEnvironment, "go", "build", "-o", binary, "./cmd/server"); err != nil {
-		t.Fatalf("rebuild server after migration probe: %v\n%s", err, output)
+	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "build"); err != nil {
+		t.Fatalf("forge build after migration probe: %v\n%s", err, output)
 	}
 	t.Log("transactional migration recovery passed")
 	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "seed-expired-session"); err != nil {
@@ -871,6 +905,28 @@ func generatedCommand(directory string, environment []string, name string, args 
 	command.Env = environment
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+func assertGeneratedArtifactUnchanged(t *testing.T, directory, path string, want []byte) {
+	t.Helper()
+	current, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(path)))
+	if err != nil {
+		t.Fatalf("read generated artifact %s: %v", path, err)
+	}
+	if !bytes.Equal(current, want) {
+		t.Fatalf("workflow command mutated generated artifact %s", path)
+	}
+}
+
+func assertNoGeneratedBuildTemps(t *testing.T, directory string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(directory, "bin", ".goforge-build-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary build artifacts remain: %v", matches)
+	}
 }
 
 func postgresSchemaURL(databaseURL, schema string) (string, error) {

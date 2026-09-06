@@ -232,6 +232,8 @@ func TestProjectCommandsRejectArguments(t *testing.T) {
 		usage string
 	}{
 		{args: []string{"serve", "--watch"}, usage: "usage: forge serve"},
+		{args: []string{"test", "-race"}, usage: "usage: forge test"},
+		{args: []string{"build", "worker"}, usage: "usage: forge build"},
 		{args: []string{"migrate", "--force"}, usage: "usage: forge migrate"},
 		{args: []string{"views:compile", "--write"}, usage: "usage: forge views:compile [--check]"},
 	}
@@ -337,7 +339,7 @@ func TestHelpListsProjectCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"help"}, strings.NewReader(""), &output, io.Discard, &recordedProcess{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"forge serve", "forge migrate", "forge views:compile [--check]", "forge make:component", "forge make:job", "forge queue:work", "forge queue:failed", "forge queue:retry", "forge queue:forget <id>"} {
+	for _, command := range []string{"forge serve", "forge test", "forge build", "forge migrate", "forge views:compile [--check]", "forge make:component", "forge make:job", "forge queue:work", "forge queue:failed", "forge queue:retry", "forge queue:forget <id>"} {
 		if !strings.Contains(output.String(), command) {
 			t.Errorf("help does not list %q", command)
 		}
