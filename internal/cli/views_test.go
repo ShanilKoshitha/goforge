@@ -3,11 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompileProjectViewsUpdatesManagedArtifact(t *testing.T) {
@@ -311,9 +314,8 @@ func New() (*view.Engine, error) { return view.ParseCompiled(Compiled, nil) }
 		filepath.Join("cmd", "server", "main.go"): `package main
 
 import (
-	"fmt"
 	"net/http"
-	"net/http/httptest"
+	"os"
 
 	views "example.com/legacy/resources/views"
 )
@@ -321,10 +323,15 @@ import (
 func main() {
 	engine, err := views.New()
 	if err != nil { panic(err) }
-	response := httptest.NewRecorder()
-	data := struct { Ready bool; Message string }{Ready: true, Message: "<safe>"}
-	if err := engine.Render(response, http.StatusOK, "pages/home", data); err != nil { panic(err) }
-	fmt.Print(response.Body.String())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/", func(response http.ResponseWriter, _ *http.Request) {
+		data := struct { Ready bool; Message string }{Ready: true, Message: "<safe>"}
+		if err := engine.Render(response, http.StatusOK, "pages/home", data); err != nil { panic(err) }
+	})
+	if err := http.ListenAndServe(os.Getenv("APP_ADDRESS"), mux); err != nil { panic(err) }
 }
 `,
 	}
@@ -390,11 +397,38 @@ func main() {
 	if result, err := generatedCommand(directory, baseEnvironment, "go", "build", "./cmd/server"); err != nil {
 		t.Fatalf("format-4 application build: %v\n%s", err, result)
 	}
-	var served bytes.Buffer
-	if err := run(context.Background(), []string{"serve"}, nil, &served, &served, execProcessRunner{}); err != nil {
+	address := freeAddress(t)
+	t.Setenv("APP_ADDRESS", address)
+	serveContext, cancelServe := context.WithCancel(context.Background())
+	var served synchronizedBuffer
+	serveResult := make(chan error, 1)
+	go func() {
+		serveResult <- run(serveContext, []string{"serve"}, nil, &served, &served, execProcessRunner{})
+	}()
+	client := &http.Client{Timeout: time.Second}
+	var body string
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		response, requestErr := client.Get("http://" + address + "/")
+		if requestErr == nil {
+			contents, readErr := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if readErr == nil && response.StatusCode == http.StatusOK {
+				body = string(contents)
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			cancelServe()
+			t.Fatalf("format-4 serve did not become reachable: %s", served.String())
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	cancelServe()
+	if err := <-serveResult; err != nil {
 		t.Fatalf("format-4 serve: %v\n%s", err, served.String())
 	}
-	if body := served.String(); !strings.Contains(body, "@csrf|@if(.Ready)|@@") || !strings.Contains(body, "&lt;safe&gt;") {
+	if !strings.Contains(body, "@csrf|@if(.Ready)|@@") || !strings.Contains(body, "&lt;safe&gt;") {
 		t.Fatalf("format-4 served output changed semantics: %s", body)
 	}
 	pagePath := filepath.Join("resources", "views", "pages", "home.forge.html")

@@ -57,30 +57,6 @@ func (process *recordedProcess) Run(
 	return process.err
 }
 
-func TestServeRunsGeneratedServerWithProcessStreams(t *testing.T) {
-	project := projectDirectory(t)
-	t.Chdir(project)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stdin := strings.NewReader("input")
-	var stdout, stderr bytes.Buffer
-	process := &recordedProcess{}
-
-	if err := run(ctx, []string{"serve"}, stdin, &stdout, &stderr, process); err != nil {
-		t.Fatal(err)
-	}
-	if !process.called {
-		t.Fatal("expected server process to run")
-	}
-	if process.ctx != ctx || process.stdin != stdin || process.stdout != &stdout || process.stderr != &stderr {
-		t.Fatal("project command did not preserve its context and streams")
-	}
-	if process.name != "go" || !reflect.DeepEqual(process.args, []string{"run", "./cmd/server"}) {
-		t.Fatalf("unexpected process: %s %v", process.name, process.args)
-	}
-}
-
 func TestMigrateRunsGeneratedConsole(t *testing.T) {
 	t.Chdir(projectDirectory(t))
 	process := &recordedProcess{}
@@ -163,13 +139,8 @@ func TestFormatFiveViewCommandsDelegateToApplicationCompiler(t *testing.T) {
 	if err := run(context.Background(), []string{"views:compile", "--check"}, nil, io.Discard, io.Discard, sequence); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(context.Background(), []string{"serve"}, nil, io.Discard, io.Discard, sequence); err != nil {
-		t.Fatal(err)
-	}
 	want := []processCall{
 		{name: "go", args: []string{"run", "./cmd/views", "--check"}},
-		{name: "go", args: []string{"run", "./cmd/views"}},
-		{name: "go", args: []string{"run", "./cmd/server"}},
 	}
 	if !reflect.DeepEqual(sequence.calls, want) {
 		t.Fatalf("process calls = %#v, want %#v", sequence.calls, want)

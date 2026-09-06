@@ -35,6 +35,9 @@ func runCLI(
 	if err == nil {
 		return 0
 	}
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		return 0
+	}
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) {
 		if code := exitError.ExitCode(); code >= 0 {

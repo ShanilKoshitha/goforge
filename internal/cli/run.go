@@ -44,10 +44,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if len(args) != 1 {
 			return errors.New("usage: forge serve")
 		}
-		if err := prepareProjectViews(ctx, stdin, stdout, stderr, processes); err != nil {
-			return err
-		}
-		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/server")
+		return runProjectServe(ctx, stdin, stdout, stderr, processes)
 	case "test":
 		if len(args) != 1 {
 			return errors.New("usage: forge test")

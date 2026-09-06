@@ -63,6 +63,22 @@ func TestRunCLIPrintsFrameworkErrorOnce(t *testing.T) {
 	}
 }
 
+func TestRunCLIHandlesCallerCancellationQuietly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stderr bytes.Buffer
+	code := runCLI(ctx, []string{"serve"}, nil, io.Discard, &stderr,
+		func(context.Context, []string, io.Reader, io.Writer, io.Writer) error {
+			return fmt.Errorf("stop development server: %w", context.Canceled)
+		})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want graceful cancellation", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("cancellation diagnostic = %q", stderr.String())
+	}
+}
+
 func TestRunCLIForwardsContextArgumentsAndStreams(t *testing.T) {
 	type contextKey string
 	ctx := context.WithValue(context.Background(), contextKey("key"), "value")
