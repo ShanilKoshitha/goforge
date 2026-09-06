@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.8.1 is PostgreSQL-first and accepted against its written milestone
+GoForge v0.9.1 is PostgreSQL-first and accepted against its written milestone
 scorecard. It includes explicit database wiring, parallel JSON and
 server-rendered authentication, database-backed sessions, CSRF-protected HTML
 forms, production middleware, embedded migrations, owner-scoped JSON and HTML
@@ -42,8 +42,7 @@ hash upgrades, immediate cross-process session revocation, and independently
 configured idle and absolute session lifetimes. Credential writes are ordinary
 application-owned compare-and-swap SQL, and stale concurrent requests cannot
 restore an old password or overwrite a winning rotated browser session.
-The v0.9 developer-loop source milestone is accepted for the next public
-release. It adds opinionated,
+The v0.9 developer-loop milestone is accepted. It adds opinionated,
 non-mutating `forge test` and `forge build` gates while retaining the underlying
 Go commands as complete escape hatches.
 
@@ -52,7 +51,7 @@ Go commands as complete escape hatches.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.8.1
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.9.1
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d

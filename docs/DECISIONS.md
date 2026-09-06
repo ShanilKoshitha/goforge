@@ -549,3 +549,23 @@ regenerating source during a test or release build would hide a dirty checkout.
 Explicit non-mutating checks close the stale-artifact gap and the staged binary
 closes the partial-publication gap without replacing Go's tools or adding
 runtime magic.
+
+## D027 — v0.9 uses a runtime tag followed by a checksum-bearing CLI tag
+
+**Status:** accepted for v0.9
+
+The lightweight unsigned `v0.9.0` tag fixes the reviewed runtime and source at
+merge commit `81cffa3`. Only after that immutable tag resolved through the
+public Go proxy and checksum database did the distribution scaffold move its
+framework requirement to v0.9.0. The CLI patch release reports v0.9.1 and
+embeds both public checksums in generated `go.sum` files.
+
+The v0.9.1 distribution gate builds the CLI, generates without `--replace`,
+requires the public v0.9.0 runtime, runs `forge test` and `forge build`, and
+checks the canonical binary. The existing public v0.8.1 application smoke
+remains alongside it as backward-compatibility evidence.
+
+Reason: the framework cannot know its own public module zip checksum before an
+immutable tag exists. Separating the runtime/source tag from the installable
+checksum-bearing CLI patch keeps generated applications reproducible without
+rewriting or weakening the public checksum contract.

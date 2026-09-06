@@ -42,6 +42,13 @@ Target:
 - Final independent review found no P0, P1, or P2 blocker after the frozen
   format, public release, real cancellation, version, and evidence closures and
   approved the source milestone for merge and the v0.9.0 runtime tag.
+- Merged `main` passed [CI run 34058166132](https://github.com/ShanilKoshitha/goforge/actions/runs/34058166132),
+  then lightweight unsigned v0.9.0 fixed merge commit `81cffa3`. The public Go
+  proxy resolved that exact origin and returned module checksum
+  `h1:qFK3Y42+UV0QyYGKbJfoS+zv/aekEZgtYpMNZ7lq8PY=`.
+- The local v0.9.1 distribution smoke generated without `--replace`, required
+  public v0.9.0 with its proxy checksums, passed `forge test` and `forge build`,
+  retained ORM/views byte for byte, and published `bin/app.exe`.
 
 ## Baseline — 2026-09-06
 

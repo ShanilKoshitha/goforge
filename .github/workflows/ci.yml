@@ -52,6 +52,15 @@ jobs:
           test -x bin/app
           grep -q '^version: 8$' forge.yaml
           test -z "$(grep '^replace ' go.mod || true)"
+      - name: Current distribution scaffold
+        run: |
+          "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
+          cd "$RUNNER_TEMP/current-app"
+          grep -q 'github.com/ShanilKoshitha/goforge v0.9.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          "$RUNNER_TEMP/forge" test
+          "$RUNNER_TEMP/forge" build
+          test -x bin/app
       - name: Generated PostgreSQL applications
         run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow)$' -count=2 -v
 
