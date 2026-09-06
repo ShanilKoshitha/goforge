@@ -569,3 +569,45 @@ Reason: the framework cannot know its own public module zip checksum before an
 immutable tag exists. Separating the runtime/source tag from the installable
 checksum-bearing CLI patch keeps generated applications reproducible without
 rewriting or weakening the public checksum contract.
+
+## D028 — `forge serve` owns a last-good development loop
+
+**Status:** accepted for v0.10 implementation
+
+`forge serve` becomes the opinionated edit-to-render development command. It
+validates the project before side effects, compiles views with the existing
+format-specific contract, builds an ordinary `./cmd/server` executable into a
+unique operating-system temporary directory, starts that executable, and then
+watches application inputs. The exact one-shot escape hatch remains `go run
+./cmd/server`; a separate `forge dev` command is reserved for a future
+multi-process workflow that may include workers and frontend assets.
+
+The watcher uses recursive content snapshots rather than platform notification
+APIs. This intentionally trades sub-millisecond events for identical atomic-save,
+new-directory, OneDrive, Linux, and Windows behavior without another dependency.
+It watches Go, Forge view, SQL, module, environment, and project-manifest inputs;
+repository metadata, dependencies, caches, build outputs, and GoForge-generated
+artifacts are excluded. Stable bursts are serialized, and a source generation
+observed during compile or build makes that candidate stale rather than lost.
+
+Every rebuild compiles views first and stages a candidate server while the
+last-good server remains active. A compiler or Go build failure reports its
+ordinary diagnostic, removes its candidate, keeps the current server and
+generated view artifact intact, and waits for the next edit. Only a successful
+candidate may replace the active server. One process owner reuses the existing
+Unix process-group and Windows Job Object controls so cancellation cannot leak
+the server or its descendants. An unexpected active-server exit is terminal;
+the supervisor does not hide application crashes behind an automatic loop.
+
+No generated source or production runtime contains the watcher. Format 4 keeps
+its frozen view semantics, formats 5 through 8 continue using the
+application-owned `cmd/views` and function map, and format 8 remains current.
+The command does not start services, apply migrations, change configuration,
+generate ORM source, or start workers. Browser LiveReload and frontend asset
+handling remain separate milestones because response rewriting and CSP are an
+independent security boundary.
+
+Reason: the template language already has Blade/Twig-class composition and
+diagnostics, but compiled templates are not pleasant if each edit needs a manual
+restart. Moving that loop into the CLI improves the default without placing file
+discovery, source compilation, or reload machinery in the application binary.

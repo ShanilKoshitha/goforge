@@ -1,3 +1,54 @@
+# v0.10 last-good development server scorecard
+
+Status: **in progress** — 2026-09-06
+
+Target:
+
+> From a generated format-4 through format-8 application, run `forge serve`
+> once and keep a stable development server while Go, Forge view, environment,
+> module, and embedded SQL inputs change. Every stable edit recompiles views
+> with the project's own semantics and builds an ordinary server binary. A
+> broken edit leaves the last-good server and generated view artifact intact;
+> correcting it recovers without restarting the CLI. Cancellation removes the
+> complete child process tree and every development artifact.
+
+## Acceptance criteria
+
+| Criterion | State | Evidence |
+| --- | --- | --- |
+| The default closes the edit-to-render gap | pending | `forge serve` must compile, build, start, watch, and reload without flags; `go run ./cmd/server` remains the documented one-shot escape hatch |
+| Watch coverage is complete and loop-free | pending | Content snapshots must detect writes, atomic saves, deletes, new nested directories, and changes to `.go`, `.forge.html`, `.sql`, `.env`, `go.mod`, `go.sum`, and `forge.yaml` while excluding repository metadata, dependencies, build/cache directories, and GoForge's own generated artifacts |
+| Bursts converge on the newest source | pending | A serialized dirty-generation state machine must coalesce stable bursts, notice edits made during compile/build, discard stale candidates, and never overlap builds or promote an older generation |
+| Invalid views preserve the last-good state | pending | Positioned Forge diagnostics must leave `resources/views/views_gen.go` byte-identical and the current server reachable, then a correction must compile and reload exactly once |
+| Invalid Go preserves the last-good server | pending | Failed or cancelled candidate builds must leave the running process unchanged and remove every temporary binary; a later correction must recover automatically |
+| Process replacement and exit semantics are bounded | pending | One owner must start and stop each complete process tree, an unexpected active-server exit must terminate `forge serve`, and cancellation during debounce, compile, build, replacement, or steady state must release the port and leave no descendant |
+| Template compatibility is retained | pending | Format 4 must use its frozen compiler and formats 5 through 8 must use application-owned `cmd/views` with custom functions; malformed, older, and future manifests must fail before watching, writing, or spawning |
+| Production remains conventional | pending | Development binaries must live outside the repository; generated application source and production runtime must contain no watcher, source compiler, reload endpoint, or browser script |
+| Fresh application journey passes twice | pending | A generated PostgreSQL application must prove valid view and Go edits, invalid-edit preservation and recovery, atomic-save/new-directory detection, readiness, response changes, cancellation cleanup, and port reuse in two consecutive runs |
+| Independent compatibility and platform review passes | pending | Framework race/vet/build, frozen and public released-project checks, Linux PostgreSQL acceptance, and native Windows watcher/process tests must pass twice with no P0–P2 review blocker |
+
+## Baseline — 2026-09-06
+
+- The accepted v0.9.1 CLI compiles application-owned views once and then blocks
+  in `go run ./cmd/server`; every source edit requires a manual stop and rerun.
+- View compilation already has deterministic, last-good publication and mapped
+  diagnostics. Process delegation already owns Unix process groups and Windows
+  kill-on-close Job Objects, but exposes only a blocking one-shot runner.
+- The generated server, view compiler, ORM, readiness route, and direct Go
+  commands are already explicit. This milestone needs no template grammar,
+  generated application contract, production runtime, or project-format change.
+
+## Explicit non-goals for v0.10
+
+- Browser LiveReload script injection, SSE/WebSocket reload endpoints, CSS/JS
+  hot replacement, hydration, frontend asset compilation, npm, or Tailwind.
+- Starting Compose/PostgreSQL, applying migrations, changing `.env`, generating
+  ORM source, starting workers, or supervising multiple application processes.
+- A new Forge view directive, runtime template interpretation, production file
+  watching, route discovery, dependency injection, or framework-owned app state.
+- Test watching, `forge doctor`, remote development, TLS termination, deployment,
+  or changing the strict `forge test` and `forge build` contracts.
+
 # v0.9 cohesive test and build loop scorecard
 
 Status: **accepted** — 2026-09-06
