@@ -41,7 +41,8 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 		t.Fatalf("forge new: %v\n%s", err, output)
 	}
 	adminPath := filepath.Join(directory, ".forge", "acceptance_db.go")
-	if err := os.WriteFile(adminPath, []byte(postgresAdminProgram), 0o644); err != nil {
+	adminProgram := strings.ReplaceAll(postgresAdminProgram, "example.com/issueboard", "example.com/development")
+	if err := os.WriteFile(adminPath, []byte(adminProgram), 0o644); err != nil {
 		t.Fatalf("write PostgreSQL acceptance helper: %v", err)
 	}
 	adminEnvironment := append(append([]string(nil), baseEnvironment...), "DATABASE_URL="+databaseURL)
