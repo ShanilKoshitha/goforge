@@ -37,6 +37,21 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: go build -o "$RUNNER_TEMP/forge" ./cmd/forge
+      - name: Released format-8 compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-cli"
+          GOBIN="$RUNNER_TEMP/released-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.8.1
+          "$RUNNER_TEMP/released-cli/forge" new "$RUNNER_TEMP/released-app" --module example.com/releasedapp
+          cd "$RUNNER_TEMP/released-app"
+          cp internal/models/zz_orm_gen.go "$RUNNER_TEMP/orm-before.go"
+          cp resources/views/views_gen.go "$RUNNER_TEMP/views-before.go"
+          "$RUNNER_TEMP/forge" test
+          "$RUNNER_TEMP/forge" build
+          cmp "$RUNNER_TEMP/orm-before.go" internal/models/zz_orm_gen.go
+          cmp "$RUNNER_TEMP/views-before.go" resources/views/views_gen.go
+          test -x bin/app
+          grep -q '^version: 8$' forge.yaml
+          test -z "$(grep '^replace ' go.mod || true)"
       - name: Generated PostgreSQL applications
         run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow)$' -count=2 -v
 

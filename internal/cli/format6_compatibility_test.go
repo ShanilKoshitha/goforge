@@ -21,7 +21,7 @@ func TestFormat6ApplicationRemainsCompatible(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(moduleFile, []byte("github.com/ShanilKoshitha/goforge v0.6.0")) || bytes.Contains(moduleFile, []byte("replace github.com/ShanilKoshitha/goforge")) {
-		t.Fatalf("format-6 fixture must retain its public v0.6.0 requirement without a local replacement:\n%s", moduleFile)
+		t.Fatalf("format-6 fixture must retain its historical v0.6.0 requirement before the compatibility replacement:\n%s", moduleFile)
 	}
 
 	environment := append(os.Environ(),
@@ -92,5 +92,16 @@ func TestFormat6ApplicationRemainsCompatible(t *testing.T) {
 	}
 	if _, err := os.Stat(workflowBuildDestination()); err != nil {
 		t.Fatalf("forge build did not publish format-6 server: %v", err)
+	}
+}
+
+func assertArtifactBytes(t *testing.T, path string, want []byte) {
+	t.Helper()
+	current, err := os.ReadFile(filepath.FromSlash(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(current, want) {
+		t.Fatalf("workflow command rewrote frozen artifact %s", path)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type workflowProcessCall struct {
@@ -27,6 +28,30 @@ type workflowProcess struct {
 	errors       map[int]error
 	afterRun     map[int]func()
 	buildContent []byte
+}
+
+type blockingWorkflowProcess struct{}
+
+func (blockingWorkflowProcess) Run(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	name string,
+	args ...string,
+) error {
+	if name == "go" && reflect.DeepEqual(args, []string{"run", "./cmd/views", "--check"}) {
+		return nil
+	}
+	if name != "go" || len(args) != 5 || args[0] != "build" || args[2] != "-o" {
+		return errors.New("unexpected blocking workflow command")
+	}
+	if err := os.WriteFile(args[3], []byte("completed but unpublished build"), 0o755); err != nil {
+		return err
+	}
+	return execProcessRunner{}.Run(
+		ctx, stdin, stdout, stderr,
+		os.Args[0], "-test.run=^TestForgeBuildCancellationHelper$",
+	)
 }
 
 func (process *workflowProcess) Run(
@@ -177,6 +202,48 @@ func TestForgeBuildCancellationAfterCompilationPreservesLastGoodArtifact(t *test
 	assertFileContent(t, destination, "last good")
 	assertBuildCall(t, process.calls, 1)
 	assertNoTemporaryBuilds(t)
+}
+
+func TestForgeBuildRealProcessCancellationPreservesLastGoodArtifact(t *testing.T) {
+	directory := workflowProject(t)
+	t.Chdir(directory)
+	destination := workflowBuildDestination()
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte("last good"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ready := filepath.Join(t.TempDir(), "ready")
+	t.Setenv("GOFORGE_WORKFLOW_BUILD_HELPER_READY", ready)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- run(ctx, []string{"build"}, nil, io.Discard, io.Discard, blockingWorkflowProcess{})
+	}()
+	waitForWorkflowHelper(t, ready)
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("cancelled real build process returned success")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("cancelled real build process did not stop")
+	}
+	assertFileContent(t, destination, "last good")
+	assertNoTemporaryBuilds(t)
+}
+
+func TestForgeBuildCancellationHelper(t *testing.T) {
+	ready := os.Getenv("GOFORGE_WORKFLOW_BUILD_HELPER_READY")
+	if ready == "" {
+		return
+	}
+	if err := os.WriteFile(ready, []byte("ready"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {}
 }
 
 func TestForgeWorkflowsStopAtNonMutatingArtifactPreflights(t *testing.T) {
@@ -389,4 +456,18 @@ func assertNoBuildDirectory(t *testing.T) {
 	if _, err := os.Stat("bin"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("preflight created build directory: %v", err)
 	}
+}
+
+func waitForWorkflowHelper(t *testing.T, ready string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(ready); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("build cancellation helper did not start")
 }
