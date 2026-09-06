@@ -42,6 +42,9 @@ hash upgrades, immediate cross-process session revocation, and independently
 configured idle and absolute session lifetimes. Credential writes are ordinary
 application-owned compare-and-swap SQL, and stale concurrent requests cannot
 restore an old password or overwrite a winning rotated browser session.
+The v0.9 developer-loop milestone is in progress. It adds opinionated,
+non-mutating `forge test` and `forge build` gates while retaining the underlying
+Go commands as complete escape hatches.
 
 ## Install and try it
 
@@ -67,6 +70,8 @@ cd myapp
 docker compose up -d
 forge make:resource Issue
 forge migrate
+forge test
+forge build
 # For plain-HTTP development, first set APP_ENV=local in .env.
 forge serve
 ```
@@ -99,6 +104,8 @@ state, hidden route discovery, or ORM query language.
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
 forge serve
+forge test
+forge build
 forge migrate
 forge views:compile
 forge orm:generate [--check]
@@ -116,6 +123,29 @@ forge queue:forget <id>
 
 The spaced forms (`forge make controller Users`) also work. Generators never
 overwrite existing files.
+
+`forge test` and `forge build` are intentionally no-argument defaults for
+format-4 through format-8 projects. Both non-mutating preflights check the
+generated ORM first and compiled views second. Testing then runs exactly `go
+test ./...`. Building stages a trimmed `./cmd/server` executable and publishes
+it atomically as `bin/app` on Unix or `bin/app.exe` on Windows, so a failed build
+does not replace the last-good binary.
+
+The exact direct escape hatches are:
+
+```sh
+forge orm:generate --check
+forge views:compile --check
+go test ./...
+go build -trimpath -o bin/app ./cmd/server
+go run ./cmd/server
+```
+
+Use direct Go commands for custom packages, flags, tags, targets, output paths,
+or worker and console builds. The wrappers never start services, apply
+migrations, or modify `.env`. Watch/reload, browser HMR, frontend assets,
+multi-process development, and environment diagnosis are not part of this
+milestone.
 
 ## Framework packages
 

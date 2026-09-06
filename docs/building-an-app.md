@@ -54,6 +54,11 @@ forge serve
 The wrappers execute `go run ./cmd/console migrate` and `go run ./cmd/server`.
 Those commands remain the direct escape hatches.
 
+`forge serve` compiles views before starting, but it does not watch source,
+reload a browser, start Compose/PostgreSQL, or apply migrations. Stop and rerun
+the command after source changes. Those development-supervisor concerns remain
+separate from the explicit server process.
+
 Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 `/issues`; handlers do not silently switch behavior based on content negotiation.
@@ -71,6 +76,55 @@ functions live in `resources/views/viewfuncs/functions.go`; the project compiler
 and production renderer use that same editable `template.FuncMap`. See the
 [view language reference](view-language.md) for the complete bounded grammar and
 standard-library escape hatches.
+
+## Test and build
+
+Run the complete generated application test suite and publish the production
+server binary with two opinionated commands:
+
+```sh
+forge test
+forge build
+```
+
+Both commands support project formats 4 through 8 and accept no arguments. They
+first check `internal/models/zz_orm_gen.go` and then
+`resources/views/views_gen.go` without rewriting either file. A missing, stale,
+or invalid artifact stops before tests or compilation and reports the explicit
+generation command needed to repair it.
+
+After preflight, `forge test` executes exactly:
+
+```sh
+go test ./...
+```
+
+`forge build` compiles `./cmd/server` with `-trimpath` into a temporary file and
+publishes it only after success as `bin/app` on Unix or `bin/app.exe` on Windows.
+A failed or cancelled build leaves any existing canonical binary byte-identical.
+
+Nothing prevents using the underlying tools directly. The equivalent explicit
+checks and commands are:
+
+```sh
+forge orm:generate --check
+forge views:compile --check
+go test ./...
+go build -trimpath -o bin/app ./cmd/server
+go run ./cmd/server
+```
+
+Use direct `go test` or `go build` for custom packages, flags, build tags,
+targets, cross-compilation, or output paths. Build the generated worker with
+`go build -trimpath -o bin/worker ./cmd/worker` and the console with `go build
+-trimpath -o bin/console ./cmd/console` when those deployment processes are
+needed.
+
+Test and build do not start services, provision a database, change `.env`, or
+apply migrations. Run `docker compose up -d` and `forge migrate` explicitly when
+the application workflow requires them. Watch/reload, browser LiveReload/HMR,
+frontend asset compilation, multi-process development, and environment diagnosis
+are deliberately outside this milestone.
 
 ## Run durable background work
 

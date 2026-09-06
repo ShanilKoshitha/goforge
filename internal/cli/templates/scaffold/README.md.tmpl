@@ -11,6 +11,8 @@ cd issueboard
 forge make:resource Issue
 forge make:job SendWelcome
 forge migrate
+forge test
+forge build
 # For plain-HTTP development, first set APP_ENV=local in .env.
 forge serve
 ```
@@ -68,6 +70,36 @@ use the same function map. Run `forge views:compile` after source changes and
 use `forge views:compile --check` in CI. `forge serve` compiles views before
 starting the application.
 
+Run the opinionated project checks and build with:
+
+```sh
+forge test
+forge build
+```
+
+Both commands first check the generated ORM and then the compiled views without
+rewriting either artifact. `forge test` then runs exactly `go test ./...`.
+`forge build` stages a trimmed server executable and publishes it only after a
+successful compile as `bin/app` on Unix or `bin/app.exe` on Windows. A failed or
+cancelled build preserves the last-good binary.
+
+Use the exact underlying workflow whenever the default is not suitable:
+
+```sh
+forge orm:generate --check
+forge views:compile --check
+go test ./...
+go build -trimpath -o bin/app ./cmd/server
+go run ./cmd/server
+```
+
+Direct Go commands remain available for custom packages, flags, tags, targets,
+and output paths. `forge test` and `forge build` do not start PostgreSQL or
+Compose, apply migrations, select a test database, or change `.env`. `forge
+serve` does not watch files or reload the browser; restart it after source
+changes. Frontend HMR and multi-process development orchestration are separate
+future work.
+
 Send `Content-Type: application/json` with JSON request bodies. Other media
 types receive 415 so browser forms cannot submit JSON authentication requests.
 Register a user with `POST /auth/register`, then use the returned session cookie
@@ -76,7 +108,8 @@ password while rotating the caller and revoking older sessions;
 `POST /auth/logout-all` signs out every session. The browser equivalents live
 at `/settings/security` and are CSRF protected. Successful login upgrades an
 outdated password hash without revoking sessions. Run `go test ./...` and build a
-production binary with `go build -trimpath -o bin/app ./cmd/server`.
+custom production binary with `go build -trimpath -o bin/app ./cmd/server`, or
+use the opinionated `forge test` and `forge build` workflow described above.
 
 Inspect command implementations in `cmd/server`, `cmd/worker`, `cmd/console`, and `cmd/views`,
 the complete human-owned route table in `routes/routes.go`, and generated

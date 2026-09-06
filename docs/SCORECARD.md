@@ -1,3 +1,62 @@
+# v0.9 cohesive test and build loop scorecard
+
+Status: **in progress** — 2026-09-06
+
+Target:
+
+> From a generated format-4 through format-8 application, use one explicit
+> command to prove the inspectable ORM and compiled views are current before
+> running the complete Go test suite, and one explicit command to publish a
+> production server binary without replacing the last-good artifact on failure.
+> Both workflows remain non-mutating freshness gates over conventional Go
+> commands with direct, documented escape hatches.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Command boundaries are exact | pending | `forge test` and `forge build` accept no arguments, require a GoForge project root, support formats 4 through 8, and reject older, future, or malformed projects before running a child process or creating build output |
+| Freshness is checked before execution | pending | Both commands first check the generated ORM and then the compiled views, using the format-4 frozen compiler or the format-5-and-later application compiler as appropriate; missing, stale, or invalid artifacts stop the workflow |
+| Preflight never rewrites source | pending | Freshness checks leave application-owned source and managed artifacts byte-identical on success and failure; diagnostics name the explicit generation command needed to repair stale state |
+| Testing remains ordinary Go | pending | After a passing preflight, `forge test` delegates exactly to `go test ./...` with inherited standard input, output, error, environment, cancellation, and failure behavior |
+| Production output is canonical | pending | `forge build` invokes the equivalent of `go build -trimpath -o <staged-output> ./cmd/server` and publishes only `bin/app` on Unix or `bin/app.exe` on Windows |
+| Failed builds preserve the last-good binary | pending | Compilation and cancellation failures remove temporary output, leave a pre-existing canonical binary byte-identical, and never expose a partial replacement |
+| Escape hatches remain complete | pending | Documentation gives the exact ORM/view checks and direct `go test`, `go build`, and `go run` commands; custom packages, flags, tags, targets, and output paths require no framework API |
+| Existing projects remain compatible | pending | Frozen format-4 and format-6 applications plus a released format-8 application exercise the supported command paths without a project-format upgrade or generated-source rewrite |
+| Full workflow passes twice | pending | Framework race/vet/build gates and two fresh format-8 PostgreSQL applications pass generation, migration, non-mutating test/build preflight, native tests, canonical binary execution outside the source tree, and artifact-preservation probes twice without regression |
+
+## Baseline — 2026-09-06
+
+- Post-v0.8 production hardening is accepted. The merged `main` branch passed
+  the framework race/vet/build gates and both generated PostgreSQL workflows
+  twice in public CI.
+- `forge serve` already checks the project root, compiles views, and delegates
+  to `go run ./cmd/server`; the CLI has no `test` or `build` command.
+- Generated documentation currently sends developers directly to `go test
+  ./...` and `go build -trimpath -o bin/app ./cmd/server`. These conventional
+  commands work but do not first prove that inspectable ORM and view artifacts
+  match their source inputs.
+- ORM and view compilers already expose deterministic, non-mutating `--check`
+  behavior. Format-4 view semantics are frozen, while formats 5 through 8 own
+  an application compiler with the production function map.
+
+## Explicit non-goals for v0.9
+
+- `forge doctor`, environment diagnosis, dependency installation, or toolchain
+  repair.
+- File watching, process reload, browser LiveReload/HMR, frontend asset
+  bundling, or a multi-process `forge dev` command.
+- Starting or stopping Compose/PostgreSQL, provisioning a test database, or
+  changing `.env`.
+- Applying migrations before tests, builds, or server startup. Database state
+  remains an explicit `forge migrate` operation.
+- Test arguments, package selection, coverage policy, test watching, build
+  tags, cross-compilation, release archives, signing, or container images.
+- Building the worker or console. Their conventional `go build` commands remain
+  documented escape hatches.
+- A new runtime abstraction, generated application contract, project-format
+  version, or automatic upgrade of older projects.
+
 # Post-v0.8 P1 and production-hardening scorecard
 
 Status: **accepted** — 2026-09-06
