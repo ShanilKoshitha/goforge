@@ -107,6 +107,18 @@ func Regenerate(ctx *httpx.Context) error {
 	return state.manager.Regenerate(ctx.Request.Context(), state.current)
 }
 
+// RegenerateOrCreate is the explicit credential-change variant of Regenerate.
+// It may preserve a winning session when another stale request removed the old
+// row after an independent authorization change committed.
+func RegenerateOrCreate(ctx *httpx.Context) error {
+	state, ok := stateFrom(ctx)
+	if !ok {
+		return fmt.Errorf("web: session middleware is not installed")
+	}
+	state.accessed = true
+	return state.manager.RegenerateOrCreate(ctx.Request.Context(), state.current)
+}
+
 // Destroy removes the persisted session and stages an expired cookie in the
 // buffered response. A destroyed session is not saved again at commit.
 func Destroy(ctx *httpx.Context) error {
@@ -116,6 +128,22 @@ func Destroy(ctx *httpx.Context) error {
 	}
 	state.accessed = true
 	if err := state.manager.Destroy(ctx.Request.Context(), ctx.Response, state.current); err != nil {
+		return err
+	}
+	state.destroyed = true
+	return nil
+}
+
+// Invalidate removes a stale server-side session without emitting a deletion
+// cookie. This prevents an out-of-order stale response from overwriting a new
+// cookie issued by a concurrent credential-change request.
+func Invalidate(ctx *httpx.Context) error {
+	state, ok := stateFrom(ctx)
+	if !ok {
+		return fmt.Errorf("web: session middleware is not installed")
+	}
+	state.accessed = true
+	if err := state.manager.Invalidate(ctx.Request.Context(), ctx.Response, state.current); err != nil {
 		return err
 	}
 	state.destroyed = true

@@ -287,6 +287,43 @@ func TestDestroyCommitsExpiredCookieWithoutResaving(t *testing.T) {
 	}
 }
 
+func TestInvalidateRemovesSessionWithoutWritingDeletionCookie(t *testing.T) {
+	store := newObservedStore()
+	manager := managerFor(t, store)
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := seed.Result().Cookies()[0]
+	store.gets, store.creates = 0, 0
+
+	router := httpx.NewRouter()
+	router.Use(web.Sessions(manager))
+	router.POST("/invalidate", func(ctx *httpx.Context) error {
+		if _, ok := web.Session(ctx); !ok {
+			t.Fatal("session middleware did not expose a session")
+		}
+		if err := web.Invalidate(ctx); err != nil {
+			return err
+		}
+		return ctx.NoContent(http.StatusUnauthorized)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/invalidate", nil)
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || store.deletes != 1 {
+		t.Fatalf("invalidation = status %d deletes %d", response.Code, store.deletes)
+	}
+	if cookies := response.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("invalidation wrote a late cookie: %+v", cookies)
+	}
+}
+
 func TestRedirectRequiresAbsoluteApplicationPath(t *testing.T) {
 	for _, location := range []string{"https://evil.example/path", "//evil.example/path", `/\\evil.example/path`, "relative/path"} {
 		t.Run(location, func(t *testing.T) {

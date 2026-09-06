@@ -135,8 +135,12 @@ func TestRotatedSessionCannotBeRecreatedByStaleRequest(t *testing.T) {
 		return current
 	}
 	rotating := load()
-	stale := load()
+	staleUpdate := load()
+	staleRotation := load()
 	if err := manager.Regenerate(ctx, rotating); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Regenerate(ctx, staleRotation); err != nil {
 		t.Fatal(err)
 	}
 	rotatedResponse := httptest.NewRecorder()
@@ -150,12 +154,21 @@ func TestRotatedSessionCannotBeRecreatedByStaleRequest(t *testing.T) {
 		t.Fatalf("old session remains after rotation: %v", err)
 	}
 
-	staleResponse := httptest.NewRecorder()
-	if err := manager.Save(ctx, staleResponse, stale); !errors.Is(err, session.ErrNotFound) {
-		t.Fatalf("stale save error = %v, want ErrNotFound", err)
-	}
-	if len(staleResponse.Result().Cookies()) != 0 {
-		t.Fatal("stale save wrote a session cookie")
+	for name, stale := range map[string]*session.Session{
+		"update": staleUpdate, "ordinary rotation": staleRotation,
+	} {
+		t.Run(name, func(t *testing.T) {
+			staleResponse := httptest.NewRecorder()
+			if err := manager.Save(ctx, staleResponse, stale); !errors.Is(err, session.ErrNotFound) {
+				t.Fatalf("stale save error = %v, want ErrNotFound", err)
+			}
+			if len(staleResponse.Result().Cookies()) != 0 {
+				t.Fatal("stale save wrote a session cookie")
+			}
+			if _, err := store.Get(ctx, stale.ID()); !errors.Is(err, session.ErrNotFound) {
+				t.Fatalf("stale save recreated session %q: %v", stale.ID(), err)
+			}
+		})
 	}
 	if _, err := store.Get(ctx, oldID); !errors.Is(err, session.ErrNotFound) {
 		t.Fatalf("stale request recreated rotated session: %v", err)
