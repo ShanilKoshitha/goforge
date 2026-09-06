@@ -25,6 +25,10 @@ const (
 
 var ErrInvalidHash = errors.New("invalid password hash")
 
+var derivePassword = func(plain string, salt []byte, iterations, length int) ([]byte, error) {
+	return pbkdf2.Key(sha256.New, plain, salt, iterations, length)
+}
+
 type Hasher struct {
 	// Iterations controls newly created hashes. Nonpositive values use the
 	// default; Hash rejects values above 10,000,000, the verification limit.
@@ -48,7 +52,7 @@ func (hasher Hasher) Hash(plain string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("generate password salt: %w", err)
 	}
-	derived, err := pbkdf2.Key(sha256.New, plain, salt, iterations, keyBytes)
+	derived, err := derivePassword(plain, salt, iterations, keyBytes)
 	if err != nil {
 		return "", fmt.Errorf("derive password hash: %w", err)
 	}
@@ -65,11 +69,43 @@ func (hasher Hasher) Verify(encoded, plain string) (bool, error) {
 	if len(plain) > maximumPassword {
 		return false, nil
 	}
-	actual, err := pbkdf2.Key(sha256.New, plain, salt, iterations, len(expected))
+	actual, err := derivePassword(plain, salt, iterations, len(expected))
 	if err != nil {
 		return false, fmt.Errorf("derive password hash: %w", err)
 	}
 	return subtle.ConstantTimeCompare(actual, expected) == 1, nil
+}
+
+// VerifyCurrent verifies an encoded password and, on mismatch, pads hashes
+// created with an older policy to the current iteration budget. Login handlers
+// should use this method so a failed attempt cannot identify accounts that are
+// still awaiting transparent rehashing.
+func (hasher Hasher) VerifyCurrent(encoded, plain string) (bool, error) {
+	iterations, salt, expected, err := parse(encoded)
+	if err != nil {
+		hasher.DummyVerify(plain)
+		return false, err
+	}
+	if len(plain) > maximumPassword {
+		hasher.DummyVerify(plain)
+		return false, nil
+	}
+	actual, err := derivePassword(plain, salt, iterations, len(expected))
+	if err != nil {
+		return false, fmt.Errorf("derive password hash: %w", err)
+	}
+	matched := subtle.ConstantTimeCompare(actual, expected) == 1
+	targetIterations := hasher.iterations()
+	if targetIterations > maximumIterations {
+		targetIterations = maximumIterations
+	}
+	remaining := targetIterations - iterations
+	if !matched && remaining > 0 {
+		if _, err := derivePassword(plain, make([]byte, saltBytes), remaining, keyBytes); err != nil {
+			return false, fmt.Errorf("pad password verification: %w", err)
+		}
+	}
+	return matched, nil
 }
 
 func (hasher Hasher) NeedsRehash(encoded string) bool {
@@ -111,5 +147,5 @@ func (hasher Hasher) DummyVerify(plain string) {
 	if iterations > maximumIterations {
 		iterations = maximumIterations
 	}
-	_, _ = pbkdf2.Key(sha256.New, plain, make([]byte, saltBytes), iterations, keyBytes)
+	_, _ = derivePassword(plain, make([]byte, saltBytes), iterations, keyBytes)
 }
