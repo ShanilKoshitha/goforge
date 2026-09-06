@@ -594,8 +594,12 @@ Every rebuild compiles views first and stages a candidate server while the
 last-good server remains active. A compiler or Go build failure reports its
 ordinary diagnostic, removes its candidate, keeps the current server and
 generated view artifact intact, and waits for the next edit. Only a successful
-candidate may replace the active server. One process owner reuses the existing
-Unix process-group and Windows Job Object controls so cancellation cannot leak
+candidate whose `/health` endpoint proves liveness may replace the active
+server. This deliberately does not redefine `/ready`: database and exact
+migration readiness remain dynamic application concerns. A SQL edit may make
+`/ready` return 503 until the developer explicitly runs `forge migrate`, after
+which readiness recovers without a server restart. One process owner reuses the
+existing Unix process-group and Windows Job Object controls so cancellation cannot leak
 the server or its descendants. An unexpected active-server exit is terminal;
 the supervisor does not hide application crashes behind an automatic loop.
 

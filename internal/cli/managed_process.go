@@ -98,6 +98,10 @@ func (process *managedProcess) Done() <-chan struct{} {
 	return process.done
 }
 
+func (process *managedProcess) PID() int {
+	return process.command.Process.Pid
+}
+
 // Wait waits for the child and returns the cached result. Repeated calls return
 // the same error without calling exec.Cmd.Wait again.
 func (process *managedProcess) Wait() error {

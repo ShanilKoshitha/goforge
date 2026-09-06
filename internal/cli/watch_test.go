@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -56,7 +58,7 @@ func TestSourceSnapshotExcludesGeneratedAndIgnoredDirectories(t *testing.T) {
 		t.Fatal("self-produced view artifact changed snapshot")
 	}
 
-	for _, directory := range []string{".git", "bin", ".tmp", "tmp", ".cache", "vendor", "node_modules"} {
+	for _, directory := range []string{".git", ".forge", "bin", ".tmp", "tmp", ".cache", "vendor", "node_modules"} {
 		name := filepath.Join("parent", directory, "nested", "source.go")
 		writeWatchFile(t, root, name, "package ignored")
 		if current := mustSourceSnapshot(t, root); current != baseline {
@@ -180,6 +182,142 @@ func TestSourceSnapshotAndWatchReportFilesystemErrors(t *testing.T) {
 	_, err := waitForChangedSourceSnapshot(ctx, root, baseline, 5*time.Millisecond, 10*time.Millisecond)
 	if err == nil || errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("filesystem error = %v", err)
+	}
+}
+
+func TestReadableSourceSnapshotRecoversFromTransientError(t *testing.T) {
+	want := testSnapshot(7)
+	var reads atomic.Int32
+	got, err := waitForReadableSourceSnapshotWith(
+		context.Background(),
+		func() (sourceSnapshot, error) {
+			if reads.Add(1) == 1 {
+				return sourceSnapshot{}, errors.New("sharing violation")
+			}
+			return want, nil
+		},
+		time.Millisecond,
+		100*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("snapshot = %v, want %v", got, want)
+	}
+}
+
+func TestReadableSourceSnapshotReportsPersistentError(t *testing.T) {
+	started := time.Now()
+	_, err := waitForReadableSourceSnapshotWith(
+		context.Background(),
+		func() (sourceSnapshot, error) { return sourceSnapshot{}, errors.New("sharing violation") },
+		time.Millisecond,
+		10*time.Millisecond,
+	)
+	if err == nil || !strings.Contains(err.Error(), "remained unreadable") {
+		t.Fatalf("persistent read error = %v", err)
+	}
+	if time.Since(started) < 10*time.Millisecond {
+		t.Fatal("persistent error was reported before its tolerance elapsed")
+	}
+}
+
+func TestStableSourceSnapshotObservesReturnToOriginalContent(t *testing.T) {
+	original := testSnapshot(1)
+	changed := testSnapshot(2)
+	var reads atomic.Int32
+	reader := tolerantSourceSnapshotReader{
+		read: func() (sourceSnapshot, error) {
+			switch reads.Add(1) {
+			case 1:
+				return changed, nil
+			default:
+				return original, nil
+			}
+		},
+		tolerance: time.Second,
+	}
+	got, err := waitForStableSourceSnapshotWithReader(
+		context.Background(), &reader, original, time.Millisecond, 10*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != original {
+		t.Fatalf("stable snapshot = %v, want returned original %v", got, original)
+	}
+}
+
+func TestSourceGenerationTrackerRecordsContentRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	writeWatchFile(t, root, "main.go", "package main\n")
+	initial := mustSourceSnapshot(t, root)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := startSourceGenerationTracker(ctx, root, initial, 2*time.Millisecond)
+	defer tracker.Close()
+
+	writeWatchFile(t, root, "main.go", "package main\n// changed\n")
+	waitForGeneration(t, tracker, 1)
+	writeWatchFile(t, root, "main.go", "package main\n")
+	waitForGeneration(t, tracker, 2)
+	if got := mustSourceSnapshot(t, root); got != initial {
+		t.Fatal("content round trip did not restore the original digest")
+	}
+}
+
+func TestSourceGenerationTrackerWakesWhenTransientReadRecoversUnchanged(t *testing.T) {
+	want := testSnapshot(4)
+	tracker := &sourceGenerationTracker{
+		current:   want,
+		changed:   make(chan struct{}),
+		tolerance: time.Second,
+	}
+	tracker.recordError(errors.New("sharing violation"))
+	result := make(chan sourceWatchResult, 1)
+	go func() {
+		snapshot, err := tracker.Read(context.Background())
+		result <- sourceWatchResult{snapshot: snapshot, err: err}
+	}()
+	tracker.recordSnapshot(want)
+	select {
+	case got := <-result:
+		if got.err != nil || got.snapshot != want {
+			t.Fatalf("recovered read = %v, %v", got.snapshot, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("read did not wake after unchanged source became readable")
+	}
+}
+
+func TestSourceGenerationTrackerDoesNotLoseRoundTripBeforeWaitStarts(t *testing.T) {
+	original := testSnapshot(5)
+	tracker := &sourceGenerationTracker{
+		current:   original,
+		changed:   make(chan struct{}),
+		tolerance: time.Second,
+	}
+	tracker.generation.Store(2)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := tracker.WaitForChange(ctx, original, 0, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != original {
+		t.Fatalf("round-trip snapshot = %v, want %v", got, original)
+	}
+}
+
+func waitForGeneration(t *testing.T, tracker *sourceGenerationTracker, want uint64) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for tracker.Generation() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("generation = %d, want at least %d", tracker.Generation(), want)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

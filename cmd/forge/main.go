@@ -35,11 +35,11 @@ func runCLI(
 	if err == nil {
 		return 0
 	}
-	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+	if ctx.Err() != nil && err == ctx.Err() {
 		return 0
 	}
 	var exitError *exec.ExitError
-	if errors.As(err, &exitError) {
+	if !hasMultipleCauses(err) && errors.As(err, &exitError) {
 		if code := exitError.ExitCode(); code >= 0 {
 			return code
 		}
@@ -49,4 +49,25 @@ func runCLI(
 	}
 	fmt.Fprintln(stderr, "error:", err)
 	return 1
+}
+
+func hasMultipleCauses(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		if len(joined.Unwrap()) > 1 {
+			return true
+		}
+		for _, cause := range joined.Unwrap() {
+			if hasMultipleCauses(cause) {
+				return true
+			}
+		}
+		return false
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return hasMultipleCauses(wrapped)
+	}
+	return false
 }

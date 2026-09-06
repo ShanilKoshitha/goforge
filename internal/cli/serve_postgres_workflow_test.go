@@ -174,11 +174,15 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	if err := os.WriteFile(brokenGoPath, []byte("package controllers\n\nfunc developmentFailureProbe(\n"), 0o644); err != nil {
 		t.Fatalf("write invalid Go source: %v", err)
 	}
+	viewV5 := append(append([]byte(nil), viewV4...), []byte("\n<p data-development-probe=\"view-with-broken-go\">view-with-broken-go</p>\n")...)
+	if err := os.WriteFile(partialPath, viewV5, 0o644); err != nil {
+		t.Fatalf("write valid view beside invalid Go source: %v", err)
+	}
 	waitForDevelopmentOutput(t, &serveOutput, outputOffset, "development_failure_probe.go")
 	if body := developmentResponse(t, baseURL); body != viewV4Body {
-		t.Fatalf("invalid Go edit replaced the last-good response:\n%s", body)
+		t.Fatalf("valid view beside invalid Go replaced the last-good response:\n%s", body)
 	}
-	assertDevelopmentArtifact(t, generatedPath, viewV4Artifact, "invalid Go edit")
+	assertDevelopmentArtifact(t, generatedPath, viewV4Artifact, "valid view beside invalid Go")
 	if err := os.Remove(brokenGoPath); err != nil {
 		t.Fatalf("remove invalid Go source: %v", err)
 	}
@@ -191,7 +195,10 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	if err := os.WriteFile(controllerPath, controllerV4, 0o644); err != nil {
 		t.Fatalf("repair ordinary Go source: %v", err)
 	}
-	waitForDevelopmentResponse(t, baseURL, "ordinary-go-v4", &serveOutput)
+	recoveredBody := waitForDevelopmentResponse(t, baseURL, "ordinary-go-v4", &serveOutput)
+	if !strings.Contains(recoveredBody, "view-with-broken-go") {
+		t.Fatalf("Go recovery did not publish the pending valid view: %s", recoveredBody)
+	}
 
 	controllerV5 := bytes.Replace(controllerV4, []byte("ordinary-go-v4"), []byte("atomic-save-v5"), 1)
 	temporaryController := filepath.Join(filepath.Dir(controllerPath), ".welcome_controller.go.atomic")

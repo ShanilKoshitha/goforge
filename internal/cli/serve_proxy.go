@@ -11,6 +11,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+)
+
+const (
+	serveProxyReadHeaderTimeout = 5 * time.Second
+	serveProxyIdleTimeout       = 2 * time.Minute
+	serveProxyMaxHeaderBytes    = 1 << 20
 )
 
 // serveProxy keeps one public development address while its backend changes.
@@ -49,7 +56,12 @@ func startServeProxy(address string, target *url.URL) (*serveProxy, error) {
 	reverse := &httputil.ReverseProxy{
 		Rewrite: proxy.rewrite,
 	}
-	proxy.server = &http.Server{Handler: reverse}
+	proxy.server = &http.Server{
+		Handler:           reverse,
+		ReadHeaderTimeout: serveProxyReadHeaderTimeout,
+		IdleTimeout:       serveProxyIdleTimeout,
+		MaxHeaderBytes:    serveProxyMaxHeaderBytes,
+	}
 	go func() {
 		err := proxy.server.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {

@@ -16,7 +16,7 @@ import (
 func TestServeProxyRoutesWithoutRewritingRequestIdentity(t *testing.T) {
 	requests := make(chan string, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		requests <- fmt.Sprintf("%s %s %s", request.Host, request.URL.EscapedPath(), request.URL.RawQuery)
+		requests <- fmt.Sprintf("%s %s %s %s", request.Host, request.URL.EscapedPath(), request.URL.RawQuery, request.Header.Get("X-Forwarded-For"))
 		response.Header().Set("X-Backend", "one")
 		_, _ = io.WriteString(response, "proxied")
 	}))
@@ -28,6 +28,7 @@ func TestServeProxyRoutesWithoutRewritingRequestIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Host = "app.example.test:8080"
+	request.Header.Set("X-Forwarded-For", "203.0.113.9")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -42,9 +43,9 @@ func TestServeProxyRoutesWithoutRewritingRequestIdentity(t *testing.T) {
 	}
 	select {
 	case got := <-requests:
-		want := "app.example.test:8080 /items/a%2Fb sort=name&tag=one&tag=two"
-		if got != want {
-			t.Fatalf("backend request = %q, want %q", got, want)
+		wantPrefix := "app.example.test:8080 /items/a%2Fb sort=name&tag=one&tag=two "
+		if !strings.HasPrefix(got, wantPrefix) || strings.Contains(got, "203.0.113.9") {
+			t.Fatalf("backend request retained spoofed forwarding metadata: %q", got)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("backend did not receive request")
@@ -131,6 +132,31 @@ func TestServeProxyRejectsInvalidStartupTarget(t *testing.T) {
 			_ = proxy.Close(context.Background())
 			t.Fatalf("startServeProxy(%v) succeeded", target)
 		}
+	}
+}
+
+func TestServeProxyBoundsThePublicDevelopmentEdge(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer backend.Close()
+	target, err := url.Parse(backend.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := startServeProxy("127.0.0.1:0", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := proxy.Close(ctx); err != nil {
+			t.Errorf("close serve proxy: %v", err)
+		}
+	})
+	if proxy.server.ReadHeaderTimeout != serveProxyReadHeaderTimeout ||
+		proxy.server.IdleTimeout != serveProxyIdleTimeout ||
+		proxy.server.MaxHeaderBytes != serveProxyMaxHeaderBytes {
+		t.Fatalf("unbounded proxy server: %+v", proxy.server)
 	}
 }
 

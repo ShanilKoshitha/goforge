@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -29,6 +32,7 @@ func newFakeDevelopmentProcess() *fakeDevelopmentProcess {
 }
 
 func (process *fakeDevelopmentProcess) Done() <-chan struct{} { return process.done }
+func (process *fakeDevelopmentProcess) PID() int              { return 42 }
 func (process *fakeDevelopmentProcess) Wait() error {
 	<-process.done
 	return process.waitErr
@@ -45,6 +49,7 @@ type fakeDevelopmentProxy struct {
 	mu      sync.Mutex
 	targets []string
 	closed  bool
+	onSwap  func(*url.URL)
 }
 
 func newFakeDevelopmentProxy(address string, target *url.URL) *fakeDevelopmentProxy {
@@ -55,8 +60,12 @@ func (proxy *fakeDevelopmentProxy) Address() string    { return proxy.address }
 func (proxy *fakeDevelopmentProxy) Done() <-chan error { return proxy.done }
 func (proxy *fakeDevelopmentProxy) SwapTarget(target *url.URL) error {
 	proxy.mu.Lock()
-	defer proxy.mu.Unlock()
 	proxy.targets = append(proxy.targets, target.String())
+	hook := proxy.onSwap
+	proxy.mu.Unlock()
+	if hook != nil {
+		hook(target)
+	}
 	return nil
 }
 func (proxy *fakeDevelopmentProxy) Close(context.Context) error {
@@ -71,9 +80,10 @@ func (proxy *fakeDevelopmentProxy) Close(context.Context) error {
 }
 
 type fakeDevelopmentSource struct {
-	mu      sync.Mutex
-	current sourceSnapshot
-	changes chan sourceSnapshot
+	mu         sync.Mutex
+	current    sourceSnapshot
+	changes    chan sourceSnapshot
+	generation atomic.Uint64
 }
 
 func (source *fakeDevelopmentSource) snapshot() (sourceSnapshot, error) {
@@ -84,20 +94,28 @@ func (source *fakeDevelopmentSource) snapshot() (sourceSnapshot, error) {
 
 func (source *fakeDevelopmentSource) change(snapshot sourceSnapshot) {
 	source.mu.Lock()
+	changed := source.current != snapshot
 	source.current = snapshot
 	source.mu.Unlock()
+	if changed {
+		source.generation.Add(1)
+	}
 	source.changes <- snapshot
 }
 
 func (source *fakeDevelopmentSource) set(snapshot sourceSnapshot) {
 	source.mu.Lock()
+	changed := source.current != snapshot
 	source.current = snapshot
 	source.mu.Unlock()
+	if changed {
+		source.generation.Add(1)
+	}
 }
 
-func (source *fakeDevelopmentSource) wait(ctx context.Context, previous sourceSnapshot) (sourceSnapshot, error) {
+func (source *fakeDevelopmentSource) wait(ctx context.Context, previous sourceSnapshot, previousGeneration uint64) (sourceSnapshot, error) {
 	current, _ := source.snapshot()
-	if current != previous {
+	if current != previous || source.generation.Load() != previousGeneration {
 		return current, nil
 	}
 	for {
@@ -113,10 +131,18 @@ func (source *fakeDevelopmentSource) wait(ctx context.Context, previous sourceSn
 	}
 }
 
+func (source *fakeDevelopmentSource) stabilize(context.Context, sourceSnapshot) (sourceSnapshot, error) {
+	return source.snapshot()
+}
+
 func testSnapshot(value byte) sourceSnapshot {
 	var snapshot sourceSnapshot
 	snapshot[0] = value
 	return snapshot
+}
+
+func testDevelopmentBuild(binary string) *developmentBuild {
+	return &developmentBuild{binary: binary}
 }
 
 func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
@@ -135,16 +161,18 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 	dependencies := developmentServeDependencies{
 		snapshot:      source.snapshot,
 		waitForChange: source.wait,
-		build: func(context.Context) (string, error) {
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build: func(context.Context) (*developmentBuild, error) {
 			buildMu.Lock()
 			buildCount++
 			count := buildCount
 			buildMu.Unlock()
 			builds <- count
 			if count == 2 {
-				return "", errors.New("broken Go source")
+				return nil, errors.New("broken Go source")
 			}
-			return string(rune('a' + count - 1)), nil
+			return testDevelopmentBuild(string(rune('a' + count - 1))), nil
 		},
 		removeBinary: func(path string) error { removed <- path; return nil },
 		start: func(_ context.Context, binary string) (*developmentCandidate, error) {
@@ -243,7 +271,9 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 	dependencies := developmentServeDependencies{
 		snapshot:      source.snapshot,
 		waitForChange: source.wait,
-		build: func(context.Context) (string, error) {
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build: func(context.Context) (*developmentBuild, error) {
 			buildMu.Lock()
 			buildCount++
 			count := buildCount
@@ -252,7 +282,7 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 				close(secondStarted)
 				<-releaseSecond
 			}
-			return string(rune('0' + count)), nil
+			return testDevelopmentBuild(string(rune('0' + count))), nil
 		},
 		removeBinary: func(path string) error { removed <- path; return nil },
 		start: func(_ context.Context, binary string) (*developmentCandidate, error) {
@@ -278,8 +308,9 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 	source.change(testSnapshot(2))
 	<-secondStarted
 	source.set(testSnapshot(3))
+	source.set(testSnapshot(2))
 	close(releaseSecond)
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for {
 		proxy.mu.Lock()
 		count := len(proxy.targets)
@@ -316,6 +347,69 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 	<-result
 }
 
+func TestDevelopmentSupervisorRebuildsEditDuringInitialProxyStartup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot, 4)}
+	var buildCount int
+	var proxies []*fakeDevelopmentProxy
+	proxyReady := make(chan *fakeDevelopmentProxy, 2)
+	dependencies := developmentServeDependencies{
+		snapshot:      source.snapshot,
+		waitForChange: source.wait,
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build: func(context.Context) (*developmentBuild, error) {
+			buildCount++
+			return testDevelopmentBuild(fmt.Sprintf("server-%d", buildCount)), nil
+		},
+		removeBinary: func(string) error { return nil },
+		start: func(_ context.Context, binary string) (*developmentCandidate, error) {
+			return &developmentCandidate{
+				process: newFakeDevelopmentProcess(),
+				target:  &url.URL{Scheme: "http", Host: binary},
+				binary:  binary,
+			}, nil
+		},
+		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
+			proxy := newFakeDevelopmentProxy(address, target)
+			proxies = append(proxies, proxy)
+			if len(proxies) == 1 {
+				source.set(testSnapshot(2))
+			}
+			proxyReady <- proxy
+			return proxy, nil
+		},
+		publicAddress: "127.0.0.1:8080",
+		stdout:        io.Discard,
+		stderr:        io.Discard,
+	}
+
+	result := make(chan error, 1)
+	go func() { result <- superviseDevelopmentServer(ctx, dependencies) }()
+	first := <-proxyReady
+	second := <-proxyReady
+	first.mu.Lock()
+	firstClosed := first.closed
+	first.mu.Unlock()
+	if !firstClosed {
+		t.Fatal("stale initial proxy was not closed")
+	}
+	second.mu.Lock()
+	gotTargets := append([]string(nil), second.targets...)
+	second.mu.Unlock()
+	if want := []string{"http://server-2"}; !reflect.DeepEqual(gotTargets, want) {
+		t.Fatalf("replacement proxy targets = %v, want %v", gotTargets, want)
+	}
+	if buildCount != 2 {
+		t.Fatalf("build count = %d, want stale plus current", buildCount)
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("supervisor cancellation = %v", err)
+	}
+}
+
 func TestDevelopmentSupervisorPropagatesUnexpectedServerExit(t *testing.T) {
 	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot)}
 	process := newFakeDevelopmentProcess()
@@ -324,7 +418,9 @@ func TestDevelopmentSupervisorPropagatesUnexpectedServerExit(t *testing.T) {
 	dependencies := developmentServeDependencies{
 		snapshot:      source.snapshot,
 		waitForChange: source.wait,
-		build:         func(context.Context) (string, error) { return "server", nil },
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build:         func(context.Context) (*developmentBuild, error) { return testDevelopmentBuild("server"), nil },
 		removeBinary:  func(string) error { return nil },
 		start: func(context.Context, string) (*developmentCandidate, error) {
 			return &developmentCandidate{process: process, target: &url.URL{Scheme: "http", Host: "candidate"}, binary: "server"}, nil
@@ -348,6 +444,160 @@ func TestDevelopmentSupervisorPropagatesUnexpectedServerExit(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("unexpected server exit did not stop the supervisor")
+	}
+}
+
+func TestDevelopmentSupervisorDoesNotPromoteCandidateThatAlreadyExited(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot, 2)}
+	initial := newFakeDevelopmentProcess()
+	var starts int
+	var stderr synchronizedBuffer
+	proxyReady := make(chan *fakeDevelopmentProxy, 1)
+	dependencies := developmentServeDependencies{
+		snapshot:      source.snapshot,
+		waitForChange: source.wait,
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build:         func(context.Context) (*developmentBuild, error) { return testDevelopmentBuild("server"), nil },
+		removeBinary:  func(string) error { return nil },
+		start: func(context.Context, string) (*developmentCandidate, error) {
+			starts++
+			process := developmentProcess(initial)
+			if starts == 2 {
+				failed := newFakeDevelopmentProcess()
+				failed.waitErr = errors.New("candidate crashed")
+				_ = failed.Stop()
+				process = failed
+			}
+			return &developmentCandidate{process: process, target: &url.URL{Scheme: "http", Host: "candidate"}, binary: "server"}, nil
+		},
+		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
+			proxy := newFakeDevelopmentProxy(address, target)
+			proxyReady <- proxy
+			return proxy, nil
+		},
+		publicAddress: "127.0.0.1:8080",
+		stdout:        io.Discard,
+		stderr:        &stderr,
+	}
+	result := make(chan error, 1)
+	go func() { result <- superviseDevelopmentServer(ctx, dependencies) }()
+	proxy := <-proxyReady
+	source.change(testSnapshot(2))
+	waitForText(t, &stderr, "candidate crashed")
+	select {
+	case <-initial.Done():
+		t.Fatal("failed candidate stopped the last-good server")
+	default:
+	}
+	proxy.mu.Lock()
+	if len(proxy.targets) != 1 {
+		t.Fatalf("failed candidate was promoted: %v", proxy.targets)
+	}
+	proxy.mu.Unlock()
+	cancel()
+	<-result
+}
+
+func TestDevelopmentSupervisorRejectsInitialProcessExitDuringProxyStartup(t *testing.T) {
+	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot)}
+	process := newFakeDevelopmentProcess()
+	process.waitErr = errors.New("startup crash")
+	var proxy *fakeDevelopmentProxy
+	dependencies := developmentServeDependencies{
+		snapshot:      source.snapshot,
+		waitForChange: source.wait,
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build:         func(context.Context) (*developmentBuild, error) { return testDevelopmentBuild("server"), nil },
+		removeBinary:  func(string) error { return nil },
+		start: func(context.Context, string) (*developmentCandidate, error) {
+			return &developmentCandidate{process: process, target: &url.URL{Scheme: "http", Host: "candidate"}, binary: "server"}, nil
+		},
+		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
+			proxy = newFakeDevelopmentProxy(address, target)
+			_ = process.Stop()
+			return proxy, nil
+		},
+		publicAddress: "127.0.0.1:8080",
+		stdout:        io.Discard,
+		stderr:        io.Discard,
+	}
+	err := superviseDevelopmentServer(context.Background(), dependencies)
+	if err == nil || !strings.Contains(err.Error(), "startup crash") {
+		t.Fatalf("startup exit error = %v", err)
+	}
+	proxy.mu.Lock()
+	closed := proxy.closed
+	proxy.mu.Unlock()
+	if !closed {
+		t.Fatal("proxy was not closed after initial process exited")
+	}
+}
+
+func TestDevelopmentSupervisorRevertsCandidateExitDuringPromotion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot, 2)}
+	initial := newFakeDevelopmentProcess()
+	candidate := newFakeDevelopmentProcess()
+	candidate.waitErr = errors.New("promotion crash")
+	var starts int
+	var stderr synchronizedBuffer
+	proxyReady := make(chan *fakeDevelopmentProxy, 1)
+	dependencies := developmentServeDependencies{
+		snapshot:      source.snapshot,
+		waitForChange: source.wait,
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build: func(context.Context) (*developmentBuild, error) {
+			starts++
+			return testDevelopmentBuild(fmt.Sprintf("server-%d", starts)), nil
+		},
+		removeBinary: func(string) error { return nil },
+		start: func(context.Context, string) (*developmentCandidate, error) {
+			process := developmentProcess(initial)
+			if starts == 2 {
+				process = candidate
+			}
+			return &developmentCandidate{process: process, target: &url.URL{Scheme: "http", Host: fmt.Sprintf("candidate-%d", starts)}, binary: fmt.Sprintf("server-%d", starts)}, nil
+		},
+		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
+			proxy := newFakeDevelopmentProxy(address, target)
+			proxy.onSwap = func(target *url.URL) {
+				if target.Host == "candidate-2" {
+					_ = candidate.Stop()
+				}
+			}
+			proxyReady <- proxy
+			return proxy, nil
+		},
+		publicAddress: "127.0.0.1:8080",
+		stdout:        io.Discard,
+		stderr:        &stderr,
+	}
+	result := make(chan error, 1)
+	go func() { result <- superviseDevelopmentServer(ctx, dependencies) }()
+	proxy := <-proxyReady
+	source.change(testSnapshot(2))
+	waitForText(t, &stderr, "promotion crash")
+	select {
+	case <-initial.Done():
+		t.Fatal("promotion crash stopped last-good server")
+	default:
+	}
+	proxy.mu.Lock()
+	targets := append([]string(nil), proxy.targets...)
+	proxy.mu.Unlock()
+	want := []string{"http://candidate-1", "http://candidate-2", "http://candidate-1"}
+	if !reflect.DeepEqual(targets, want) {
+		t.Fatalf("promotion targets = %v, want %v", targets, want)
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("supervisor cancellation = %v", err)
 	}
 }
 
@@ -398,11 +648,111 @@ func TestWaitForCandidateHealthObservesHealthyServerAndEarlyExit(t *testing.T) {
 	}
 }
 
+func TestDevelopmentCandidateRetriesPortClaimThatPassesUnrelatedHealthProbe(t *testing.T) {
+	target := &url.URL{Scheme: "http", Host: "127.0.0.1:43210"}
+	var starts int
+	candidate, err := startDevelopmentCandidateWith(
+		context.Background(),
+		"server",
+		io.Discard,
+		io.Discard,
+		developmentCandidateStartDependencies{
+			reserve: func() (string, *url.URL, error) {
+				return target.Host, target, nil
+			},
+			environment: func(string) ([]string, error) { return nil, nil },
+			start: func(managedProcessSpec) (developmentProcess, error) {
+				starts++
+				return newFakeDevelopmentProcess(), nil
+			},
+			health: func(context.Context, developmentProcess, *url.URL, time.Duration) error {
+				// The occupied port may belong to another healthy application.
+				return nil
+			},
+			ownsAddress: func(developmentProcess, string) (bool, error) {
+				return starts == 2, nil
+			},
+			attempts: 2,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.process.Stop()
+	if starts != 2 {
+		t.Fatalf("candidate starts = %d, want collision retry", starts)
+	}
+}
+
 func TestEnvironmentWithOverrideIsCaseInsensitive(t *testing.T) {
 	got := environmentWithOverride([]string{"A=1", "app_address=:9", "B=2"}, "APP_ADDRESS", "127.0.0.1:10")
 	want := []string{"A=1", "B=2", "APP_ADDRESS=127.0.0.1:10"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("environment = %v, want %v", got, want)
+	}
+}
+
+func TestDevelopmentCandidateEnvironmentUsesPrivateAddressAndTrustedProxy(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	if err := os.WriteFile(".env", []byte("TRUSTED_PROXIES=10.0.0.0/8, 127.0.0.1/32\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environment, err := developmentCandidateEnvironment("127.0.0.1:43210")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make(map[string]string)
+	for _, entry := range environment {
+		key, value, found := strings.Cut(entry, "=")
+		if found {
+			values[strings.ToUpper(key)] = value
+		}
+	}
+	if got := values["APP_ADDRESS"]; got != "127.0.0.1:43210" {
+		t.Fatalf("candidate APP_ADDRESS = %q", got)
+	}
+	if got := values["TRUSTED_PROXIES"]; got != "127.0.0.1/32,10.0.0.0/8" {
+		t.Fatalf("candidate TRUSTED_PROXIES = %q", got)
+	}
+}
+
+func TestDevelopmentSupervisorReportsCleanupFailureOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot)}
+	process := newFakeDevelopmentProcess()
+	cleanupErr := errors.New("process tree remained alive")
+	process.stopErr = cleanupErr
+	proxyReady := make(chan struct{})
+	dependencies := developmentServeDependencies{
+		snapshot:      source.snapshot,
+		waitForChange: source.wait,
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build:         func(context.Context) (*developmentBuild, error) { return testDevelopmentBuild("server"), nil },
+		removeBinary:  func(string) error { return nil },
+		start: func(context.Context, string) (*developmentCandidate, error) {
+			return &developmentCandidate{process: process, target: &url.URL{Scheme: "http", Host: "candidate"}, binary: "server"}, nil
+		},
+		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
+			close(proxyReady)
+			return newFakeDevelopmentProxy(address, target), nil
+		},
+		publicAddress: "127.0.0.1:8080",
+		stdout:        io.Discard,
+		stderr:        io.Discard,
+	}
+	result := make(chan error, 1)
+	go func() { result <- superviseDevelopmentServer(ctx, dependencies) }()
+	<-proxyReady
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) || !errors.Is(err, cleanupErr) {
+			t.Fatalf("joined cancellation cleanup error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not finish cancellation cleanup")
 	}
 }
 
@@ -418,19 +768,20 @@ func waitForText(t *testing.T, buffer interface{ String() string }, expected str
 }
 
 func TestBuildDevelopmentServerCompilesViewsThenStagesOrdinaryBinary(t *testing.T) {
-	directory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: 5\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(directory)
+	setupDevelopmentBuildProject(t)
 	output := filepath.Join(t.TempDir(), "server")
 	runner := &developmentBuildRecorder{output: output}
 	stdin := strings.NewReader("input")
 	var stdout, stderr bytes.Buffer
 	ctx := context.Background()
-	if err := buildDevelopmentServer(ctx, stdin, &stdout, &stderr, runner, output); err != nil {
+	build, err := buildDevelopmentServer(ctx, stdin, &stdout, &stderr, runner, output)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if build.binary != output {
+		t.Fatalf("staged binary = %q, want %q", build.binary, output)
+	}
+	commitDevelopmentBuild(build)
 	want := []processCall{
 		{name: "go", args: []string{"run", "./cmd/views"}},
 		{name: "go", args: []string{"build", "-trimpath", "-o", output, "./cmd/server"}},
@@ -443,13 +794,126 @@ func TestBuildDevelopmentServerCompilesViewsThenStagesOrdinaryBinary(t *testing.
 	}
 }
 
+func TestBuildDevelopmentServerRestoresLastGoodViewsOnGoFailure(t *testing.T) {
+	setupDevelopmentBuildProject(t)
+	if err := os.MkdirAll(filepath.Dir(generatedViewsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lastGood := []byte("package views\n// last good\n")
+	if err := os.WriteFile(generatedViewsPath, lastGood, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "server")
+	runner := &developmentBuildRecorder{
+		output:     output,
+		viewOutput: []byte("package views\n// candidate\n"),
+		buildErr:   errors.New("broken Go source"),
+	}
+	build, err := buildDevelopmentServer(context.Background(), nil, io.Discard, io.Discard, runner, output)
+	if err == nil || !strings.Contains(err.Error(), "broken Go source") || build != nil {
+		t.Fatalf("build result = %#v, %v", build, err)
+	}
+	got, readErr := os.ReadFile(generatedViewsPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(got, lastGood) {
+		t.Fatalf("views after failed Go build = %q, want %q", got, lastGood)
+	}
+	info, statErr := os.Stat(generatedViewsPath)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if gotMode := info.Mode().Perm(); runtime.GOOS != "windows" && gotMode != 0o640 {
+		t.Fatalf("restored view mode = %o, want 640", gotMode)
+	}
+}
+
+func TestDevelopmentViewRollbackDoesNotOverwriteNewerGeneratorPublication(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	if err := os.WriteFile("forge.yaml", []byte("version: 5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(generatedViewsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previous := developmentFileState{exists: true, mode: 0o644, data: []byte("previous")}
+	published := developmentFileState{exists: true, mode: 0o644, data: []byte("candidate")}
+	newer := []byte("newer generator publication")
+	if err := os.WriteFile(generatedViewsPath, newer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollbackDevelopmentViews(previous, published); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(generatedViewsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, newer) {
+		t.Fatalf("rollback overwrote newer publication: %q", got)
+	}
+}
+
+func TestBuildDevelopmentServerRejectsStaleORMBeforeViewCompilation(t *testing.T) {
+	setupDevelopmentBuildProject(t)
+	modelPath := filepath.Join("internal", "models", "item.go")
+	if err := os.WriteFile(modelPath, []byte("package models\n\ntype Item struct {\n\tID int64 `forge:\"primary,generated,protected,required\"`\n\tName string `forge:\"required\"`\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &developmentBuildRecorder{output: filepath.Join(t.TempDir(), "server")}
+	_, err := buildDevelopmentServer(context.Background(), nil, io.Discard, io.Discard, runner, runner.output)
+	if err == nil || !strings.Contains(err.Error(), "generated ORM is stale") {
+		t.Fatalf("stale ORM error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("stale ORM invoked view/build processes: %#v", runner.calls)
+	}
+}
+
+func TestBuildDevelopmentServerRevalidatesProjectFormat(t *testing.T) {
+	setupDevelopmentBuildProject(t)
+	if err := os.WriteFile("forge.yaml", []byte("version: 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &developmentBuildRecorder{output: filepath.Join(t.TempDir(), "server")}
+	_, err := buildDevelopmentServer(context.Background(), nil, io.Discard, io.Discard, runner, runner.output)
+	if err == nil || !strings.Contains(err.Error(), "version 3") {
+		t.Fatalf("runtime format transition error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("unsupported format invoked processes: %#v", runner.calls)
+	}
+}
+
+func setupDevelopmentBuildProject(t *testing.T) {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: 5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(directory)
+	if err := os.MkdirAll(filepath.Join("internal", "models"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("internal", "models", "item.go"), []byte("package models\n\ntype Item struct {\n\tID int64 `forge:\"primary,generated,protected,required\"`\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := generateORM(false, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type developmentBuildRecorder struct {
-	calls  []processCall
-	output string
-	ctx    context.Context
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	calls      []processCall
+	output     string
+	viewOutput []byte
+	buildErr   error
+	ctx        context.Context
+	stdin      io.Reader
+	stdout     io.Writer
+	stderr     io.Writer
 }
 
 func (runner *developmentBuildRecorder) Run(
@@ -461,7 +925,18 @@ func (runner *developmentBuildRecorder) Run(
 ) error {
 	runner.calls = append(runner.calls, processCall{name: name, args: append([]string(nil), arguments...)})
 	runner.ctx, runner.stdin, runner.stdout, runner.stderr = ctx, stdin, stdout, stderr
+	if len(arguments) > 0 && arguments[0] == "run" && runner.viewOutput != nil {
+		if err := os.MkdirAll(filepath.Dir(generatedViewsPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(generatedViewsPath, runner.viewOutput, 0o644); err != nil {
+			return err
+		}
+	}
 	if len(arguments) > 0 && arguments[0] == "build" {
+		if runner.buildErr != nil {
+			return runner.buildErr
+		}
 		return os.WriteFile(runner.output, []byte("executable"), 0o755)
 	}
 	return nil
