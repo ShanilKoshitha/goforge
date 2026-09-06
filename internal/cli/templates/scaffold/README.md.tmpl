@@ -11,6 +11,7 @@ cd issueboard
 forge make:resource Issue
 forge make:job SendWelcome
 forge migrate
+# For plain-HTTP development, first set APP_ENV=local in .env.
 forge serve
 ```
 
@@ -18,11 +19,12 @@ These commands assume PostgreSQL is reachable at the
 generated local database URL. If it is not already running, start the explicit
 development service with `docker compose up -d` after entering the project.
 GoForge never starts external services implicitly. The generated `.env`
-contains a unique session secret and defaults to `APP_ENV=production`, which
-keeps cookies HTTPS-only. For local plain-HTTP development only, explicitly set
-`APP_ENV=local`; never deploy with that value because it disables secure
-cookies. Replace the local database URL and rotate the session secret before
-deployment. The generated Compose port is bound to `127.0.0.1` so its known
+contains a unique session secret and retains `APP_ENV=production`, which keeps
+cookies HTTPS-only. Change it to `APP_ENV=local` only for local plain-HTTP
+development, before running `forge serve`. Never use `APP_ENV=local` in a
+deployed process because it disables secure cookies. Replace the local database
+URL and rotate the session secret before deployment. The generated Compose port
+is bound to `127.0.0.1` so its known
 development credentials are not exposed on other network interfaces.
 HTTP limits and timeouts are listed in `.env.example`. Enable
 `APP_ENABLE_HSTS` only when production traffic always uses HTTPS, including

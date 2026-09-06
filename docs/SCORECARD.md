@@ -1,6 +1,6 @@
 # Post-v0.8 P1 and production-hardening scorecard
 
-Status: **implemented; PostgreSQL acceptance pending an available test service** — 2026-09-05
+Status: **implemented; PostgreSQL acceptance rerun pending** — 2026-09-06
 
 ## Acceptance criteria
 
@@ -10,18 +10,21 @@ Status: **implemented; PostgreSQL acceptance pending an available test service**
 | Local CLI cannot remain silently stale | passing | The stale root `forge.exe` was removed, root CLI artifacts are no longer ignored, and verified builds target `.tmp/forge.exe` |
 | Module paths follow Go's contract | passing | `new` and existing-project parsing use `golang.org/x/mod/module.CheckPath`; `../evil` and other invalid forms are rejected in tests |
 | CLI cancellation stops descendants | passing | The executable uses a signal-derived context; Unix process groups and Windows kill-on-close Job Objects retain control after the direct child exits; a signal-resistant descendant-heartbeat regression proves cancellation reaches the child tree |
-| Liveness and readiness are truthful | passing | `/health` is process liveness; `/ready` applies a two-second PostgreSQL ping and migration status/checksum check; acceptance polling uses `/ready` with an HTTP client timeout |
+| Liveness and readiness are truthful | passing | `/health` is process liveness; `/ready` applies a two-second PostgreSQL ping and migration status/checksum check; acceptance polling uses `/ready` with an HTTP client timeout, and the fixture rebuilds its embedded migration manifest after adding the transactional probe |
 | Applied schema identity is verified | passing | Migration rows retain name and exact up-script SHA-256; `Up`, `Down`, and `Status` reject missing, renamed, changed, or re-nullified checksums; legacy backfill is one-time and ends with a non-null constraint |
-| Deployment defaults fail secure | passing | Generated `.env` defaults to production/secure cookies, the guide requires explicit local HTTP opt-in, and development PostgreSQL binds only to `127.0.0.1` |
+| Deployment defaults fail secure | passing | Generated `.env` defaults to production/secure cookies, both the CLI next steps and generated guide require explicit local HTTP opt-in before `forge serve`, and development PostgreSQL binds only to `127.0.0.1` |
 | Durable queue failures do not disclose handler data | passing | Runtime classification, PostgreSQL writes, and historical admin reads allowlist generic diagnostics; panic values, stacks, raw errors, and malformed payload details are excluded |
 | Uncooperative jobs cannot hold a live worker forever | passing | Cancellation has a configurable bound; expiry stops the worker and heartbeats without mutating the fenced delivery so lease recovery remains safe |
 | Signup commits as one unit | passing | Generated JSON and browser registration create the user, reset the account limiter, and persist the initial session through one PostgreSQL transaction; custom stores require an explicit coordinator outside tests; the acceptance probe forces session insertion failure and expects the user/reset to roll back |
 | Migration rollback and status are covered | passing | Unit tests cover reverse ordering, default steps, empty scripts, applied/pending state, drift, legacy tables, and PostgreSQL locking behavior |
 | Repository gates | passing | `go test -race ./...`, `go vet ./...`, generated-application compilation, process-tree regression, and a CLI build to `.tmp/forge.exe` pass locally |
 
-The PostgreSQL workflow now contains the atomic-signup and readiness probes but
-was not executed locally because `GOFORGE_TEST_DATABASE_URL` and a Docker engine
-were unavailable. CI supplies PostgreSQL and runs this workflow.
+The PostgreSQL workflow contains the atomic-signup and readiness probes but was
+not executed locally because `GOFORGE_TEST_DATABASE_URL` and a Docker engine
+were unavailable. The first branch run correctly rejected an acceptance binary
+built before the transactional probe migration existed; the fixture now
+rebuilds that binary against the final embedded migration manifest. CI supplies
+PostgreSQL and must pass the corrected workflow before this work is accepted.
 
 # v0.8 account integrity and bounded sessions scorecard
 

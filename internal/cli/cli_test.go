@@ -26,6 +26,9 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err := Run([]string{"new", directory, "--module", "example.com/orders", "--replace", root}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(output.String(), "set APP_ENV=local in .env") {
+		t.Fatalf("new-project instructions omit the local HTTP environment step:\n%s", output.String())
+	}
 	for _, name := range []string{
 		"go.mod",
 		"forge.yaml",
