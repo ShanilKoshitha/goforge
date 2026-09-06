@@ -1,6 +1,7 @@
 # v0.10 last-good development server scorecard
 
-Status: **in progress** — 2026-09-06
+Status: **in progress** — local gates pass; public PostgreSQL and compatibility
+gates are pending — 2026-09-06
 
 Target:
 
@@ -10,22 +11,37 @@ Target:
 > with the project's own semantics and builds an ordinary server binary. A
 > broken edit leaves the last-good server and generated view artifact intact;
 > correcting it recovers without restarting the CLI. Cancellation removes the
-> complete child process tree and every development artifact.
+> complete child process tree and every development artifact. “Last-good” is a
+> compile-and-liveness guarantee; `/ready` remains the dynamic PostgreSQL and
+> exact-migration-state signal.
 
 ## Acceptance criteria
 
 | Criterion | State | Evidence |
 | --- | --- | --- |
-| The default closes the edit-to-render gap | pending | `forge serve` must compile, build, start, watch, and reload without flags; `go run ./cmd/server` remains the documented one-shot escape hatch |
-| Watch coverage is complete and loop-free | pending | Content snapshots must detect writes, atomic saves, deletes, new nested directories, and changes to `.go`, `.forge.html`, `.sql`, `.env`, `go.mod`, `go.sum`, and `forge.yaml` while excluding repository metadata, dependencies, build/cache directories, and GoForge's own generated artifacts |
-| Bursts converge on the newest source | pending | A serialized dirty-generation state machine must coalesce stable bursts, notice edits made during compile/build, discard stale candidates, and never overlap builds or promote an older generation |
-| Invalid views preserve the last-good state | pending | Positioned Forge diagnostics must leave `resources/views/views_gen.go` byte-identical and the current server reachable, then a correction must compile and reload exactly once |
-| Invalid Go preserves the last-good server | pending | Failed or cancelled candidate builds must leave the running process unchanged and remove every temporary binary; a later correction must recover automatically |
-| Process replacement and exit semantics are bounded | pending | One owner must start and stop each complete process tree, an unexpected active-server exit must terminate `forge serve`, and cancellation during debounce, compile, build, replacement, or steady state must release the port and leave no descendant |
-| Template compatibility is retained | pending | Format 4 must use its frozen compiler and formats 5 through 8 must use application-owned `cmd/views` with custom functions; malformed, older, and future manifests must fail before watching, writing, or spawning |
-| Production remains conventional | pending | Development binaries must live outside the repository; generated application source and production runtime must contain no watcher, source compiler, reload endpoint, or browser script |
+| The default closes the edit-to-render gap | passing locally | Supervisor tests and the frozen format-4 journey prove compile, build, start, watch, reload, and the documented direct `go run ./cmd/server` escape hatch |
+| Watch coverage is complete and loop-free | passing locally | Content-snapshot tests cover writes, creates, deletes, renames, new nested directories, every declared input, exclusions, transient read recovery, and generated-output exclusion; one observer owns polling and generation |
+| Bursts converge on the newest source | passing locally | Race tests cover edits during builds, A→B→A content round trips, generation handoff before waiter registration, pre/post-promotion checks, stale discard, proxy revert, and serialized builds |
+| Invalid views preserve the last-good state | passing locally | Compiler and transaction tests retain exact bytes and mode on failure; lock-protected compare-and-swap rollback cannot overwrite a newer generator publication |
+| Invalid Go preserves the last-good server | passing locally | Go-build failures roll back compiled views, preserve the active process, remove staged binaries, and recover after the next stable edit |
+| Process replacement and exit semantics are bounded | passing locally | Managed process trees, joined cleanup failures, candidate exits during proxy startup/promotion, exact PID/address listener ownership, cancellation, proxy limits, and port cleanup have native Windows race coverage |
+| Template compatibility is retained | passing locally | The frozen format-4 watched journey passes twice; format-specific compiler tests retain application-owned format 5–8 function maps and format/ORM gates are revalidated for every candidate |
+| Production remains conventional | passing locally | Candidate binaries use an OS temporary directory; inspection and scaffold tests show no watcher, compiler, reload endpoint, or injected browser script in application/runtime source |
 | Fresh application journey passes twice | pending | A generated PostgreSQL application must prove valid view and Go edits, invalid-edit preservation and recovery, atomic-save/new-directory detection, readiness, response changes, cancellation cleanup, and port reuse in two consecutive runs |
 | Independent compatibility and platform review passes | pending | Framework race/vet/build, frozen and public released-project checks, Linux PostgreSQL acceptance, and native Windows watcher/process tests must pass twice with no P0–P2 review blocker |
+
+## Local evidence — 2026-09-06
+
+- `go test -race ./...`, `go vet ./...`, and `go build ./cmd/forge` pass on
+  Windows; the CLI reports `forge 0.10.0`.
+- The supervisor, observer, listener-owner, proxy, and cleanup suites pass ten
+  consecutive race-enabled runs. Exact Windows PID/address ownership rejects a
+  same-port wrong-address match.
+- The frozen format-4 build/serve/check/last-good journey passes twice with a
+  real watched server and complete cancellation cleanup.
+- A CGO-free Linux CLI test binary compiles successfully. The fresh PostgreSQL
+  development journey is present but remains pending on public CI because this
+  workstation has no `GOFORGE_TEST_DATABASE_URL`.
 
 ## Baseline — 2026-09-06
 

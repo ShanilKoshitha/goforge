@@ -44,14 +44,41 @@ jobs:
           "$RUNNER_TEMP/released-cli/forge" new "$RUNNER_TEMP/released-app" --module example.com/releasedapp
           cd "$RUNNER_TEMP/released-app"
           cp internal/models/zz_orm_gen.go "$RUNNER_TEMP/orm-before.go"
-          cp resources/views/views_gen.go "$RUNNER_TEMP/views-before.go"
           "$RUNNER_TEMP/forge" test
           "$RUNNER_TEMP/forge" build
           cmp "$RUNNER_TEMP/orm-before.go" internal/models/zz_orm_gen.go
-          cmp "$RUNNER_TEMP/views-before.go" resources/views/views_gen.go
           test -x bin/app
           grep -q '^version: 8$' forge.yaml
           test -z "$(grep '^replace ' go.mod || true)"
+          cp go.mod "$RUNNER_TEMP/released-go.mod"
+          cp go.sum "$RUNNER_TEMP/released-go.sum"
+          cp forge.yaml "$RUNNER_TEMP/released-forge.yaml"
+          APP_ENV=local APP_ADDRESS=127.0.0.1:18081 "$RUNNER_TEMP/forge" serve >"$RUNNER_TEMP/released-serve.log" 2>&1 &
+          serve_pid=$!
+          cleanup() {
+            kill -TERM "$serve_pid" 2>/dev/null || true
+            wait "$serve_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 150); do
+            if curl --fail --silent --max-time 1 http://127.0.0.1:18081/health >/dev/null; then break; fi
+            if ! kill -0 "$serve_pid" 2>/dev/null; then cat "$RUNNER_TEMP/released-serve.log"; exit 1; fi
+            sleep 0.1
+          done
+          curl --fail --silent --max-time 1 http://127.0.0.1:18081/health >/dev/null
+          printf '\n<p>released-format-live-reload</p>\n' >> resources/views/partials/tagline.forge.html
+          for attempt in $(seq 1 300); do
+            if curl --fail --silent --max-time 1 http://127.0.0.1:18081/ | grep -q 'released-format-live-reload'; then break; fi
+            if ! kill -0 "$serve_pid" 2>/dev/null; then cat "$RUNNER_TEMP/released-serve.log"; exit 1; fi
+            sleep 0.1
+          done
+          curl --fail --silent --max-time 1 http://127.0.0.1:18081/ | grep -q 'released-format-live-reload'
+          kill -TERM "$serve_pid"
+          wait "$serve_pid"
+          trap - EXIT
+          cmp "$RUNNER_TEMP/released-go.mod" go.mod
+          cmp "$RUNNER_TEMP/released-go.sum" go.sum
+          cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
       - name: Current distribution scaffold
         run: |
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
@@ -62,7 +89,7 @@ jobs:
           "$RUNNER_TEMP/forge" build
           test -x bin/app
       - name: Generated PostgreSQL applications
-        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow)$' -count=2 -v
+        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow)$' -count=2 -v
 
   windows:
     runs-on: windows-latest

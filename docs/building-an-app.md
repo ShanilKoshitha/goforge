@@ -44,20 +44,38 @@ templates under `resources/views/pages/issues` and regenerates the clearly
 marked route and compiled-view registries. Human-owned files are preflighted and
 never overwritten.
 
-Run the generated migrations and server through the thin project wrappers:
+Run the generated migrations and development server through the project
+commands:
 
 ```sh
 forge migrate
 forge serve
 ```
 
-The wrappers execute `go run ./cmd/console migrate` and `go run ./cmd/server`.
-Those commands remain the direct escape hatches.
+`forge migrate` delegates to the application-owned console. `forge serve`
+compiles views with the application's own function map, stages an ordinary Go
+server binary outside the repository, and keeps one public address while it
+watches Go, `.forge.html`, SQL, module, environment, and project-manifest
+inputs. Refresh the browser after a successful reload to see the new rendered
+output.
 
-`forge serve` compiles views before starting, but it does not watch source,
-reload a browser, start Compose/PostgreSQL, or apply migrations. Stop and rerun
-the command after source changes. Those development-supervisor concerns remain
-separate from the explicit server process.
+A broken view or Go edit prints its normal diagnostic while the last-good
+server remains reachable. Correcting the source rebuilds automatically. View
+compilation is serialized with generators, stable edit bursts converge on the
+newest source, and Ctrl-C stops every owned process. `go run ./cmd/server`
+remains the exact one-shot escape hatch when watching or the development proxy
+does not fit.
+
+`forge serve` does not start Compose/PostgreSQL, apply migrations, generate a
+stale ORM artifact, change `.env`, start a worker, inject browser reload code,
+or compile frontend assets. Candidate promotion checks `/health` liveness;
+`/ready` continues to report PostgreSQL and exact migration readiness. A changed
+migration may therefore leave `/ready` at 503 until you run `forge migrate`.
+Run those operations explicitly.
+
+Candidate listener ownership is checked without extra tools on Linux and
+Windows, and with the system `lsof` on macOS and other supported Unix targets.
+If `lsof` is unavailable on those targets, use `go run ./cmd/server` directly.
 
 Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
@@ -122,9 +140,9 @@ needed.
 
 Test and build do not start services, provision a database, change `.env`, or
 apply migrations. Run `docker compose up -d` and `forge migrate` explicitly when
-the application workflow requires them. Watch/reload, browser LiveReload/HMR,
-frontend asset compilation, multi-process development, and environment diagnosis
-are deliberately outside this milestone.
+the application workflow requires them. Browser LiveReload/HMR, frontend asset
+compilation, multi-process development, and environment diagnosis remain
+separate milestones.
 
 ## Run durable background work
 

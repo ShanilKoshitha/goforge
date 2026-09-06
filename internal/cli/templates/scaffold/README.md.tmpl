@@ -68,7 +68,7 @@ props and slots directly. Register application helpers once in
 `resources/views/viewfuncs/functions.go`; the project compiler and production renderer
 use the same function map. Run `forge views:compile` after source changes and
 use `forge views:compile --check` in CI. `forge serve` compiles views before
-starting the application.
+starting the application and recompiles them after stable source changes.
 
 Run the opinionated project checks and build with:
 
@@ -96,9 +96,20 @@ go run ./cmd/server
 Direct Go commands remain available for custom packages, flags, tags, targets,
 and output paths. `forge test` and `forge build` do not start PostgreSQL or
 Compose, apply migrations, select a test database, or change `.env`. `forge
-serve` does not watch files or reload the browser; restart it after source
-changes. Frontend HMR and multi-process development orchestration are separate
-future work.
+serve` watches Go, Forge view, SQL, module, environment, and manifest inputs. It
+builds candidates outside the repository, proves `/health` on a private
+loopback address, and promotes only a healthy replacement behind one stable
+public address. Invalid source leaves the last-good server reachable and
+recovers after correction. Refresh the browser after a successful reload; the
+proxy does not inject scripts or rewrite responses. Frontend HMR and
+multi-process development orchestration remain separate future work. Candidate
+promotion proves `/health` liveness, while `/ready` continues to reflect the
+database and exact migration state; run `forge migrate` explicitly after SQL
+changes.
+
+Listener ownership needs no extra tool on Linux or Windows. macOS and other
+supported Unix targets use the system `lsof`; use `go run ./cmd/server`
+directly when it is unavailable.
 
 Send `Content-Type: application/json` with JSON request bodies. Other media
 types receive 415 so browser forms cannot submit JSON authentication requests.
