@@ -11,6 +11,7 @@ import (
 	ratelimitpostgres "github.com/ShanilKoshitha/goforge/security/ratelimit/postgres"
 	"github.com/ShanilKoshitha/goforge/session"
 
+	"[[.Module]]/internal/auth"
 	"[[.Module]]/internal/config"
 	httperrors "[[.Module]]/internal/http/errors"
 	views "[[.Module]]/resources/views"
@@ -21,6 +22,7 @@ type Dependencies struct {
 	DB         *sql.DB
 	Sessions   session.Store
 	RateLimits ratelimit.Store
+	Registration auth.RegistrationTransaction
 }
 
 func New(settings config.Config, dependencies Dependencies) (*forge.App, error) {
@@ -28,12 +30,26 @@ func New(settings config.Config, dependencies Dependencies) (*forge.App, error) 
 		return nil, fmt.Errorf("session store is required")
 	}
 	attemptStore := dependencies.RateLimits
+	defaultRateLimits := attemptStore == nil
 	if attemptStore == nil {
 		var err error
 		attemptStore, err = ratelimitpostgres.New(dependencies.DB)
 		if err != nil {
 			return nil, err
 		}
+	}
+	registration := dependencies.Registration
+	if registration == nil && defaultRateLimits {
+		if store, ok := dependencies.Sessions.(*auth.PostgresSessionStore); ok && store.Uses(dependencies.DB) {
+			registration = auth.NewPostgresRegistration(dependencies.DB, []byte(settings.SessionSecret), session.Cookie{
+				UnsafeAllowHTTP: settings.Environment == "local",
+			}, session.Policy{
+				IdleLifetime: settings.SessionIdleLifetime, AbsoluteLifetime: settings.SessionAbsoluteLifetime,
+			})
+		}
+	}
+	if registration == nil && settings.Environment != "test" {
+		return nil, fmt.Errorf("atomic registration transaction is required for non-default session or rate-limit stores")
 	}
 	app, err := forge.NewChecked(forge.Config{
 		Address: settings.Address, ShutdownTimeout: settings.ShutdownTimeout,
@@ -76,7 +92,7 @@ func New(settings config.Config, dependencies Dependencies) (*forge.App, error) 
 		return nil, err
 	}
 	app.Router.OnError(httperrors.New(renderer))
-	if err := routes.Register(app.Router, renderer, dependencies.DB, dependencies.Sessions, attemptStore, settings); err != nil {
+	if err := routes.Register(app.Router, renderer, dependencies.DB, dependencies.Sessions, attemptStore, settings, registration); err != nil {
 		return nil, err
 	}
 	return app, nil

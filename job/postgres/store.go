@@ -272,6 +272,7 @@ func (store *Store) Retry(ctx context.Context, request job.RetryRequest) (bool, 
 	if err := validateLease(request.Lease); err != nil || request.Delay < 0 || len(request.ErrorKind) > 64 || len(request.Error) > store.maxError {
 		return false, fmt.Errorf("retry: invalid request")
 	}
+	safeMessage := store.boundedSafeFailureMessage(request.ErrorKind, request.Error)
 	query := fmt.Sprintf(`WITH db_clock AS (SELECT clock_timestamp() AS now)
 UPDATE %s AS queued
 SET available_at = db_clock.now + ($4::bigint * interval '1 millisecond'),
@@ -280,7 +281,7 @@ SET available_at = db_clock.now + ($4::bigint * interval '1 millisecond'),
 FROM db_clock
 WHERE queued.id = $1::uuid AND queued.lease_owner = $2
   AND queued.lease_generation = $3 AND queued.lease_expires_at > db_clock.now`, store.jobsTable)
-	return store.execFenced(ctx, query, request.Lease, request.Delay.Milliseconds(), request.ErrorKind, request.Error)
+	return store.execFenced(ctx, query, request.Lease, request.Delay.Milliseconds(), request.ErrorKind, safeMessage)
 }
 
 // Release immediately releases a fenced job without changing its attempt count.
@@ -303,6 +304,7 @@ func (store *Store) Fail(ctx context.Context, request job.FailureRequest) (bool,
 	if err := validateLease(request.Lease); err != nil || len(request.Kind) == 0 || len(request.Kind) > 64 || len(request.Error) > store.maxError {
 		return false, fmt.Errorf("fail: invalid request")
 	}
+	safeMessage := store.boundedSafeFailureMessage(request.Kind, request.Error)
 	query := fmt.Sprintf(`WITH db_clock AS (
     SELECT clock_timestamp() AS now
 ), removed AS (
@@ -320,7 +322,7 @@ SELECT removed.id, removed.queue, removed.name, removed.payload, removed.priorit
 FROM removed, db_clock
 RETURNING id`, store.jobsTable, store.failedTable)
 	var id string
-	err := store.db.QueryRowContext(ctx, query, string(request.Lease.JobID), request.Lease.WorkerID, request.Lease.Generation, request.Kind, request.Error).Scan(&id)
+	err := store.db.QueryRowContext(ctx, query, string(request.Lease.JobID), request.Lease.WorkerID, request.Lease.Generation, request.Kind, safeMessage).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

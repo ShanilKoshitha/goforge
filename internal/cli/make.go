@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
+func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) (err error) {
 	var kind string
 	var rest []string
 	if args[0] == "make" {
@@ -30,9 +30,15 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := requireProjectFormatRange(1, 8); err != nil {
 		return err
 	}
+	lock, err := acquireGeneratorLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, lock.Close())
+	}()
 
 	var path, content string
-	var err error
 	switch kind {
 	case "controller":
 		path, content, err = controllerFile(rest[0])

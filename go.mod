@@ -2,7 +2,10 @@ module github.com/ShanilKoshitha/goforge
 
 go 1.25.0
 
-require github.com/jackc/pgx/v5 v5.10.0
+require (
+	github.com/jackc/pgx/v5 v5.10.0
+	golang.org/x/mod v0.40.0
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

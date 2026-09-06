@@ -1,13 +1,16 @@
-//go:build !windows
+//go:build aix || android || darwin || dragonfly || freebsd || illumos || ios || linux || netbsd || openbsd || solaris
 
 package cli
 
 import (
 	"os/exec"
+	"os/signal"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func ignoreProcessTreeGracefulSignal() { signal.Ignore(syscall.SIGTERM) }
 
 func configureCommandProcess(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

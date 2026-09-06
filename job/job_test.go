@@ -395,17 +395,21 @@ func TestWorkerClaimsOnlyCapacityAndFiltersKnownNames(t *testing.T) {
 
 func TestWorkerRetryPermanentPanicAndMalformedPayload(t *testing.T) {
 	tests := []struct {
-		name      string
-		handler   job.Handler[payload]
-		mutate    func(*job.Delivery)
-		wantRetry bool
-		wantKind  string
-		wantDelay time.Duration
+		name        string
+		handler     job.Handler[payload]
+		mutate      func(*job.Delivery)
+		wantRetry   bool
+		wantKind    string
+		wantMessage string
+		wantDelay   time.Duration
 	}{
-		{name: "retry after", handler: func(context.Context, payload) error { return job.RetryAfter(errors.New("later"), 17*time.Millisecond) }, wantRetry: true, wantKind: "error", wantDelay: 17 * time.Millisecond},
-		{name: "permanent", handler: func(context.Context, payload) error { return job.Permanent(errors.New("bad")) }, wantKind: "permanent"},
-		{name: "panic", handler: func(context.Context, payload) error { panic("boom") }, wantRetry: true, wantKind: "panic", wantDelay: 10 * time.Millisecond},
-		{name: "malformed", handler: func(context.Context, payload) error { return nil }, mutate: func(delivery *job.Delivery) { delivery.Payload = []byte(`{"unknown":true}`) }, wantKind: "malformed_payload"},
+		{name: "error", handler: func(context.Context, payload) error { return errors.New("password=secret-value") }, wantRetry: true, wantKind: "error", wantMessage: "handler returned an error", wantDelay: 10 * time.Millisecond},
+		{name: "retry after", handler: func(context.Context, payload) error {
+			return job.RetryAfter(errors.New("secret retry detail"), 17*time.Millisecond)
+		}, wantRetry: true, wantKind: "error", wantMessage: "handler requested a retry", wantDelay: 17 * time.Millisecond},
+		{name: "permanent", handler: func(context.Context, payload) error { return job.Permanent(errors.New("secret permanent detail")) }, wantKind: "permanent", wantMessage: "handler reported a permanent failure"},
+		{name: "panic", handler: func(context.Context, payload) error { panic("secret panic detail") }, wantRetry: true, wantKind: "panic", wantMessage: "handler panicked", wantDelay: 10 * time.Millisecond},
+		{name: "malformed", handler: func(context.Context, payload) error { return nil }, mutate: func(delivery *job.Delivery) { delivery.Payload = []byte(`{"unknown":true}`) }, wantKind: "malformed_payload", wantMessage: "job payload could not be decoded"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -426,42 +430,47 @@ func TestWorkerRetryPermanentPanicAndMalformedPayload(t *testing.T) {
 			store.mu.Lock()
 			defer store.mu.Unlock()
 			if test.wantRetry {
-				if len(store.retries) != 1 || store.retries[0].ErrorKind != test.wantKind || store.retries[0].Delay != test.wantDelay {
+				if len(store.retries) != 1 || store.retries[0].ErrorKind != test.wantKind || store.retries[0].Error != test.wantMessage || store.retries[0].Delay != test.wantDelay {
 					t.Fatalf("unexpected retry: %+v", store.retries)
 				}
-			} else if len(store.failures) != 1 || store.failures[0].Kind != test.wantKind {
+			} else if len(store.failures) != 1 || store.failures[0].Kind != test.wantKind || store.failures[0].Error != test.wantMessage {
 				t.Fatalf("unexpected failure: %+v", store.failures)
 			}
 		})
 	}
 }
 
-func TestTimedOutUncooperativeHandlerRetainsSlotAndHeartbeatUntilReturn(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func TestTimedOutUncooperativeHandlerStopsWorkerAndHeartbeatWithinBound(t *testing.T) {
 	store := &fakeStore{heartbeatOwn: true}
 	item := delivery("a", 3)
-	item.Timeout = 10 * time.Millisecond
+	item.Timeout = 8 * time.Millisecond
 	store.deliveries = []job.Delivery{item}
+	release := make(chan struct{})
+	defer close(release)
 	started := time.Now()
-	store.onRetry = cancel
 	worker := newWorker(t, store, func(context.Context, payload) error {
-		time.Sleep(60 * time.Millisecond) // deliberately ignores cancellation
+		<-release // deliberately ignores cancellation
 		return nil
-	}, job.WorkerConfig{Concurrency: 1, HeartbeatInterval: 5 * time.Millisecond})
-	if err := worker.Run(ctx); err != nil {
-		t.Fatal(err)
+	}, job.WorkerConfig{Concurrency: 1, HeartbeatInterval: 3 * time.Millisecond, CancellationTimeout: 12 * time.Millisecond})
+	err := worker.Run(context.Background())
+	if !errors.Is(err, job.ErrHandlerCancellationTimeout) {
+		t.Fatalf("worker error = %v, want cancellation timeout", err)
 	}
-	if elapsed := time.Since(started); elapsed < 50*time.Millisecond {
-		t.Fatalf("retry was scheduled before timed-out handler returned: %s", elapsed)
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("uncooperative handler held worker beyond bound: %s", elapsed)
 	}
 	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.retries) != 1 || store.retries[0].ErrorKind != "timeout" {
-		t.Fatalf("unexpected timeout retry: %+v", store.retries)
+	heartbeats := store.heartbeats
+	mutations := len(store.acks) + len(store.retries) + len(store.failures) + len(store.releases)
+	store.mu.Unlock()
+	if mutations != 0 {
+		t.Fatal("abandoned handler mutated its fenced delivery")
 	}
-	if store.heartbeats < 2 {
-		t.Fatalf("lease was not retained after timeout: %d heartbeats", store.heartbeats)
+	time.Sleep(15 * time.Millisecond)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.heartbeats != heartbeats {
+		t.Fatalf("worker kept heartbeating after cancellation bound: %d -> %d", heartbeats, store.heartbeats)
 	}
 }
 

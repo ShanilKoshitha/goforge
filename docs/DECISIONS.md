@@ -471,3 +471,42 @@ the generated tests, vet, and command builds.
 Reason: a module cannot embed its own public zip checksum before the tag exists.
 Keeping the runtime tag immutable and shipping only the resolved checksum pin in
 a patch CLI tag makes that bootstrap boundary explicit and reproducible.
+
+## D025 — Mutation and operational safety fail closed across processes
+
+**Status:** accepted after v0.8
+
+Every `forge make:*` operation takes one operating-system-backed lock on the
+project manifest before reading or publishing managed state. The lock is shared
+by all generator kinds, is released by the OS after a crash, and waits with the
+caller's cancellation context. This deliberately serializes the short planning
+and publication transaction while leaving unrelated builds and edits alone.
+
+The CLI root derives cancellation from interrupt and termination signals.
+Delegated project commands run in an isolated process group and receive bounded
+graceful tree termination followed by forced cleanup, so `go run` descendants
+cannot outlive `forge`. Root build artifacts are no longer ignored; local CLI
+builds belong under `.tmp` or another explicit output directory so a stale
+`forge` executable is visible rather than silently preferred by an agent.
+
+Generated applications distinguish `/health` liveness from `/ready` readiness.
+Readiness uses a short deadline, PostgreSQL ping, and the migration manifest;
+applied migrations retain and verify their recorded name and exact up-script
+checksum. Legacy rows use an explicit one-time checksum backfill after their
+name matches, then the ledger enforces non-null checksums so it cannot be
+silently re-baselined. Production is the generated environment default, local HTTP mode
+must be opted into, and Compose exposes PostgreSQL only on loopback.
+
+Default PostgreSQL registration binds account insertion, account-throttle reset,
+and initial session persistence to one transaction. Alternate session or
+limiter stores must supply an explicit transaction coordinator outside tests;
+startup otherwise fails closed. Queue failure storage uses
+allowlisted operator diagnostics instead of handler-controlled errors or panic
+data. A handler that ignores cancellation has a bounded grace window; after it
+expires the worker stops heartbeating and exits without mutating the fenced
+delivery, allowing another worker to reclaim it after lease expiry.
+
+Reason: local correctness under one coordinator or one happy process is not a
+production guarantee. Cross-process mutation, shutdown, readiness, schema
+identity, authentication commits, and durable failure surfaces must retain safe
+behavior when processes overlap or dependencies fail.

@@ -42,6 +42,7 @@ FROM %s ORDER BY failed_at DESC, id LIMIT $1`, store.failedTable)
 			return nil, wrap("scan failed", err)
 		}
 		item.ID = job.ID(id)
+		item.FailureMessage = store.boundedSafeFailureMessage(item.FailureKind, item.FailureMessage)
 		item.Timeout = time.Duration(timeoutMS) * time.Millisecond
 		item.Backoff, err = decodeDurations(backoffJSON)
 		if err != nil {
@@ -82,6 +83,7 @@ FROM %s WHERE id = $1::uuid`, store.failedTable)
 		return job.FailedJobDetail{}, false, wrap("find failed", err)
 	}
 	detail.ID = job.ID(scannedID)
+	detail.FailureMessage = store.boundedSafeFailureMessage(detail.FailureKind, detail.FailureMessage)
 	detail.Payload = append([]byte(nil), payload...)
 	detail.Timeout = time.Duration(timeoutMS) * time.Millisecond
 	detail.Backoff, err = decodeDurations(backoffJSON)

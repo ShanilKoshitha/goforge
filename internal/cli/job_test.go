@@ -2,8 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,6 +59,78 @@ func TestMakeJobCreatesOwnedHandlerMetadataAndDeterministicRegistry(t *testing.T
 	}
 	if len(state.Jobs) != 2 || state.Jobs[0].Name != "ArchiveAccount" || state.Jobs[1].Name != "SendEmail" {
 		t.Fatalf("job metadata = %#v", state.Jobs)
+	}
+}
+
+func TestConcurrentMakeJobProcessesPreserveEveryRegistryEntry(t *testing.T) {
+	directory := jobProject(t, "6")
+	type runningGenerator struct {
+		name    string
+		command *exec.Cmd
+		output  *bytes.Buffer
+	}
+	generators := make([]runningGenerator, 12)
+	for index := range generators {
+		name := "ConcurrentJob" + strconv.Itoa(index+1)
+		output := &bytes.Buffer{}
+		command := exec.Command(os.Args[0], "-test.run=^TestMakeJobHelperProcess$")
+		command.Env = append(os.Environ(),
+			"GOFORGE_MAKE_JOB_HELPER=1",
+			"GOFORGE_MAKE_JOB_DIRECTORY="+directory,
+			"GOFORGE_MAKE_JOB_NAME="+name,
+		)
+		command.Stdout = output
+		command.Stderr = output
+		if err := command.Start(); err != nil {
+			t.Fatalf("start %s: %v", name, err)
+		}
+		generators[index] = runningGenerator{name: name, command: command, output: output}
+	}
+	for _, generator := range generators {
+		if err := generator.command.Wait(); err != nil {
+			t.Errorf("%s failed: %v\n%s", generator.name, err, generator.output.String())
+		}
+	}
+	if t.Failed() {
+		return
+	}
+
+	metadata, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(jobStatePath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state jobState
+	if err := json.Unmarshal(metadata, &state); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Jobs) != len(generators) {
+		t.Fatalf("job metadata retained %d of %d concurrent jobs: %#v", len(state.Jobs), len(generators), state.Jobs)
+	}
+	registry, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(generatedJobRegistryPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, generator := range generators {
+		if !bytes.Contains(registry, []byte(generator.name+"Definition")) {
+			t.Errorf("registry omitted %s", generator.name)
+		}
+		fileName, _ := snake(generator.name)
+		if _, err := os.Stat(filepath.Join(directory, "internal", "jobs", fileName+".go")); err != nil {
+			t.Errorf("%s source missing: %v", generator.name, err)
+		}
+	}
+}
+
+func TestMakeJobHelperProcess(t *testing.T) {
+	if os.Getenv("GOFORGE_MAKE_JOB_HELPER") != "1" {
+		return
+	}
+	if err := os.Chdir(os.Getenv("GOFORGE_MAKE_JOB_DIRECTORY")); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := Run([]string{"make:job", os.Getenv("GOFORGE_MAKE_JOB_NAME")}, &output, &output); err != nil {
+		t.Fatalf("make job: %v\n%s", err, output.String())
 	}
 }
 

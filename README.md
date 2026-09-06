@@ -54,6 +54,7 @@ cd myapp
 docker compose up -d
 forge make:resource Issue
 forge migrate
+# For plain-HTTP development, first set APP_ENV=local in .env.
 forge serve
 ```
 
@@ -66,11 +67,18 @@ cd myapp
 docker compose up -d
 forge make:resource Issue
 forge migrate
+# For plain-HTTP development, first set APP_ENV=local in .env.
 forge serve
 ```
 
+Generated projects retain `APP_ENV=production` in `.env`, which keeps session
+cookies HTTPS-only. Change it to `APP_ENV=local` only for local plain-HTTP
+development, before running `forge serve`. Never use `APP_ENV=local` in a
+deployed process because it disables secure cookies.
+
 Visit `http://localhost:8080/register` for the browser workflow or
-`http://localhost:8080/health` for readiness.
+`http://localhost:8080/health` for liveness. Readiness, including PostgreSQL
+and expected migration state, is available at `http://localhost:8080/ready`.
 
 ## The generated request path
 

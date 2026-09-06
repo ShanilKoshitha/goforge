@@ -55,6 +55,7 @@ func run() error {
 		LeaseDuration:     settings.JobLeaseDuration,
 		HeartbeatInterval: settings.JobHeartbeatInterval,
 		OperationTimeout:  settings.JobOperationTimeout,
+		CancellationTimeout: settings.JobCancellationTimeout,
 		ShutdownTimeout:   settings.JobShutdownTimeout,
 		Observer:          job.SlogObserver(slog.Default()),
 	})

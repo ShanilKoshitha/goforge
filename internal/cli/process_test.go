@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type recordedProcess struct {
@@ -251,6 +254,81 @@ func TestProjectCommandReturnsProcessError(t *testing.T) {
 	err := run(context.Background(), []string{"migrate"}, strings.NewReader(""), io.Discard, io.Discard, process)
 	if !errors.Is(err, want) {
 		t.Fatalf("expected process error, got %v", err)
+	}
+}
+
+func TestExecProcessRunnerStopsDescendantTreeOnCancellation(t *testing.T) {
+	if !processTreeControlSupported {
+		t.Skip("process-tree control is unsupported on this platform")
+	}
+	marker := filepath.Join(t.TempDir(), "descendant-heartbeat")
+	t.Setenv("GOFORGE_PROCESS_TREE_HELPER", "parent")
+	t.Setenv("GOFORGE_PROCESS_TREE_MARKER", marker)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- (execProcessRunner{}).Run(ctx, nil, io.Discard, io.Discard, os.Args[0], "-test.run=^TestProcessTreeHelper$")
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("descendant helper did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runner error = %v, want context cancellation", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("cancelled process tree did not stop")
+	}
+	time.Sleep(200 * time.Millisecond)
+	first, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	second, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatal("descendant remained alive after runner cancellation")
+	}
+}
+
+func TestProcessTreeHelper(t *testing.T) {
+	role := os.Getenv("GOFORGE_PROCESS_TREE_HELPER")
+	if role == "" {
+		return
+	}
+	if role == "parent" {
+		command := exec.Command(os.Args[0], "-test.run=^TestProcessTreeHelper$")
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "GOFORGE_PROCESS_TREE_HELPER=") {
+				command.Env = append(command.Env, entry)
+			}
+		}
+		command.Env = append(command.Env, "GOFORGE_PROCESS_TREE_HELPER=child")
+		if err := command.Run(); err != nil {
+			os.Exit(2)
+		}
+		return
+	}
+	marker := os.Getenv("GOFORGE_PROCESS_TREE_MARKER")
+	ignoreProcessTreeGracefulSignal()
+	for counter := 0; ; counter++ {
+		if err := os.WriteFile(marker, []byte(fmt.Sprintf("%d", counter)), 0o600); err != nil {
+			os.Exit(3)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

@@ -26,6 +26,10 @@ var (
 	ErrLeaseLost       = errors.New("job: lease lost")
 	ErrDuplicate       = errors.New("job: duplicate registration")
 	ErrPayloadTooLarge = errors.New("job: payload too large")
+	// ErrHandlerCancellationTimeout means a handler did not return within the
+	// worker's bounded cancellation window. The worker stops without mutating
+	// the delivery so its lease can expire and another process can recover it.
+	ErrHandlerCancellationTimeout = errors.New("job: handler did not stop after cancellation")
 )
 
 // ID is a stable durable job identifier.
@@ -197,6 +201,7 @@ const (
 	EventRetryScheduled EventKind = "retry_scheduled"
 	EventFailed         EventKind = "failed"
 	EventLeaseLost      EventKind = "lease_lost"
+	EventAbandoned      EventKind = "abandoned"
 	EventWorkerStarted  EventKind = "worker_started"
 	EventWorkerStopping EventKind = "worker_stopping"
 	EventWorkerStopped  EventKind = "worker_stopped"

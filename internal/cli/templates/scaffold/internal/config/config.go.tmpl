@@ -111,6 +111,7 @@ type WorkerConfig struct {
 	JobLeaseDuration     time.Duration
 	JobHeartbeatInterval time.Duration
 	JobOperationTimeout  time.Duration
+	JobCancellationTimeout time.Duration
 	JobShutdownTimeout   time.Duration
 }
 
@@ -128,6 +129,7 @@ func LoadWorker() (WorkerConfig, error) {
 		JobLeaseDuration:     environment.Duration("JOB_LEASE_DURATION", 30*time.Second),
 		JobHeartbeatInterval: environment.Duration("JOB_HEARTBEAT_INTERVAL", 10*time.Second),
 		JobOperationTimeout:  environment.Duration("JOB_OPERATION_TIMEOUT", 5*time.Second),
+		JobCancellationTimeout: environment.Duration("JOB_CANCELLATION_TIMEOUT", 5*time.Second),
 		JobShutdownTimeout:   environment.Duration("JOB_SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
 	return settings, environment.Err()

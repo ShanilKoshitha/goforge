@@ -16,11 +16,37 @@ type processRunner interface {
 type execProcessRunner struct{}
 
 func (execProcessRunner) Run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, name string, args ...string) error {
-	command := exec.CommandContext(ctx, name, args...)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	command := exec.Command(name, args...)
+	if err := configureChildProcess(command); err != nil {
+		return err
+	}
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
-	return command.Run()
+	if err := command.Start(); err != nil {
+		return err
+	}
+	tree, err := attachChildProcessTree(command)
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return err
+	}
+	defer closeChildProcessTree(tree)
+	waited := make(chan error, 1)
+	go func() { waited <- command.Wait() }()
+	select {
+	case err := <-waited:
+		return err
+	case <-ctx.Done():
+		if err := stopChildProcessTree(command, waited, tree); err != nil {
+			return errors.Join(ctx.Err(), err)
+		}
+		return ctx.Err()
+	}
 }
 
 func runProjectCommand(

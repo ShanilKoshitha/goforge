@@ -26,6 +26,9 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err := Run([]string{"new", directory, "--module", "example.com/orders", "--replace", root}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(output.String(), "set APP_ENV=local in .env") {
+		t.Fatalf("new-project instructions omit the local HTTP environment step:\n%s", output.String())
+	}
 	for _, name := range []string{
 		"go.mod",
 		"forge.yaml",
@@ -151,6 +154,50 @@ func TestCreateProjectRefusesExistingDirectory(t *testing.T) {
 	err := createProject(newOptions{directory: directory, module: "example.com/app"})
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected existing destination error, got %v", err)
+	}
+}
+
+func TestParseNewValidatesModulePathWithGoRules(t *testing.T) {
+	for _, modulePath := range []string{
+		"example.com/app",
+		"github.com/acme/orders/v2",
+		"gopkg.in/yaml.v3",
+	} {
+		t.Run("valid_"+strings.ReplaceAll(modulePath, "/", "_"), func(t *testing.T) {
+			options, err := parseNew([]string{"app", "--module", modulePath})
+			if err != nil {
+				t.Fatalf("valid module path %q rejected: %v", modulePath, err)
+			}
+			if options.module != modulePath {
+				t.Fatalf("module = %q, want %q", options.module, modulePath)
+			}
+		})
+	}
+	for _, modulePath := range []string{
+		"../evil",
+		"example.com//evil",
+		"example.com/app@v1",
+		"Example.com/app",
+		"example.com/.hidden",
+	} {
+		t.Run("invalid_"+strings.NewReplacer("/", "_", ".", "_").Replace(modulePath), func(t *testing.T) {
+			_, err := parseNew([]string{"app", "--module", modulePath})
+			if err == nil || !strings.Contains(err.Error(), "invalid Go module path") {
+				t.Fatalf("invalid module path %q error = %v", modulePath, err)
+			}
+		})
+	}
+}
+
+func TestRunNewRejectsParentTraversalModuleBeforeWriting(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "unsafe")
+	var output bytes.Buffer
+	err := Run([]string{"new", directory, "--module", "../evil"}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "invalid Go module path") {
+		t.Fatalf("parent traversal module error = %v", err)
+	}
+	if _, err := os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatalf("invalid module path created destination: %v", err)
 	}
 }
 
