@@ -15,10 +15,11 @@ import (
 )
 
 type Controller struct {
-	users     UserRepository
-	sessions  *session.Manager
-	passwords password.Hasher
-	attempts  *ratelimit.Limiter
+	users        UserRepository
+	sessions     *session.Manager
+	passwords    password.Hasher
+	attempts     *ratelimit.Limiter
+	registration RegistrationTransaction
 }
 
 var (
@@ -26,8 +27,12 @@ var (
 	ErrInvalidCurrentPassword = errors.New("current password is incorrect")
 )
 
-func NewController(users UserRepository, sessions *session.Manager, passwords password.Hasher, attempts *ratelimit.Limiter) *Controller {
-	return &Controller{users: users, sessions: sessions, passwords: passwords, attempts: attempts}
+func NewController(users UserRepository, sessions *session.Manager, passwords password.Hasher, attempts *ratelimit.Limiter, registrations ...RegistrationTransaction) *Controller {
+	controller := &Controller{users: users, sessions: sessions, passwords: passwords, attempts: attempts}
+	if len(registrations) > 0 {
+		controller.registration = registrations[0]
+	}
+	return controller
 }
 
 func (controller *Controller) Register(ctx *httpx.Context) error {
@@ -38,15 +43,14 @@ func (controller *Controller) Register(ctx *httpx.Context) error {
 	if problems := request.Validate(); !problems.Empty() {
 		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
 	}
-	user, err := controller.createUserForRequest(ctx, request)
+	user, err := controller.registerUser(ctx, request, func(manager *session.Manager, user User) error {
+		return controller.startSessionWith(manager, ctx, user)
+	})
 	if errors.Is(err, ErrEmailTaken) {
 		return httpx.NewHTTPError(http.StatusConflict, ErrEmailTaken.Error())
 	}
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
-	}
-	if err := controller.startSession(ctx, user); err != nil {
-		return err
 	}
 	return ctx.JSON(http.StatusCreated, map[string]any{"data": user})
 }
@@ -139,24 +143,26 @@ func (controller *Controller) RevokeAll(ctx *httpx.Context) error {
 	return ctx.NoContent(http.StatusNoContent)
 }
 
-func (controller *Controller) createUser(ctx context.Context, request RegisterRequest) (User, error) {
-	encoded, err := controller.passwords.Hash(request.Password)
-	if err != nil {
-		return User{}, fmt.Errorf("hash password: %w", err)
-	}
-	return controller.users.Create(ctx, request.Name, request.Email, encoded)
-}
-
-func (controller *Controller) createUserForRequest(ctx *httpx.Context, request RegisterRequest) (User, error) {
+func (controller *Controller) registerUser(ctx *httpx.Context, request RegisterRequest, establish func(*session.Manager, User) error) (User, error) {
 	key := ratelimit.Key("auth-account-register", normalizeEmail(request.Email))
 	if err := controller.attempts.Enforce(ctx, key); err != nil {
 		return User{}, err
 	}
-	user, err := controller.createUser(ctx.Request.Context(), request)
+	encoded, err := controller.passwords.Hash(request.Password)
+	if err != nil {
+		return User{}, fmt.Errorf("hash password: %w", err)
+	}
+	if controller.registration != nil {
+		return controller.registration.Create(ctx.Request.Context(), request, encoded, key, establish)
+	}
+	user, err := controller.users.Create(ctx.Request.Context(), request.Name, request.Email, encoded)
 	if err != nil {
 		return User{}, err
 	}
 	if err := controller.attempts.Reset(ctx.Request.Context(), key); err != nil {
+		return User{}, err
+	}
+	if err := establish(controller.sessions, user); err != nil {
 		return User{}, err
 	}
 	return user, nil
@@ -253,17 +259,21 @@ func (controller *Controller) Me(ctx *httpx.Context) error {
 }
 
 func (controller *Controller) startSession(ctx *httpx.Context, user User) error {
-	current, err := controller.sessions.Load(ctx.Request.Context(), ctx.Request)
+	return controller.startSessionWith(controller.sessions, ctx, user)
+}
+
+func (controller *Controller) startSessionWith(manager *session.Manager, ctx *httpx.Context, user User) error {
+	current, err := manager.Load(ctx.Request.Context(), ctx.Request)
 	if err != nil {
 		return err
 	}
-	if err := controller.sessions.Regenerate(ctx.Request.Context(), current); err != nil {
+	if err := manager.Regenerate(ctx.Request.Context(), current); err != nil {
 		return err
 	}
 	if err := putAuthenticatedIdentity(current, user); err != nil {
 		return err
 	}
-	return controller.sessions.Save(ctx.Request.Context(), ctx.Response, current)
+	return manager.Save(ctx.Request.Context(), ctx.Response, current)
 }
 
 func (controller *Controller) changePassword(ctx *httpx.Context, user User, request PasswordChangeRequest) (User, error) {

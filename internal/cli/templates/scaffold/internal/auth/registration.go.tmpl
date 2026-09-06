@@ -1,0 +1,61 @@
+package auth
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	forgedatabase "github.com/ShanilKoshitha/goforge/database"
+	"github.com/ShanilKoshitha/goforge/session"
+)
+
+// RegistrationTransaction commits account creation, limiter reset, and initial
+// session persistence together. Implementations must invoke establish before
+// returning success.
+type RegistrationTransaction interface {
+	Create(context.Context, RegisterRequest, string, string, func(*session.Manager, User) error) (User, error)
+}
+
+type PostgresRegistration struct {
+	db     *sql.DB
+	secret []byte
+	cookie session.Cookie
+	policy session.Policy
+}
+
+func NewPostgresRegistration(db *sql.DB, secret []byte, cookie session.Cookie, policy session.Policy) *PostgresRegistration {
+	return &PostgresRegistration{db: db, secret: append([]byte(nil), secret...), cookie: cookie, policy: policy}
+}
+
+func (registration *PostgresRegistration) Create(
+	ctx context.Context,
+	request RegisterRequest,
+	passwordHash string,
+	limitKey string,
+	establish func(*session.Manager, User) error,
+) (created User, err error) {
+	if registration == nil || registration.db == nil {
+		return User{}, fmt.Errorf("registration database is required")
+	}
+	err = forgedatabase.Transaction(ctx, registration.db, nil, func(tx *sql.Tx) error {
+		var createErr error
+		created, createErr = NewPostgresUserRepository(tx).Create(ctx, request.Name, request.Email, passwordHash)
+		if createErr != nil {
+			return createErr
+		}
+		if _, resetErr := tx.ExecContext(ctx, "DELETE FROM goforge_rate_limits WHERE key = $1", limitKey); resetErr != nil {
+			return fmt.Errorf("reset registration rate limit: %w", resetErr)
+		}
+		manager, managerErr := session.NewManagerWithPolicy(
+			NewPostgresSessionStore(tx), registration.secret, registration.cookie, registration.policy,
+		)
+		if managerErr != nil {
+			return managerErr
+		}
+		if establishErr := establish(manager, created); establishErr != nil {
+			return establishErr
+		}
+		return nil
+	})
+	return created, err
+}

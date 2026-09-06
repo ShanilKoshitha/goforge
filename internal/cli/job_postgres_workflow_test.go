@@ -299,7 +299,8 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 
 	for _, item := range dispatched.Failed {
 		var attempts, maxAttempts int
-		if err := db.QueryRow("SELECT attempts, max_attempts FROM goforge_failed_jobs WHERE id = $1::uuid", item.ID).Scan(&attempts, &maxAttempts); err != nil {
+		var failureMessage string
+		if err := db.QueryRow("SELECT attempts, max_attempts, failure_message FROM goforge_failed_jobs WHERE id = $1::uuid", item.ID).Scan(&attempts, &maxAttempts, &failureMessage); err != nil {
 			t.Fatalf("read failed job %s: %v", item.ID, err)
 		}
 		if attempts != 2 || maxAttempts != 2 {
@@ -307,6 +308,9 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 		}
 		if got := jobAcceptanceCount(t, db, "SELECT COUNT(*) FROM goforge_jobs WHERE id = $1::uuid", item.ID); got != 0 {
 			t.Fatalf("terminal job %s remains active", item.ID)
+		}
+		if failureMessage != "handler returned an error" {
+			t.Fatalf("failed job %s persisted unsafe diagnostic %q", item.ID, failureMessage)
 		}
 	}
 
@@ -322,8 +326,8 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 			t.Errorf("queue:failed exposed payload secret %q:\n%s", item.Secret, failedOutput)
 		}
 	}
-	if !strings.Contains(failedOutput, `forced failure\nsecond\tline`) || strings.Count(strings.TrimSpace(failedOutput), "\n") != 1 {
-		t.Fatalf("queue:failed did not keep two payload-free, escaped records on one line each:\n%s", failedOutput)
+	if strings.Contains(failedOutput, `forced failure`) || strings.Count(failedOutput, `message="handler returned an error"`) != 2 || strings.Count(strings.TrimSpace(failedOutput), "\n") != 1 {
+		t.Fatalf("queue:failed did not keep two payload-free, sanitized records on one line each:\n%s", failedOutput)
 	}
 
 	retry := dispatched.Failed[0]

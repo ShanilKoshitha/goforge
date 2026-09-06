@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -13,16 +12,17 @@ import (
 
 // WorkerConfig controls bounded claiming, leases, and graceful shutdown.
 type WorkerConfig struct {
-	Queues            []string
-	Concurrency       int
-	PollInterval      time.Duration
-	LeaseDuration     time.Duration
-	HeartbeatInterval time.Duration
-	OperationTimeout  time.Duration
-	ShutdownTimeout   time.Duration
-	WorkerID          string
-	Observer          Observer
-	MaxErrorBytes     int
+	Queues              []string
+	Concurrency         int
+	PollInterval        time.Duration
+	LeaseDuration       time.Duration
+	HeartbeatInterval   time.Duration
+	OperationTimeout    time.Duration
+	CancellationTimeout time.Duration
+	ShutdownTimeout     time.Duration
+	WorkerID            string
+	Observer            Observer
+	MaxErrorBytes       int
 }
 
 // Worker executes explicitly registered durable jobs.
@@ -88,6 +88,12 @@ func NewWorker(store Store, registry *Registry, config WorkerConfig) (*Worker, e
 	}
 	if config.OperationTimeout < time.Millisecond || config.OperationTimeout >= config.LeaseDuration {
 		return nil, fmt.Errorf("job: operation timeout must be positive and shorter than the lease")
+	}
+	if config.CancellationTimeout == 0 {
+		config.CancellationTimeout = config.OperationTimeout
+	}
+	if config.CancellationTimeout < time.Millisecond {
+		return nil, fmt.Errorf("job: cancellation timeout must be at least 1ms")
 	}
 	if config.ShutdownTimeout == 0 {
 		config.ShutdownTimeout = 30 * time.Second
@@ -268,7 +274,7 @@ func (worker *Worker) process(base context.Context, delivery Delivery) error {
 	}
 	payload, err := handler.decode(delivery.Payload)
 	if err != nil {
-		return worker.fail(base, delivery, "malformed_payload", err.Error())
+		return worker.fail(base, delivery, "malformed_payload", "job payload could not be decoded")
 	}
 
 	execution := Execution{ID: delivery.ID, Name: delivery.Name, Queue: delivery.Queue, Attempt: delivery.Attempt, MaxAttempts: delivery.MaxAttempts, DedupKey: delivery.DedupKey}
@@ -287,7 +293,7 @@ func (worker *Worker) process(base context.Context, delivery Delivery) error {
 		var handlerErr error
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				handlerErr = panicError{err: fmt.Errorf("panic: %v\n%s", recovered, debug.Stack())}
+				handlerErr = panicError{}
 			}
 			result <- handlerErr
 		}()
@@ -297,7 +303,14 @@ func (worker *Worker) process(base context.Context, delivery Delivery) error {
 	ticker := time.NewTicker(worker.config.HeartbeatInterval)
 	defer ticker.Stop()
 	handlerDone := handlerContext.Done()
+	var cancellationTimer *time.Timer
+	var cancellationDone <-chan time.Time
 	timedOut := false
+	defer func() {
+		if cancellationTimer != nil {
+			cancellationTimer.Stop()
+		}
+	}()
 	for {
 		select {
 		case handlerErr := <-result:
@@ -316,27 +329,41 @@ func (worker *Worker) process(base context.Context, delivery Delivery) error {
 			if !owned {
 				cancel()
 				worker.leaseLost(delivery)
-				// Retain local capacity until the uncooperative handler returns.
-				// The lease is already lost, so no queue mutation follows.
-				select {
-				case <-result:
-				case <-base.Done():
-				}
-				return nil
+				return worker.awaitCancellation(base, result, delivery, "lease_lost")
 			}
 		case <-handlerDone:
 			if errors.Is(handlerContext.Err(), context.DeadlineExceeded) {
-				// Go cannot kill an uncooperative handler. Retain the slot and lease
-				// until it returns so this worker never overlaps its next attempt.
+				// Keep the delivery fenced for a bounded cancellation window. If the
+				// handler still does not return, stop this worker and leave the lease
+				// to expire rather than heartbeating an uncooperative handler forever.
 				timedOut = true
 				handlerDone = nil
+				cancellationTimer = time.NewTimer(worker.config.CancellationTimeout)
+				cancellationDone = cancellationTimer.C
 				continue
 			}
 			// Forced shutdown or a lost parent leaves the fenced lease to expire.
 			return nil
+		case <-cancellationDone:
+			worker.abandoned(delivery, "cancellation_timeout")
+			return fmt.Errorf("%w after %s", ErrHandlerCancellationTimeout, worker.config.CancellationTimeout)
 		case <-base.Done():
 			return nil
 		}
+	}
+}
+
+func (worker *Worker) awaitCancellation(base context.Context, result <-chan error, delivery Delivery, outcome string) error {
+	timer := time.NewTimer(worker.config.CancellationTimeout)
+	defer timer.Stop()
+	select {
+	case <-result:
+		return nil
+	case <-base.Done():
+		return nil
+	case <-timer.C:
+		worker.abandoned(delivery, outcome+"_cancellation_timeout")
+		return fmt.Errorf("%w after %s", ErrHandlerCancellationTimeout, worker.config.CancellationTimeout)
 	}
 }
 
@@ -409,6 +436,12 @@ func (worker *Worker) fail(ctx context.Context, delivery Delivery, kind, message
 
 func (worker *Worker) leaseLost(delivery Delivery) {
 	worker.observer.emit(context.Background(), eventFor(EventLeaseLost, worker.config.WorkerID, delivery))
+}
+
+func (worker *Worker) abandoned(delivery Delivery, outcome string) {
+	event := eventFor(EventAbandoned, worker.config.WorkerID, delivery)
+	event.Outcome = outcome
+	worker.observer.emit(context.Background(), event)
 }
 
 func (worker *Worker) operationContext(parent context.Context) (context.Context, context.CancelFunc) {

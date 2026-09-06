@@ -6,11 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
-)
 
-var modulePattern = regexp.MustCompile(`^[A-Za-z0-9._~/-]+$`)
+	"golang.org/x/mod/module"
+)
 
 type newOptions struct {
 	directory string
@@ -66,8 +65,8 @@ func parseNew(args []string) (newOptions, error) {
 	if options.module == "" {
 		options.module = filepath.Base(options.directory)
 	}
-	if !modulePattern.MatchString(options.module) || strings.Contains(options.module, "//") {
-		return options, fmt.Errorf("invalid Go module path %q", options.module)
+	if err := module.CheckPath(options.module); err != nil {
+		return options, fmt.Errorf("invalid Go module path %q: %w", options.module, err)
 	}
 	return options, nil
 }

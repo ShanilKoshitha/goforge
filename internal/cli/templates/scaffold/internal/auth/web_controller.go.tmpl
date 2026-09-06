@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/session"
 	"github.com/ShanilKoshitha/goforge/validation"
 	"github.com/ShanilKoshitha/goforge/view"
 	"github.com/ShanilKoshitha/goforge/web"
@@ -52,7 +53,12 @@ func (controller *WebController) Register(ctx *httpx.Context) error {
 		page.Form.ValidationErrors = problems.Messages()
 		return controller.renderAuth(ctx, http.StatusUnprocessableEntity, "auth/register", page)
 	}
-	user, err := controller.auth.createUserForRequest(ctx, request)
+	_, err := controller.auth.registerUser(ctx, request, func(manager *session.Manager, user User) error {
+		if err := controller.authenticatedSession(ctx, user, "Welcome to GoForge."); err != nil {
+			return err
+		}
+		return web.SaveSessionWith(ctx, manager)
+	})
 	if errors.Is(err, ErrEmailTaken) {
 		page.Form.ValidationErrors = validation.Errors{"email": {ErrEmailTaken.Error()}}
 		return controller.renderAuth(ctx, http.StatusUnprocessableEntity, "auth/register", page)
@@ -63,7 +69,7 @@ func (controller *WebController) Register(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	return controller.authenticated(ctx, user, "Welcome to GoForge.")
+	return web.Redirect(ctx, "/app")
 }
 
 func (controller *WebController) LoginForm(ctx *httpx.Context) error {
@@ -258,6 +264,13 @@ func (controller *WebController) renderSecurityRateLimit(ctx *httpx.Context, err
 }
 
 func (controller *WebController) authenticated(ctx *httpx.Context, user User, notice string) error {
+	if err := controller.authenticatedSession(ctx, user, notice); err != nil {
+		return err
+	}
+	return web.Redirect(ctx, "/app")
+}
+
+func (controller *WebController) authenticatedSession(ctx *httpx.Context, user User, notice string) error {
 	if err := web.Regenerate(ctx); err != nil {
 		return err
 	}
@@ -274,5 +287,5 @@ func (controller *WebController) authenticated(ctx *httpx.Context, user User, no
 	if err := current.Flash("notice", notice); err != nil {
 		return err
 	}
-	return web.Redirect(ctx, "/app")
+	return nil
 }

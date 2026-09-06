@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ShanilKoshitha/goforge/security/ratelimit"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestGeneratedPostgresWorkflow(t *testing.T) {
@@ -230,7 +234,37 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	t.Log("forge serve became healthy")
 
 	plainClient := &http.Client{Timeout: 3 * time.Second}
-	response, body := requestJSON(t, plainClient, http.MethodGet, baseURL+"/issues", "")
+	db, err := sql.Open("pgx", isolatedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("ALTER TABLE sessions ADD CONSTRAINT reject_registration_sessions CHECK (false) NOT VALID"); err != nil {
+		t.Fatalf("install registration rollback probe: %v", err)
+	}
+	rollbackEmail := fmt.Sprintf("rollback-%d@example.com", time.Now().UnixNano())
+	response, body := requestJSON(t, plainClient, http.MethodPost, baseURL+"/auth/register",
+		fmt.Sprintf(`{"name":"Rollback","email":%q,"password":"a secure passphrase","password_confirmation":"a secure passphrase"}`, rollbackEmail))
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("forced session failure: expected 500, got %d: %s", response.StatusCode, body)
+	}
+	var rollbackUsers, rollbackLimit int
+	if err := db.QueryRow("SELECT COUNT(*) FROM users WHERE email = $1", rollbackEmail).Scan(&rollbackUsers); err != nil {
+		t.Fatal(err)
+	}
+	limitKey := ratelimit.Key("auth-account-register", rollbackEmail)
+	if err := db.QueryRow("SELECT COUNT(*) FROM goforge_rate_limits WHERE key = $1", limitKey).Scan(&rollbackLimit); err != nil {
+		t.Fatal(err)
+	}
+	if rollbackUsers != 0 || rollbackLimit != 1 {
+		t.Fatalf("registration transaction rollback: users=%d account_limit_rows=%d, want 0/1", rollbackUsers, rollbackLimit)
+	}
+	if _, err := db.Exec("ALTER TABLE sessions DROP CONSTRAINT reject_registration_sessions"); err != nil {
+		t.Fatalf("remove registration rollback probe: %v", err)
+	}
+	t.Log("registration account, limiter reset, and session persistence are atomic")
+
+	response, body = requestJSON(t, plainClient, http.MethodGet, baseURL+"/issues", "")
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated issues: expected 401, got %d: %s", response.StatusCode, body)
 	}
@@ -881,8 +915,9 @@ func freeAddress(t *testing.T) string {
 func waitForHealth(t *testing.T, baseURL string, serverOutput *synchronizedBuffer) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
+	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
-		response, err := http.Get(baseURL + "/health")
+		response, err := client.Get(baseURL + "/ready")
 		if err == nil {
 			_ = response.Body.Close()
 			if response.StatusCode == http.StatusOK {

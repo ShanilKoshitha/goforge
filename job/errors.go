@@ -24,10 +24,12 @@ type retryAfterError struct {
 	delay time.Duration
 }
 
-type panicError struct{ err error }
+// panicError intentionally retains neither the recovered value nor a stack.
+// Handler failures are durable and administrator-visible, so persisting either
+// could disclose credentials or implementation details.
+type panicError struct{}
 
-func (err panicError) Error() string { return err.err.Error() }
-func (err panicError) Unwrap() error { return err.err }
+func (panicError) Error() string { return "handler panicked" }
 
 func (err retryAfterError) Error() string { return err.err.Error() }
 func (err retryAfterError) Unwrap() error { return err.err }
@@ -49,16 +51,16 @@ func RetryAfter(err error, delay time.Duration) error {
 func classifyError(err error) (kind string, message string, delay *time.Duration, permanent bool) {
 	var panicked panicError
 	if errors.As(err, &panicked) {
-		return "panic", panicked.Error(), nil, false
+		return "panic", "handler panicked", nil, false
 	}
 	var terminal permanentError
 	if errors.As(err, &terminal) {
-		return "permanent", terminal.Error(), nil, true
+		return "permanent", "handler reported a permanent failure", nil, true
 	}
 	var retry retryAfterError
 	if errors.As(err, &retry) {
 		value := retry.delay
-		return "error", retry.Error(), &value, false
+		return "error", "handler requested a retry", &value, false
 	}
-	return "error", err.Error(), nil, false
+	return "error", "handler returned an error", nil, false
 }

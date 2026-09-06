@@ -26,6 +26,7 @@ type sessionState struct {
 	manager   *forgesession.Manager
 	current   *forgesession.Session
 	accessed  bool
+	persisted bool
 	destroyed bool
 }
 
@@ -69,7 +70,7 @@ func SessionsLimit(manager *forgesession.Manager, maxResponseBytes int64) httpx.
 			if buffer.err != nil {
 				return buffer.err
 			}
-			if state.accessed && !state.destroyed {
+			if state.accessed && !state.persisted && !state.destroyed {
 				if err := manager.Save(ctx.Request.Context(), buffer, current); err != nil {
 					return fmt.Errorf("persist browser session: %w", err)
 				}
@@ -94,6 +95,26 @@ func Session(ctx *httpx.Context) (*forgesession.Session, bool) {
 	}
 	state.accessed = true
 	return state.current, true
+}
+
+// SaveSessionWith persists the current buffered session through an alternate
+// manager and prevents the middleware from saving it a second time. Generated
+// applications use this narrow hook to include initial session persistence in
+// the same database transaction as account registration.
+func SaveSessionWith(ctx *httpx.Context, manager *forgesession.Manager) error {
+	state, ok := stateFrom(ctx)
+	if !ok {
+		return fmt.Errorf("web: session middleware is not installed")
+	}
+	if manager == nil {
+		return fmt.Errorf("web: session manager is required")
+	}
+	state.accessed = true
+	if err := manager.Save(ctx.Request.Context(), ctx.Response, state.current); err != nil {
+		return fmt.Errorf("persist browser session: %w", err)
+	}
+	state.persisted = true
+	return nil
 }
 
 // Regenerate stages a new session ID. Sessions middleware atomically persists

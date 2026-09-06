@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	modmodule "golang.org/x/mod/module"
 )
 
 func requireProjectFormat(supported int) error {
@@ -84,8 +86,8 @@ func projectModule() (string, error) {
 				return "", fmt.Errorf("parse module path: %w", err)
 			}
 		}
-		if !modulePattern.MatchString(module) {
-			return "", fmt.Errorf("invalid Go module path %q", module)
+		if err := modmodule.CheckPath(module); err != nil {
+			return "", fmt.Errorf("invalid Go module path %q: %w", module, err)
 		}
 		return module, nil
 	}

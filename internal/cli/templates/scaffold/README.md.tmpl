@@ -6,7 +6,7 @@ repositories, configuration, sessions, and SQL are ordinary application-owned Go
 ## Quick start
 
 ```sh
-forge new issueboard
+forge new issueboard --module example.com/issueboard
 cd issueboard
 forge make:resource Issue
 forge make:job SendWelcome
@@ -18,7 +18,12 @@ These commands assume PostgreSQL is reachable at the
 generated local database URL. If it is not already running, start the explicit
 development service with `docker compose up -d` after entering the project.
 GoForge never starts external services implicitly. The generated `.env`
-contains a unique session secret; change the URL and secret for deployment.
+contains a unique session secret and defaults to `APP_ENV=production`, which
+keeps cookies HTTPS-only. For local plain-HTTP development only, explicitly set
+`APP_ENV=local`; never deploy with that value because it disables secure
+cookies. Replace the local database URL and rotate the session secret before
+deployment. The generated Compose port is bound to `127.0.0.1` so its known
+development credentials are not exposed on other network interfaces.
 HTTP limits and timeouts are listed in `.env.example`. Enable
 `APP_ENABLE_HSTS` only when production traffic always uses HTTPS, including
 the trusted proxy-to-client path. `TRUSTED_PROXIES` accepts explicit,
@@ -28,6 +33,10 @@ and authentication throttles use the direct network peer.
 `SESSION_ABSOLUTE_LIFETIME` is a non-sliding hard deadline; the absolute value
 must be at least the idle value. Keep application hosts and PostgreSQL on
 synchronized clocks because both enforce session deadlines.
+The default PostgreSQL session and rate-limit stores automatically share the
+atomic signup transaction. Replacing either store requires supplying an
+application-specific `RegistrationTransaction`; startup fails outside tests if
+no cross-store transaction coordinator is configured.
 
 Create a persistence model without an HTTP resource using either
 `forge make:model Invoice` or `forge make model Invoice`. This writes ordinary
@@ -44,6 +53,9 @@ share the transaction that commits a domain write. Run workers with
 `forge queue:retry <id>` (or `--all`) or `forge queue:forget <id>`. Jobs are delivered at
 least once, so handlers must make external effects idempotent. Build the
 production worker with `go build -trimpath -o bin/worker ./cmd/worker`.
+`JOB_CANCELLATION_TIMEOUT` bounds how long a handler may ignore cancellation;
+after that deadline the worker stops heartbeating and exits so another worker
+can reclaim the fenced lease.
 
 Views live in `resources/views` and compile to the inspectable
 `resources/views/views_gen.go` artifact consumed in production. Generate an

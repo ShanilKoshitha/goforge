@@ -36,6 +36,31 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestReadinessFailsClosedWithoutDatabase(t *testing.T) {
+	app, err := application.New(config.Config{
+		Address: ":8080", Environment: "test", SessionSecret: strings.Repeat("s", 32),
+		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
+	}, application.Dependencies{Sessions: session.NewMemoryStore(), RateLimits: ratelimit.NewMemoryStore(100)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestProductionCustomStoresRequireAtomicRegistration(t *testing.T) {
+	_, err := application.New(config.Config{
+		Address: ":8080", Environment: "production", SessionSecret: strings.Repeat("s", 32),
+		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
+	}, application.Dependencies{Sessions: session.NewMemoryStore(), RateLimits: ratelimit.NewMemoryStore(100)})
+	if err == nil || !strings.Contains(err.Error(), "atomic registration transaction is required") {
+		t.Fatalf("custom production stores error = %v", err)
+	}
+}
+
 func TestBrowserAndAPIErrorsKeepExplicitSurfaces(t *testing.T) {
 	app, err := application.New(config.Config{
 		Address: ":8080", Environment: "test", SessionSecret: strings.Repeat("s", 32),

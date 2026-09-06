@@ -69,8 +69,13 @@ forge migrate
 forge serve
 ```
 
+Generated projects default to HTTPS-only production cookies. For local
+plain-HTTP development, explicitly set `APP_ENV=local` in the generated `.env`;
+never deploy with that value.
+
 Visit `http://localhost:8080/register` for the browser workflow or
-`http://localhost:8080/health` for readiness.
+`http://localhost:8080/health` for liveness. Readiness, including PostgreSQL
+and expected migration state, is available at `http://localhost:8080/ready`.
 
 ## The generated request path
 

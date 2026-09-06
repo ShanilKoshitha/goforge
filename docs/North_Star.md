@@ -51,7 +51,7 @@ A new developer should be able to:
 The commands should feel cohesive:
 
 ```text
-forge new issueboard
+forge new issueboard --module example.com/issueboard
 forge make:resource Issue
 forge migrate
 forge serve

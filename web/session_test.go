@@ -165,6 +165,35 @@ func TestFlashPersistsBeforeRedirectAndExpiresAfterDisplay(t *testing.T) {
 	}
 }
 
+func TestSaveSessionWithAvoidsSecondMiddlewareWrite(t *testing.T) {
+	store := newObservedStore()
+	manager := managerFor(t, store)
+	transactionManager := managerFor(t, store)
+	router := httpx.NewRouter()
+	router.Use(web.Sessions(manager))
+	router.POST("/register", func(ctx *httpx.Context) error {
+		current, ok := web.Session(ctx)
+		if !ok {
+			t.Fatal("session middleware did not expose a session")
+		}
+		if err := current.Put("user_id", int64(7)); err != nil {
+			return err
+		}
+		if err := web.SaveSessionWith(ctx, transactionManager); err != nil {
+			return err
+		}
+		return web.Redirect(ctx, "/app")
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/register", nil))
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303: %s", response.Code, response.Body.String())
+	}
+	if store.creates != 1 || store.updates != 0 || store.rotates != 0 {
+		t.Fatalf("session writes = create %d update %d rotate %d, want 1/0/0", store.creates, store.updates, store.rotates)
+	}
+}
+
 func TestPersistenceFailureDiscardsBufferedResponse(t *testing.T) {
 	sentinel := errors.New("store unavailable")
 	store := newObservedStore()

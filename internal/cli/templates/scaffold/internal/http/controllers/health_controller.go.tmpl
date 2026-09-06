@@ -1,15 +1,44 @@
 package controllers
 
 import (
+	"context"
+	"database/sql"
+	"io/fs"
 	"net/http"
+	"time"
 
+	"github.com/ShanilKoshitha/goforge/database/migrate"
 	"github.com/ShanilKoshitha/goforge/httpx"
 )
 
-type HealthController struct{}
+type HealthController struct {
+	db         *sql.DB
+	migrations fs.FS
+	timeout    time.Duration
+}
 
-func NewHealthController() *HealthController { return &HealthController{} }
+func NewHealthController(db *sql.DB, migrations fs.FS) *HealthController {
+	return &HealthController{db: db, migrations: migrations, timeout: 2 * time.Second}
+}
 
 func (controller *HealthController) Show(ctx *httpx.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (controller *HealthController) Ready(ctx *httpx.Context) error {
+	if controller.db == nil || controller.migrations == nil {
+		return httpx.NewHTTPError(http.StatusServiceUnavailable, "application is not ready")
+	}
+	probe, cancel := context.WithTimeout(ctx.Request.Context(), controller.timeout)
+	defer cancel()
+	if err := controller.db.PingContext(probe); err != nil {
+		return httpx.NewHTTPError(http.StatusServiceUnavailable, "application is not ready")
+	}
+	err := (&migrate.Migrator{
+		DB: controller.db, Files: controller.migrations, Dialect: migrate.Postgres,
+	}).Verify(probe)
+	if err != nil {
+		return httpx.NewHTTPError(http.StatusServiceUnavailable, "application is not ready")
+	}
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "ready"})
 }

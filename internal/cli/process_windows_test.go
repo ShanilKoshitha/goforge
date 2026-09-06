@@ -5,7 +5,9 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"syscall"
 	"testing"
@@ -18,6 +20,8 @@ const (
 )
 
 var generateConsoleCtrlEvent = syscall.NewLazyDLL("kernel32.dll").NewProc("GenerateConsoleCtrlEvent")
+
+func ignoreProcessTreeGracefulSignal() { signal.Ignore(os.Interrupt) }
 
 func configureCommandProcess(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
