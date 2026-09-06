@@ -207,6 +207,11 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(directory, environment, forgeBinary, "migrate"); err != nil || !strings.Contains(output, "atomic_probe") {
 		t.Fatalf("failed migration left partial state: %v\n%s", err, output)
 	}
+	// The server embeds its migration manifest. Refresh the standalone binary
+	// after adding the probe so later readiness checks see the current schema.
+	if output, err := generatedCommand(directory, baseEnvironment, "go", "build", "-o", binary, "./cmd/server"); err != nil {
+		t.Fatalf("rebuild server after migration probe: %v\n%s", err, output)
+	}
 	t.Log("transactional migration recovery passed")
 	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "seed-expired-session"); err != nil {
 		t.Fatalf("seed abandoned expired session: %v\n%s", err, output)
