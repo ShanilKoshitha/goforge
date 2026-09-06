@@ -338,10 +338,23 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("session survived logout: expected 401, got %d: %s", response.StatusCode, body)
 	}
+	firstEmail := fmt.Sprintf("ada-%d@example.com", stamp)
+	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "weaken-password", firstEmail, "a secure passphrase"); err != nil {
+		t.Fatalf("seed weak password hash: %v\n%s", err, output)
+	}
+	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "password-state", firstEmail); err != nil || strings.TrimSpace(output) != "needs_rehash=true credential_version=1" {
+		t.Fatalf("weak password state: %v\n%s", err, output)
+	}
+	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "prove-credential-cas", firstEmail, "a secure passphrase", "a deterministic replacement"); err != nil || strings.TrimSpace(output) != "change_wins=true rehash_wins=true revoke_wins=true" {
+		t.Fatalf("real PostgreSQL credential CAS proof: %v\n%s", err, output)
+	}
 	response, body = requestJSON(t, first, http.MethodPost, baseURL+"/auth/login",
-		fmt.Sprintf(`{"email":"ada-%d@example.com","password":"a secure passphrase"}`, stamp))
+		fmt.Sprintf(`{"email":%q,"password":"a secure passphrase"}`, firstEmail))
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("login after logout: expected 200, got %d: %s", response.StatusCode, body)
+	}
+	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "password-state", firstEmail); err != nil || strings.TrimSpace(output) != "needs_rehash=false credential_version=1" {
+		t.Fatalf("successful login did not transparently rehash without revocation: %v\n%s", err, output)
 	}
 	response, body = requestJSON(t, first, http.MethodGet, baseURL+"/auth/me", "")
 	if response.StatusCode != http.StatusOK || !strings.Contains(body, fmt.Sprintf("ada-%d@example.com", stamp)) {
@@ -380,6 +393,32 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	response, body = requestBrowser(t, browser, http.MethodGet, baseURL+"/app", nil)
 	if response.StatusCode != http.StatusOK || !strings.Contains(body, "Welcome, Browser User") || !strings.Contains(body, "Welcome to GoForge.") {
 		t.Fatalf("browser dashboard: %d: %s", response.StatusCode, body)
+	}
+	response, body = requestBrowser(t, browser, http.MethodGet, baseURL+"/settings/security", nil)
+	if response.StatusCode != http.StatusOK || !strings.Contains(body, "Change password") || !strings.Contains(body, "Sign out everywhere") {
+		t.Fatalf("browser security page: %d: %s", response.StatusCode, body)
+	}
+	csrfToken = browserCSRF(t, body)
+	const browserReplacementPassword = "a rotated browser passphrase"
+	response, body = requestBrowser(t, browser, http.MethodPost, baseURL+"/settings/password", url.Values{
+		"_token": {csrfToken}, "current_password": {"incorrect browser password"},
+		"password": {browserReplacementPassword}, "password_confirmation": {browserReplacementPassword},
+	})
+	if response.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "current password is incorrect") ||
+		strings.Contains(body, "incorrect browser password") || strings.Contains(body, browserReplacementPassword) {
+		t.Fatalf("browser current-password failure was not safely rendered: %d: %s", response.StatusCode, body)
+	}
+	csrfToken = browserCSRF(t, body)
+	response, body = requestBrowser(t, browser, http.MethodPost, baseURL+"/settings/password", url.Values{
+		"_token": {csrfToken}, "current_password": {"a browser passphrase"},
+		"password": {browserReplacementPassword}, "password_confirmation": {browserReplacementPassword},
+	})
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/settings/security" {
+		t.Fatalf("browser password change: %d %q: %s", response.StatusCode, response.Header.Get("Location"), body)
+	}
+	response, body = requestBrowser(t, browser, http.MethodGet, baseURL+"/settings/security", nil)
+	if response.StatusCode != http.StatusOK || !strings.Contains(body, "other sessions were signed out") {
+		t.Fatalf("browser password-change session was not preserved: %d: %s", response.StatusCode, body)
 	}
 	response, body = requestBrowser(t, browser, http.MethodGet, baseURL+"/app/issues/new", nil)
 	if response.StatusCode != http.StatusOK {
@@ -464,7 +503,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	}
 	csrfToken = browserCSRF(t, body)
 	response, body = requestBrowser(t, browser, http.MethodPost, baseURL+"/login", url.Values{
-		"_token": {csrfToken}, "email": {fmt.Sprintf("browser-%d@example.com", stamp)}, "password": {"a browser passphrase"},
+		"_token": {csrfToken}, "email": {fmt.Sprintf("browser-%d@example.com", stamp)}, "password": {browserReplacementPassword},
 	})
 	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/app" {
 		t.Fatalf("browser login: %d %q: %s", response.StatusCode, response.Header.Get("Location"), body)
@@ -496,16 +535,119 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	trustedServerB, trustedOutputB := startGeneratedServer(t, binary, directory, trustedEnvironmentB)
 	waitForHealth(t, "http://"+trustedAddressA, trustedOutputA)
 	waitForHealth(t, "http://"+trustedAddressB, trustedOutputB)
-	badLogin := fmt.Sprintf(`{"email":"ada-%d@example.com","password":"incorrect password"}`, stamp)
-	for attempt := 1; attempt <= 8; attempt++ {
-		target := "http://" + trustedAddressA + "/auth/login"
-		if attempt%2 == 0 {
-			target = "http://" + trustedAddressB + "/auth/login"
+	response, body = requestBrowser(t, browser, http.MethodGet, "http://"+trustedAddressA+"/app", nil)
+	if response.StatusCode != http.StatusOK || !strings.Contains(body, "Welcome, Browser User") {
+		t.Fatalf("browser session did not cross processes: %d: %s", response.StatusCode, body)
+	}
+	browserRevoker := clientWithCookiesNoRedirect(t)
+	response, body = requestBrowser(t, browserRevoker, http.MethodGet, "http://"+trustedAddressB+"/login", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("cross-process browser login form: %d: %s", response.StatusCode, body)
+	}
+	browserRevokeToken := browserCSRF(t, body)
+	response, body = requestBrowser(t, browserRevoker, http.MethodPost, "http://"+trustedAddressB+"/login", url.Values{
+		"_token": {browserRevokeToken}, "email": {fmt.Sprintf("browser-%d@example.com", stamp)}, "password": {browserReplacementPassword},
+	})
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/app" {
+		t.Fatalf("cross-process browser login: %d %q: %s", response.StatusCode, response.Header.Get("Location"), body)
+	}
+	response, body = requestBrowser(t, browserRevoker, http.MethodGet, "http://"+trustedAddressB+"/settings/security", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("cross-process browser security page: %d: %s", response.StatusCode, body)
+	}
+	browserRevokeToken = browserCSRF(t, body)
+	response, body = requestBrowser(t, browserRevoker, http.MethodPost, "http://"+trustedAddressB+"/settings/logout-all", url.Values{
+		"_token": {browserRevokeToken},
+	})
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/login" {
+		t.Fatalf("cross-process browser sign out everywhere: %d %q: %s", response.StatusCode, response.Header.Get("Location"), body)
+	}
+	loginAt := func(client *http.Client, address, secret string) (*http.Response, string) {
+		return requestJSON(t, client, http.MethodPost, "http://"+address+"/auth/login",
+			fmt.Sprintf(`{"email":%q,"password":%q}`, firstEmail, secret))
+	}
+	crossProcessA := clientWithCookies(t)
+	crossProcessB := clientWithCookies(t)
+	crossProcessAfterRestart := clientWithCookies(t)
+	for index, login := range []struct {
+		client  *http.Client
+		address string
+	}{
+		{crossProcessA, trustedAddressA},
+		{crossProcessB, trustedAddressB},
+		{crossProcessAfterRestart, trustedAddressB},
+	} {
+		response, body = loginAt(login.client, login.address, "a secure passphrase")
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("cross-process login %d: %d: %s", index+1, response.StatusCode, body)
 		}
-		response, body = requestJSONFrom(t, plainClient, target, badLogin, "203.0.113.10")
-		if response.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("shared account attempt %d: expected 401, got %d: %s", attempt, response.StatusCode, body)
+	}
+	type passwordChangeResult struct {
+		index  int
+		status int
+		body   string
+		err    error
+	}
+	replacements := []string{"first concurrent replacement", "second concurrent replacement"}
+	changeClients := []*http.Client{crossProcessA, crossProcessB}
+	changeAddresses := []string{trustedAddressA, trustedAddressB}
+	changeResults := make(chan passwordChangeResult, 2)
+	startChanges := make(chan struct{})
+	for index := range 2 {
+		go func(index int) {
+			<-startChanges
+			requestBody := fmt.Sprintf(
+				`{"current_password":"a secure passphrase","password":%q,"password_confirmation":%q}`,
+				replacements[index], replacements[index],
+			)
+			request, err := http.NewRequest(http.MethodPut, "http://"+changeAddresses[index]+"/auth/password", strings.NewReader(requestBody))
+			if err != nil {
+				changeResults <- passwordChangeResult{index: index, err: err}
+				return
+			}
+			request.Header.Set("Content-Type", "application/json")
+			result, err := changeClients[index].Do(request)
+			if err != nil {
+				changeResults <- passwordChangeResult{index: index, err: err}
+				return
+			}
+			contents, readErr := io.ReadAll(result.Body)
+			_ = result.Body.Close()
+			changeResults <- passwordChangeResult{index: index, status: result.StatusCode, body: string(contents), err: readErr}
+		}(index)
+	}
+	close(startChanges)
+	var winnerIndex, loserIndex = -1, -1
+	for range 2 {
+		result := <-changeResults
+		if result.err != nil {
+			t.Fatalf("concurrent password change %d: %v", result.index+1, result.err)
 		}
+		switch result.status {
+		case http.StatusNoContent:
+			if winnerIndex != -1 {
+				t.Fatalf("two concurrent stale password changes succeeded: winner=%d second=%d", winnerIndex+1, result.index+1)
+			}
+			winnerIndex = result.index
+		case http.StatusConflict, http.StatusUnauthorized:
+			loserIndex = result.index
+		default:
+			t.Fatalf("concurrent password change %d: status=%d body=%s", result.index+1, result.status, result.body)
+		}
+	}
+	if winnerIndex == -1 || loserIndex == -1 || winnerIndex == loserIndex {
+		t.Fatalf("concurrent password change result winner=%d loser=%d", winnerIndex, loserIndex)
+	}
+	winningClient := changeClients[winnerIndex]
+	losingClient := changeClients[loserIndex]
+	processReplacementPassword := replacements[winnerIndex]
+	response, body = requestJSON(t, winningClient, http.MethodGet, "http://"+trustedAddressB+"/auth/me", "")
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("rotated caller did not survive on another process: %d: %s", response.StatusCode, body)
+	}
+	response, body = requestJSON(t, losingClient, http.MethodGet, "http://"+trustedAddressA+"/auth/me", "")
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old session survived on another process: %d: %s", response.StatusCode, body)
 	}
 	stopCommandProcess(t, trustedServerA, false)
 	restartedAddress := freeAddress(t)
@@ -515,6 +657,58 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	)
 	restartedServer, restartedOutput := startGeneratedServer(t, binary, directory, restartedEnvironment)
 	waitForHealth(t, "http://"+restartedAddress, restartedOutput)
+	response, body = requestBrowser(t, browser, http.MethodGet, "http://"+restartedAddress+"/app", nil)
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/login" {
+		t.Fatalf("revoked browser session survived another process and restart: %d %q: %s", response.StatusCode, response.Header.Get("Location"), body)
+	}
+	if cookies := response.Header.Values("Set-Cookie"); len(cookies) != 0 {
+		t.Fatalf("stale browser response emitted a cookie that could overwrite a concurrent rotation: %v", cookies)
+	}
+	response, body = requestJSON(t, crossProcessAfterRestart, http.MethodGet, "http://"+restartedAddress+"/auth/me", "")
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old session survived process restart: %d: %s", response.StatusCode, body)
+	}
+	oldPasswordClient := clientWithCookies(t)
+	response, body = loginAt(oldPasswordClient, restartedAddress, "a secure passphrase")
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old password survived cross-process change: %d: %s", response.StatusCode, body)
+	}
+	freshCredentials := clientWithCookies(t)
+	response, body = loginAt(freshCredentials, restartedAddress, processReplacementPassword)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("replacement password did not work after restart: %d: %s", response.StatusCode, body)
+	}
+	response, body = requestJSON(t, winningClient, http.MethodPost, "http://"+trustedAddressB+"/auth/logout-all", `{}`)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("cross-process sign out everywhere: %d: %s", response.StatusCode, body)
+	}
+	for index, probe := range []struct {
+		client  *http.Client
+		address string
+	}{
+		{winningClient, restartedAddress},
+		{freshCredentials, trustedAddressB},
+	} {
+		response, body = requestJSON(t, probe.client, http.MethodGet, "http://"+probe.address+"/auth/me", "")
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("globally revoked session %d remained valid: %d: %s", index+1, response.StatusCode, body)
+		}
+	}
+	t.Log("password change and global session revocation crossed processes and restart")
+	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "clear-rate-limits"); err != nil {
+		t.Fatalf("clear rate limits before shared account throttle: %v\n%s", err, output)
+	}
+	badLogin := fmt.Sprintf(`{"email":"ada-%d@example.com","password":"incorrect password"}`, stamp)
+	for attempt := 1; attempt <= 8; attempt++ {
+		target := "http://" + restartedAddress + "/auth/login"
+		if attempt%2 == 0 {
+			target = "http://" + trustedAddressB + "/auth/login"
+		}
+		response, body = requestJSONFrom(t, plainClient, target, badLogin, "203.0.113.10")
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("shared account attempt %d: expected 401, got %d: %s", attempt, response.StatusCode, body)
+		}
+	}
 	response, body = requestJSONFrom(t, plainClient, "http://"+restartedAddress+"/auth/login", badLogin, "203.0.113.10")
 	if response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") == "" || strings.Contains(body, "203.0.113.10") {
 		t.Fatalf("shared restarted account throttle: expected safe 429 with Retry-After, got %d retry=%q: %s", response.StatusCode, response.Header.Get("Retry-After"), body)
@@ -555,6 +749,34 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(directory, environment, "go", "run", "./.forge/acceptance_db.go", "clear-rate-limits"); err != nil {
 		t.Fatalf("clear rate limits before untrusted-proxy acceptance: %v\n%s", err, output)
 	}
+	lifetimeAddress := freeAddress(t)
+	lifetimeEnvironment := append(append([]string{}, environment...),
+		"APP_ADDRESS="+lifetimeAddress,
+		"SESSION_IDLE_LIFETIME=2s",
+		"SESSION_ABSOLUTE_LIFETIME=4s",
+	)
+	lifetimeServer, lifetimeOutput := startGeneratedServer(t, binary, directory, lifetimeEnvironment)
+	waitForHealth(t, "http://"+lifetimeAddress, lifetimeOutput)
+	lifetimeClient := clientWithCookies(t)
+	response, body = loginAt(lifetimeClient, lifetimeAddress, processReplacementPassword)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("short-lifetime login: %d: %s", response.StatusCode, body)
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		time.Sleep(1500 * time.Millisecond)
+		response, body = requestJSON(t, lifetimeClient, http.MethodGet, "http://"+lifetimeAddress+"/auth/me", "")
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("idle sliding probe %d expired before absolute deadline: %d: %s", attempt, response.StatusCode, body)
+		}
+	}
+	time.Sleep(1200 * time.Millisecond)
+	response, body = requestJSON(t, lifetimeClient, http.MethodGet, "http://"+lifetimeAddress+"/auth/me", "")
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("activity extended session past absolute deadline: %d: %s", response.StatusCode, body)
+	}
+	stopCommandProcess(t, lifetimeServer, false)
+	t.Log("live session activity slides idle expiry but not the absolute deadline")
+
 	untrustedAddress := freeAddress(t)
 	untrustedEnvironment := append(append([]string{}, environment...), "APP_ADDRESS="+untrustedAddress)
 	untrustedServer, untrustedOutput := startGeneratedServer(t, binary, directory, untrustedEnvironment)
@@ -997,11 +1219,15 @@ const postgresAdminProgram = `package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
 
+	"github.com/ShanilKoshitha/goforge/security/password"
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"example.com/issueboard/internal/auth"
 )
 
 func main() {
@@ -1045,7 +1271,138 @@ func main() {
 		}
 		return
 	}
-	panic("usage: acceptance_db <create|drop> <schema> | <seed-expired-session|count-expired-sessions|clear-rate-limits>")
+	if len(os.Args) == 4 && os.Args[1] == "weaken-password" {
+		encoded, err := (password.Hasher{Iterations: 1}).Hash(os.Args[3])
+		if err != nil {
+			panic(err)
+		}
+		result, err := db.ExecContext(ctx, "UPDATE users SET password_hash = $2 WHERE email = $1", os.Args[2], encoded)
+		if err != nil {
+			panic(err)
+		}
+		if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+			panic(fmt.Sprintf("weaken password rows=%d err=%v", rows, err))
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "password-state" {
+		var encoded string
+		var version int64
+		if err := db.QueryRowContext(ctx,
+			"SELECT password_hash, credential_version FROM users WHERE email = $1", os.Args[2],
+		).Scan(&encoded, &version); err != nil {
+			panic(err)
+		}
+		fmt.Printf("needs_rehash=%t credential_version=%d\n", password.New().NeedsRehash(encoded), version)
+		return
+	}
+	if len(os.Args) == 5 && os.Args[1] == "prove-credential-cas" {
+		proveCredentialCAS(ctx, db, os.Args[2], os.Args[3], os.Args[4])
+		fmt.Println("change_wins=true rehash_wins=true revoke_wins=true")
+		return
+	}
+	panic("usage: acceptance_db <create|drop> <schema> | <seed-expired-session|count-expired-sessions|clear-rate-limits> | weaken-password <email> <password> | password-state <email> | prove-credential-cas <email> <old> <new>")
+}
+
+func proveCredentialCAS(ctx context.Context, db *sql.DB, email, oldPlain, newPlain string) {
+	current := password.New()
+	for _, changeFirst := range []bool{true, false} {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			panic(err)
+		}
+		repository := auth.NewPostgresUserRepository(tx)
+		observed, err := repository.ByEmail(ctx, email)
+		if err != nil {
+			panic(err)
+		}
+		changeHash, err := current.Hash(newPlain)
+		if err != nil {
+			panic(err)
+		}
+		rehash, err := current.Hash(oldPlain)
+		if err != nil {
+			panic(err)
+		}
+		if changeFirst {
+			changed, err := repository.ChangePassword(ctx, observed.ID, observed.CredentialVersion, observed.PasswordHash, changeHash)
+			if err != nil || changed.CredentialVersion != observed.CredentialVersion+1 {
+				panic(fmt.Sprintf("change winner version=%d err=%v", changed.CredentialVersion, err))
+			}
+			if _, err := repository.RehashPassword(ctx, observed.ID, observed.PasswordHash, rehash); !errors.Is(err, auth.ErrCredentialsChanged) {
+				panic(fmt.Sprintf("stale rehash error=%v", err))
+			}
+		} else {
+			rehashed, err := repository.RehashPassword(ctx, observed.ID, observed.PasswordHash, rehash)
+			if err != nil || rehashed.CredentialVersion != observed.CredentialVersion {
+				panic(fmt.Sprintf("rehash winner version=%d err=%v", rehashed.CredentialVersion, err))
+			}
+			if _, err := repository.ChangePassword(ctx, observed.ID, observed.CredentialVersion, observed.PasswordHash, changeHash); !errors.Is(err, auth.ErrCredentialsChanged) {
+				panic(fmt.Sprintf("stale change error=%v", err))
+			}
+		}
+		latest, err := repository.ByID(ctx, observed.ID)
+		if err != nil {
+			panic(err)
+		}
+		wantPlain, rejectPlain, wantVersion := newPlain, oldPlain, observed.CredentialVersion+1
+		if !changeFirst {
+			wantPlain, rejectPlain, wantVersion = oldPlain, newPlain, observed.CredentialVersion
+		}
+		matched, err := current.Verify(latest.PasswordHash, wantPlain)
+		if err != nil || !matched || latest.CredentialVersion != wantVersion {
+			panic(fmt.Sprintf("winner state matched=%t version=%d err=%v", matched, latest.CredentialVersion, err))
+		}
+		if matched, err := current.Verify(latest.PasswordHash, rejectPlain); err != nil || matched {
+			panic(fmt.Sprintf("loser secret matched=%t err=%v", matched, err))
+		}
+		if err := tx.Rollback(); err != nil {
+			panic(err)
+		}
+	}
+	for _, changeFirst := range []bool{true, false} {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			panic(err)
+		}
+		repository := auth.NewPostgresUserRepository(tx)
+		observed, err := repository.ByEmail(ctx, email)
+		if err != nil {
+			panic(err)
+		}
+		changeHash, err := current.Hash(newPlain)
+		if err != nil {
+			panic(err)
+		}
+		wantPlain, wantVersion := oldPlain, observed.CredentialVersion+1
+		if changeFirst {
+			if _, err := repository.ChangePassword(ctx, observed.ID, observed.CredentialVersion, observed.PasswordHash, changeHash); err != nil {
+				panic(err)
+			}
+			if _, err := repository.RevokeSessions(ctx, observed.ID); err != nil {
+				panic(err)
+			}
+			wantPlain, wantVersion = newPlain, observed.CredentialVersion+2
+		} else {
+			if _, err := repository.RevokeSessions(ctx, observed.ID); err != nil {
+				panic(err)
+			}
+			if _, err := repository.ChangePassword(ctx, observed.ID, observed.CredentialVersion, observed.PasswordHash, changeHash); !errors.Is(err, auth.ErrCredentialsChanged) {
+				panic(fmt.Sprintf("change after revoke error=%v", err))
+			}
+		}
+		latest, err := repository.ByID(ctx, observed.ID)
+		if err != nil {
+			panic(err)
+		}
+		matched, err := current.Verify(latest.PasswordHash, wantPlain)
+		if err != nil || !matched || latest.CredentialVersion != wantVersion {
+			panic(fmt.Sprintf("revoke ordering matched=%t version=%d err=%v", matched, latest.CredentialVersion, err))
+		}
+		if err := tx.Rollback(); err != nil {
+			panic(err)
+		}
+	}
 }
 `
 
