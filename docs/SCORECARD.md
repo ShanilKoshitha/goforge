@@ -1,3 +1,67 @@
+# v0.8 account integrity and bounded sessions scorecard
+
+Status: **in progress**
+
+Target:
+
+> From an empty directory, generate a PostgreSQL application where an
+> authenticated user can change a password through explicit JSON and browser
+> flows, immediately invalidate every prior session across processes and
+> restarts, and continue safely in one rotated current session. Successful
+> login upgrades outdated password hashes, while activity may extend idle
+> expiry but can never cross a configured absolute session deadline.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Password change is complete on both transports | missing | One application-owned request explicitly decodes JSON and form fields, applies the same validation policy, verifies the current password, never redisplays password values, and drives both an authenticated API endpoint and a CSRF-protected browser form |
+| Credential mutation is atomic and race-safe | missing | PostgreSQL replaces the hash and increments a visible credential generation with a compare-and-swap predicate; concurrent stale changes and logins cannot restore an obsolete hash or both succeed; a same-cookie loser cannot erase the winner's rotated session |
+| Revocation is immediate and global | missing | Password change preserves only a rotated current session, while sign-out-everywhere performs an unconditional atomic generation advance that remains linearizable with password change; stale API and browser cookies fail on another process and after restart |
+| Authenticated sessions prove current credentials | missing | Sessions carry the observed credential generation, both authentication middleware compare it with the current user before protected work, and mismatches invalidate server state without emitting an out-of-order cookie that could overwrite a concurrent rotation |
+| Password hashes upgrade transparently | partial | `password.Hasher` recognizes weaker parameterized hashes; successful login conditionally persists a current-strength replacement, while failed weak-hash verification is padded to current work and concurrent password change remains authoritative |
+| Idle and absolute lifetime are independent | missing | A validated explicit session policy lets activity slide idle expiry without crossing the original absolute deadline; fresh applications expose both durations as typed environment configuration |
+| Failures remain safe and bounded | partial | Current transport limits, validation results, CSRF, account/source throttles, and safe error rendering remain; current-password failures are disclosure-safe and rate-limited without logging submitted secrets |
+| Generated behavior stays inspectable | partial | Credential generation, repository compare-and-swap methods, routes, controllers, requests, configuration, views, and SQL are ordinary application-owned files; the generic session store and password hasher remain replaceable |
+| Compatibility is explicit | missing | A frozen format-7 application passes current framework and compatible CLI checks; generators refuse unsupported project formats before writes rather than injecting format-8 auth contracts |
+| Full workflow passes twice | missing | Framework tests/vet/race and two fresh format-8 applications pass generated tests/vet/race/build plus isolated two-process PostgreSQL password, revocation, rehash, expiry, migration, browser, and API journeys without leaked processes or schemas |
+
+## Baseline — 2026-09-05
+
+- Released v0.7.1 passes `go test ./... -count=1`; the generator package
+  completed in 62.172 seconds. Public CI already proves the existing generated
+  PostgreSQL auth, session rotation, throttling, request-boundary, CRUD, ORM,
+  views, and jobs workflows.
+- Password hashes are parameterized PBKDF2-SHA256 values with dummy
+  verification and a working `NeedsRehash` predicate, but login never persists
+  a stronger replacement.
+- Generated auth exposes registration, login, current-user, and single-session
+  logout only. The user schema has no credential generation, repository writes
+  no credentials after registration, and sessions carry only `user_id`.
+- Browser activity continually assigns `now + lifetime`; there is no absolute
+  deadline. API and browser refresh behavior is inconsistent, and the
+  two-hour lifetime is hard-coded in route construction.
+- Independent read-only security and product audits found no current P0
+  exploit. They independently ranked missing password recovery controls and
+  bounded session lifetime ahead of CLI convenience wrappers.
+
+## Explicit non-goals for v0.8
+
+- Forgotten-password reset, email verification, magic links, notifications,
+  or outbound mail. Those require a dedicated delivery and token-lifecycle
+  milestone rather than a development-only mail stub.
+- MFA, WebAuthn/passkeys, OAuth/social login, API tokens, device/session
+  inventory, remembered devices, impersonation, or an authentication event
+  ledger.
+- Password-strength breach services, organization policy, localization, or a
+  proprietary password-policy language.
+- Signing-key rotation or encrypted session payloads. Cookies contain only a
+  signed random identifier; key rotation needs an explicit multi-key deployment
+  contract.
+- `forge test`, `forge build`, or a development watcher. Conventional Go
+  commands already work; their cohesive CLI milestone remains next in product
+  priority after account integrity.
+
 # v0.7 explicit request boundary and hardened HTTP kernel scorecard
 
 Status: **accepted**

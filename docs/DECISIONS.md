@@ -398,3 +398,57 @@ module checksums and passed an empty-directory smoke without a local `replace`.
 Reason: silently writing newer APIs into an older project is worse than an
 explicit migration boundary, and checkout-only tests cannot prove that a public
 user can resolve the generated module.
+
+## D023 — Credential generations revoke sessions without coupling the store
+
+**Status:** accepted for v0.8 implementation
+
+Fresh format-8 users carry a monotonically increasing `credential_version`.
+Every authenticated session records the version observed when authentication
+completed, and the explicit API and browser middleware compare it with the
+current user on every protected request. Password change conditionally replaces
+the observed hash, increments the version, rotates the caller's session, and
+writes the new version into that session. Sign out everywhere increments the
+version unconditionally and destroys the caller's session, so it remains
+linearizable with a concurrent conditional password change. Any older cookie
+is rejected and its server state invalidated on its next use, including by
+another process or after restart.
+
+The generic session store remains an opaque ID/payload store rather than gaining
+application-specific user columns or revocation methods. Expired and revoked
+physical rows are removed through the existing bounded expiry pruning; logical
+revocation is immediate because authorization already loads the current user.
+Device inventory and per-session administration are deferred until their user
+experience is deliberately designed.
+
+Transparent rehash uses a conditional old-hash replacement and does not advance
+the credential version because the password itself did not change. A conflict
+reloads and verifies the latest hash once: a concurrent equivalent rehash may
+still authenticate, while a concurrent password change cannot be overwritten.
+Failed verification of an older hash is padded to the current work policy so
+transparent migration does not expose which accounts still have weaker storage
+parameters.
+
+The session runtime gains a backward-compatible explicit policy with separate
+idle and absolute lifetimes. Issuance time is stored inside the opaque payload;
+saves can slide idle expiry only up to the original absolute deadline. Fresh
+applications validate both environment durations at startup. Existing callers
+of `session.NewManager` retain their prior idle-only contract. Deployments must
+keep application and database clocks synchronized because absolute issuance is
+recorded by the application while durable expiry is enforced by both layers.
+
+Credential-change rotation may race with a stale request invalidating the old
+row. The explicit `RegenerateOrCreate` path lets the already-authenticated
+winning request create only its independent new ID if atomic rotation reports
+the old row missing. Ordinary `Regenerate` remains fail-closed so a stale
+request cannot recreate a session after logout or another rotation. Stale
+authentication failures remove pending session-cookie headers instead of
+emitting deletion cookies, because an out-of-order browser response cannot
+conditionally delete only an old cookie. Explicit logout still sends a deletion
+cookie, and stale IDs remain unusable server-side.
+
+Reason: credential generations provide constant-cost, cross-process revocation
+using the database read already required by authentication, without teaching a
+generic session package about application users. Compare-and-swap credential
+writes and a non-sliding absolute deadline close the important recovery races
+while keeping every policy and mutation visible in ordinary Go and SQL.
