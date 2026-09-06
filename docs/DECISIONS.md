@@ -603,6 +603,15 @@ existing Unix process-group and Windows Job Object controls so cancellation cann
 the server or its descendants. An unexpected active-server exit is terminal;
 the supervisor does not hide application crashes behind an automatic loop.
 
+Candidate view compilation never writes the canonical generated artifact.
+Formats 5 through 8 first build the application-owned compiler, then run it
+against an isolated copy of the Forge sources; format 4 compiles in memory. The
+server build consumes that candidate with Go's standard `-overlay` mechanism.
+Publication acquires the same interprocess lock as every mutating make, view,
+and ORM generator and retains it through proxy promotion, rollback, or commit,
+so an identical-content concurrent write cannot create an ABA race. Cleanup
+retries transient rollback failures before the candidate becomes unreachable.
+
 No generated source or production runtime contains the watcher. Format 4 keeps
 its frozen view semantics, formats 5 through 8 continue using the
 application-owned `cmd/views` and function map, and format 8 remains current.

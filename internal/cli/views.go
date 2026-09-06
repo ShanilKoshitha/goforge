@@ -57,6 +57,24 @@ func runProjectViewCompiler(ctx context.Context, stdin io.Reader, stdout, stderr
 	return compileProjectViewsWithCheck(check, stdout)
 }
 
+func runLockedProjectViewCompiler(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	processes processRunner,
+	check bool,
+) (err error) {
+	if check {
+		return runProjectViewCompiler(ctx, stdin, stdout, stderr, processes, true)
+	}
+	lock, err := acquireGeneratorLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	return runProjectViewCompiler(ctx, stdin, stdout, stderr, processes, false)
+}
+
 func compileViewArtifact(files map[string]string) (string, error) {
 	return compileViewArtifactWithValidation(files, true)
 }

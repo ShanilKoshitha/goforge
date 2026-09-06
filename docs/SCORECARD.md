@@ -22,8 +22,8 @@ Target:
 | The default closes the edit-to-render gap | passing locally | Supervisor tests and the frozen format-4 journey prove compile, build, start, watch, reload, and the documented direct `go run ./cmd/server` escape hatch |
 | Watch coverage is complete and loop-free | passing locally | Content-snapshot tests cover writes, creates, deletes, renames, new nested directories, every declared input, exclusions, transient read recovery, and generated-output exclusion; one observer owns polling and generation |
 | Bursts converge on the newest source | passing locally | Race tests cover edits during builds, A→B→A content round trips, generation handoff before waiter registration, pre/post-promotion checks, stale discard, proxy revert, and serialized builds |
-| Invalid views preserve the last-good state | passing locally | Compiler and transaction tests retain exact bytes and mode on failure; lock-protected compare-and-swap rollback cannot overwrite a newer generator publication |
-| Invalid Go preserves the last-good server | passing locally | Go-build failures roll back compiled views, preserve the active process, remove staged binaries, and recover after the next stable edit |
+| Invalid views preserve the last-good state | passing locally | Application-owned compilers run against an isolated source tree; compiler and transaction tests retain exact bytes and mode on failure, while promotion holds the project generator lock through commit or rollback |
+| Invalid Go preserves the last-good server | passing locally | Candidate views reach `go build` through a Go overlay without touching the canonical artifact; failures preserve the active process and recover after the next stable edit |
 | Process replacement and exit semantics are bounded | passing locally | Managed process trees, joined cleanup failures, candidate exits during proxy startup/promotion, exact PID/address listener ownership, cancellation, proxy limits, and port cleanup have native Windows race coverage |
 | Template compatibility is retained | passing locally | The frozen format-4 watched journey passes twice; format-specific compiler tests retain application-owned format 5–8 function maps and format/ORM gates are revalidated for every candidate |
 | Production remains conventional | passing locally | Candidate binaries use an OS temporary directory; inspection and scaffold tests show no watcher, compiler, reload endpoint, or injected browser script in application/runtime source |
@@ -37,6 +37,9 @@ Target:
 - The supervisor, observer, listener-owner, proxy, and cleanup suites pass ten
   consecutive race-enabled runs. Exact Windows PID/address ownership rejects a
   same-port wrong-address match.
+- Off-tree view staging, overlay builds, promotion-lock ownership, identical
+  concurrent publications, and transient rollback retry pass ten consecutive
+  race-enabled runs without exposing an unpromoted generated artifact.
 - The frozen format-4 build/serve/check/last-good journey passes twice with a
   real watched server and complete cancellation cleanup.
 - A CGO-free Linux CLI test binary compiles successfully. The fresh PostgreSQL

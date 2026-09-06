@@ -537,6 +537,47 @@ func TestDevelopmentSupervisorRejectsInitialProcessExitDuringProxyStartup(t *tes
 	}
 }
 
+func TestDevelopmentSupervisorClosesProxyWhenInitialCommitFails(t *testing.T) {
+	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot)}
+	process := newFakeDevelopmentProcess()
+	commitErr := errors.New("remove staging failed")
+	var proxy *fakeDevelopmentProxy
+	dependencies := developmentServeDependencies{
+		snapshot:      source.snapshot,
+		waitForChange: source.wait,
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build: func(context.Context) (*developmentBuild, error) {
+			return &developmentBuild{binary: "server", finalize: func() error { return commitErr }}, nil
+		},
+		removeBinary: func(string) error { return nil },
+		start: func(context.Context, string) (*developmentCandidate, error) {
+			return &developmentCandidate{process: process, target: &url.URL{Scheme: "http", Host: "candidate"}, binary: "server"}, nil
+		},
+		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
+			proxy = newFakeDevelopmentProxy(address, target)
+			return proxy, nil
+		},
+		publicAddress: "127.0.0.1:8080",
+		stdout:        io.Discard,
+		stderr:        io.Discard,
+	}
+	if err := superviseDevelopmentServer(context.Background(), dependencies); !errors.Is(err, commitErr) {
+		t.Fatalf("commit error = %v, want %v", err, commitErr)
+	}
+	proxy.mu.Lock()
+	closed := proxy.closed
+	proxy.mu.Unlock()
+	if !closed {
+		t.Fatal("proxy was not closed after initial commit failure")
+	}
+	select {
+	case <-process.Done():
+	default:
+		t.Fatal("server was not stopped after initial commit failure")
+	}
+}
+
 func TestDevelopmentSupervisorRevertsCandidateExitDuringPromotion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -781,10 +822,24 @@ func TestBuildDevelopmentServerCompilesViewsThenStagesOrdinaryBinary(t *testing.
 	if build.binary != output {
 		t.Fatalf("staged binary = %q, want %q", build.binary, output)
 	}
-	commitDevelopmentBuild(build)
+	if err := publishDevelopmentBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	if err := commitDevelopmentBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	compiler := output + ".views-compiler"
+	if runtime.GOOS == "windows" {
+		compiler += ".exe"
+	}
+	absoluteCompiler, err := filepath.Abs(compiler)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []processCall{
-		{name: "go", args: []string{"run", "./cmd/views"}},
-		{name: "go", args: []string{"build", "-trimpath", "-o", output, "./cmd/server"}},
+		{name: "go", args: []string{"build", "-trimpath", "-o", compiler, "./cmd/views"}},
+		{name: absoluteCompiler, args: []string{"-C", output + ".views-root"}},
+		{name: "go", args: []string{"build", "-trimpath", "-overlay", output + ".overlay.json", "-o", output, "./cmd/server"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -808,6 +863,18 @@ func TestBuildDevelopmentServerRestoresLastGoodViewsOnGoFailure(t *testing.T) {
 		output:     output,
 		viewOutput: []byte("package views\n// candidate\n"),
 		buildErr:   errors.New("broken Go source"),
+		onViewRun: func() {
+			assertDevelopmentArtifact(t, generatedViewsPath, lastGood, "isolated view compilation")
+		},
+		onBuild: func() {
+			current, readErr := os.ReadFile(generatedViewsPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !bytes.Equal(current, lastGood) {
+				t.Fatalf("candidate views became observable during Go build: %q", current)
+			}
+		},
 	}
 	build, err := buildDevelopmentServer(context.Background(), nil, io.Discard, io.Discard, runner, output)
 	if err == nil || !strings.Contains(err.Error(), "broken Go source") || build != nil {
@@ -826,6 +893,130 @@ func TestBuildDevelopmentServerRestoresLastGoodViewsOnGoFailure(t *testing.T) {
 	}
 	if gotMode := info.Mode().Perm(); runtime.GOOS != "windows" && gotMode != 0o640 {
 		t.Fatalf("restored view mode = %o, want 640", gotMode)
+	}
+}
+
+func TestFailedDevelopmentBuildDoesNotRollbackIdenticalExternalPublication(t *testing.T) {
+	setupDevelopmentBuildProject(t)
+	lastGood := []byte("package views\n// last good\n")
+	candidate := []byte("package views\n// shared candidate\n")
+	if err := os.WriteFile(generatedViewsPath, lastGood, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "server")
+	runner := &developmentBuildRecorder{
+		output:     output,
+		viewOutput: candidate,
+		buildErr:   errors.New("broken Go source"),
+		onBuild: func() {
+			if err := os.WriteFile(generatedViewsPath, candidate, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	if build, err := buildDevelopmentServer(context.Background(), nil, io.Discard, io.Discard, runner, output); err == nil || build != nil {
+		t.Fatalf("build result = %#v, %v", build, err)
+	}
+	assertDevelopmentArtifact(t, generatedViewsPath, candidate, "external identical publication")
+}
+
+func TestPublishedDevelopmentBuildSerializesIdenticalGeneratorPublication(t *testing.T) {
+	setupDevelopmentBuildProject(t)
+	lastGood := []byte("package views\n// last good\n")
+	candidate := []byte("package views\n// shared candidate\n")
+	if err := os.WriteFile(generatedViewsPath, lastGood, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "server")
+	build, err := buildDevelopmentServer(
+		context.Background(), nil, io.Discard, io.Discard,
+		&developmentBuildRecorder{output: output, viewOutput: candidate}, output,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publishDevelopmentBuild(build); err != nil {
+		t.Fatal(err)
+	}
+
+	publication := make(chan error, 1)
+	go func() {
+		lock, lockErr := acquireGeneratorLock(context.Background())
+		if lockErr != nil {
+			publication <- lockErr
+			return
+		}
+		publication <- errors.Join(writeManagedFile(generatedViewsPath, candidate), lock.Close())
+	}()
+	select {
+	case err := <-publication:
+		t.Fatalf("generator bypassed promotion lock: %v", err)
+	case <-time.After(75 * time.Millisecond):
+	}
+	if err := rollbackDevelopmentBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-publication:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("generator did not resume after development rollback")
+	}
+	assertDevelopmentArtifact(t, generatedViewsPath, candidate, "serialized identical publication")
+}
+
+func TestBuildDevelopmentServerPublishesViewsOnlyAtPromotion(t *testing.T) {
+	setupDevelopmentBuildProject(t)
+	if err := os.MkdirAll(filepath.Dir(generatedViewsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lastGood := []byte("package views\n// last good\n")
+	candidate := []byte("package views\n// promoted candidate\n")
+	if err := os.WriteFile(generatedViewsPath, lastGood, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "server")
+	runner := &developmentBuildRecorder{output: output, viewOutput: candidate}
+	build, err := buildDevelopmentServer(context.Background(), nil, io.Discard, io.Discard, runner, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDevelopmentArtifact(t, generatedViewsPath, lastGood, "successful unpromoted build")
+	if err := publishDevelopmentBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	assertDevelopmentArtifact(t, generatedViewsPath, candidate, "candidate promotion")
+	if err := rollbackDevelopmentBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	assertDevelopmentArtifact(t, generatedViewsPath, lastGood, "candidate rollback")
+	for _, path := range []string{output + ".views.go", output + ".overlay.json"} {
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("staging file %s remained after rollback: %v", path, statErr)
+		}
+	}
+}
+
+func TestBuildDevelopmentServerStagesAnEmptyViewSourceRoot(t *testing.T) {
+	setupDevelopmentBuildProject(t)
+	if err := os.Remove(filepath.Join("resources", "views", "index.forge.html")); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "server")
+	runner := &developmentBuildRecorder{output: output, onViewRun: func() {
+		info, err := os.Stat(filepath.Join(output+".views-root", "resources", "views"))
+		if err != nil || !info.IsDir() {
+			t.Fatalf("empty staged view root = %v, %v", info, err)
+		}
+	}}
+	build, err := buildDevelopmentServer(context.Background(), nil, io.Discard, io.Discard, runner, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rollbackDevelopmentBuild(build); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -853,6 +1044,52 @@ func TestDevelopmentViewRollbackDoesNotOverwriteNewerGeneratorPublication(t *tes
 	}
 	if !bytes.Equal(got, newer) {
 		t.Fatalf("rollback overwrote newer publication: %q", got)
+	}
+}
+
+func TestDevelopmentBuildRollbackCanRetryAfterFailure(t *testing.T) {
+	want := errors.New("temporary rollback failure")
+	attempts := 0
+	build := &developmentBuild{rollback: func() error {
+		attempts++
+		if attempts == 1 {
+			return want
+		}
+		return nil
+	}}
+	if err := rollbackDevelopmentBuild(build); !errors.Is(err, want) {
+		t.Fatalf("first rollback error = %v, want %v", err, want)
+	}
+	if build.rollback == nil {
+		t.Fatal("failed rollback was not retained for retry")
+	}
+	if err := rollbackDevelopmentBuild(build); err != nil {
+		t.Fatalf("retry rollback: %v", err)
+	}
+	if attempts != 2 || build.rollback != nil {
+		t.Fatalf("rollback attempts = %d, retained = %t", attempts, build.rollback != nil)
+	}
+}
+
+func TestDiscardDevelopmentBuildRetriesTransientRollback(t *testing.T) {
+	want := errors.New("temporary rollback failure")
+	attempts := 0
+	removed := false
+	build := &developmentBuild{binary: "server", rollback: func() error {
+		attempts++
+		if attempts == 1 {
+			return want
+		}
+		return nil
+	}}
+	if err := discardDevelopmentBuild(build, func(path string) error {
+		removed = path == "server"
+		return nil
+	}); err != nil {
+		t.Fatalf("discard after transient rollback: %v", err)
+	}
+	if attempts != 2 || !removed || build.rollback != nil {
+		t.Fatalf("attempts = %d, removed = %t, retained = %t", attempts, removed, build.rollback != nil)
 	}
 }
 
@@ -897,6 +1134,12 @@ func setupDevelopmentBuildProject(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join("internal", "models"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("resources", "views"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("resources", "views", "index.forge.html"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join("internal", "models", "item.go"), []byte("package models\n\ntype Item struct {\n\tID int64 `forge:\"primary,generated,protected,required\"`\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -910,6 +1153,8 @@ type developmentBuildRecorder struct {
 	output     string
 	viewOutput []byte
 	buildErr   error
+	onViewRun  func()
+	onBuild    func()
 	ctx        context.Context
 	stdin      io.Reader
 	stdout     io.Writer
@@ -925,19 +1170,43 @@ func (runner *developmentBuildRecorder) Run(
 ) error {
 	runner.calls = append(runner.calls, processCall{name: name, args: append([]string(nil), arguments...)})
 	runner.ctx, runner.stdin, runner.stdout, runner.stderr = ctx, stdin, stdout, stderr
-	if len(arguments) > 0 && arguments[0] == "run" && runner.viewOutput != nil {
-		if err := os.MkdirAll(filepath.Dir(generatedViewsPath), 0o755); err != nil {
-			return err
+	if len(arguments) > 0 && arguments[0] == "build" && arguments[len(arguments)-1] == "./cmd/server" {
+		if runner.onBuild != nil {
+			runner.onBuild()
 		}
-		if err := os.WriteFile(generatedViewsPath, runner.viewOutput, 0o644); err != nil {
-			return err
-		}
-	}
-	if len(arguments) > 0 && arguments[0] == "build" {
 		if runner.buildErr != nil {
 			return runner.buildErr
 		}
 		return os.WriteFile(runner.output, []byte("executable"), 0o755)
 	}
+	if len(arguments) > 0 && arguments[0] == "build" && arguments[len(arguments)-1] == "./cmd/views" {
+		for index := range arguments {
+			if arguments[index] == "-o" && index+1 < len(arguments) {
+				return os.WriteFile(arguments[index+1], []byte("view compiler"), 0o755)
+			}
+		}
+	}
 	return nil
+}
+
+func (runner *developmentBuildRecorder) RunInDirectory(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	directory, name string,
+	arguments ...string,
+) error {
+	runner.calls = append(runner.calls, processCall{name: name, args: append([]string{"-C", directory}, arguments...)})
+	runner.ctx, runner.stdin, runner.stdout, runner.stderr = ctx, stdin, stdout, stderr
+	if runner.onViewRun != nil {
+		runner.onViewRun()
+	}
+	if runner.viewOutput == nil {
+		runner.viewOutput = []byte("package views\n")
+	}
+	path := filepath.Join(directory, filepath.FromSlash(generatedViewsPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, runner.viewOutput, 0o644)
 }

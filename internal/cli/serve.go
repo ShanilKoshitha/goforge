@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,10 +14,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	forgeconfig "github.com/ShanilKoshitha/goforge/config"
+	"github.com/ShanilKoshitha/goforge/view"
 )
 
 const (
@@ -50,7 +53,9 @@ type developmentCandidate struct {
 
 type developmentBuild struct {
 	binary   string
+	publish  func() error
 	rollback func() error
+	finalize func() error
 }
 
 type developmentBuildResult struct {
@@ -205,6 +210,29 @@ func superviseDevelopmentServer(ctx context.Context, dependencies developmentSer
 			return joinDevelopmentError(exitErr, cleanupDevelopmentCandidate(active, dependencies.removeBinary))
 		default:
 		}
+		if publishErr := publishDevelopmentBuild(active.build); publishErr != nil {
+			cleanupErr := cleanupDevelopmentCandidate(active, dependencies.removeBinary)
+			if cleanupErr != nil {
+				return errors.Join(publishErr, cleanupErr)
+			}
+			latest, snapshotErr = readDevelopmentSnapshot(ctx, dependencies)
+			if snapshotErr != nil {
+				return snapshotErr
+			}
+			input, err = dependencies.stabilize(ctx, latest)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		select {
+		case <-active.process.Done():
+			return joinDevelopmentError(
+				developmentProcessExitError("development server exited before proxy startup", active.process.Wait()),
+				cleanupDevelopmentCandidate(active, dependencies.removeBinary),
+			)
+		default:
+		}
 		proxy, err = dependencies.startProxy(dependencies.publicAddress, active.target)
 		if err != nil {
 			return joinDevelopmentError(err, cleanupDevelopmentCandidate(active, dependencies.removeBinary))
@@ -238,7 +266,6 @@ func superviseDevelopmentServer(ctx context.Context, dependencies developmentSer
 			return err
 		}
 	}
-	commitDevelopmentBuild(active.build)
 	defer func() {
 		if cleanupErr := cleanupDevelopmentCandidate(active, dependencies.removeBinary); cleanupErr != nil {
 			err = errors.Join(err, cleanupErr)
@@ -251,6 +278,9 @@ func superviseDevelopmentServer(ctx context.Context, dependencies developmentSer
 			err = errors.Join(err, fmt.Errorf("stop development proxy: %w", closeErr))
 		}
 	}()
+	if commitErr := commitDevelopmentBuild(active.build); commitErr != nil {
+		return commitErr
+	}
 
 	fmt.Fprintf(dependencies.stdout, "serving http://%s (watching for changes)\n", displayDevelopmentAddress(proxy.Address()))
 	baseline := initial.snapshot
@@ -329,6 +359,50 @@ developmentLoop:
 				next = stable
 				continue
 			}
+			if publishErr := publishDevelopmentBuild(result.candidate.build); publishErr != nil {
+				cleanupErr := cleanupDevelopmentCandidate(result.candidate, dependencies.removeBinary)
+				if cleanupErr != nil {
+					return errors.Join(publishErr, cleanupErr)
+				}
+				latest, snapshotErr := readDevelopmentSnapshot(ctx, dependencies)
+				if snapshotErr != nil {
+					return snapshotErr
+				}
+				next, err = dependencies.stabilize(ctx, latest)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			select {
+			case <-result.candidate.process.Done():
+				candidateErr := developmentProcessExitError("candidate server exited before promotion", result.candidate.process.Wait())
+				if cleanupErr := cleanupDevelopmentCandidate(result.candidate, dependencies.removeBinary); cleanupErr != nil {
+					return errors.Join(candidateErr, cleanupErr)
+				}
+				fmt.Fprintf(dependencies.stderr, "reload failed: %v\n", candidateErr)
+				baseline = result.snapshot
+				baselineGeneration = developmentGeneration(dependencies)
+				continue developmentLoop
+			default:
+			}
+			select {
+			case <-active.process.Done():
+				return joinDevelopmentError(
+					developmentProcessExitError("development server exited", active.process.Wait()),
+					cleanupDevelopmentCandidate(result.candidate, dependencies.removeBinary),
+				)
+			default:
+			}
+			select {
+			case proxyErr := <-proxy.Done():
+				cleanupErr := cleanupDevelopmentCandidate(result.candidate, dependencies.removeBinary)
+				if proxyErr == nil {
+					return joinDevelopmentError(errors.New("development proxy stopped unexpectedly"), cleanupErr)
+				}
+				return joinDevelopmentError(fmt.Errorf("development proxy stopped: %w", proxyErr), cleanupErr)
+			default:
+			}
 			if swapErr := proxy.SwapTarget(result.candidate.target); swapErr != nil {
 				return joinDevelopmentError(
 					fmt.Errorf("promote development server: %w", swapErr),
@@ -364,13 +438,15 @@ developmentLoop:
 				next = stable
 				continue
 			}
-			commitDevelopmentBuild(result.candidate.build)
 			previous := active
 			active = result.candidate
 			baseline = result.snapshot
 			baselineGeneration = result.generation
 			if cleanupErr := cleanupDevelopmentCandidate(previous, dependencies.removeBinary); cleanupErr != nil {
 				return cleanupErr
+			}
+			if commitErr := commitDevelopmentBuild(active.build); commitErr != nil {
+				return commitErr
 			}
 			fmt.Fprintln(dependencies.stdout, "reloaded development server")
 			continue developmentLoop
@@ -479,7 +555,7 @@ func discardDevelopmentBuild(build *developmentBuild, removeBinary func(string) 
 	if build == nil {
 		return nil
 	}
-	return errors.Join(rollbackDevelopmentBuild(build), removeBinary(build.binary))
+	return errors.Join(retryDevelopmentBuildRollback(build), removeBinary(build.binary))
 }
 
 func cleanupDevelopmentCandidate(candidate *developmentCandidate, removeBinary func(string) error) error {
@@ -516,14 +592,53 @@ func rollbackDevelopmentBuild(build *developmentBuild) error {
 		return nil
 	}
 	rollback := build.rollback
+	if err := rollback(); err != nil {
+		return err
+	}
 	build.rollback = nil
-	return rollback()
+	return nil
 }
 
-func commitDevelopmentBuild(build *developmentBuild) {
-	if build != nil {
-		build.rollback = nil
+func retryDevelopmentBuildRollback(build *developmentBuild) error {
+	var rollbackErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		rollbackErr = rollbackDevelopmentBuild(build)
+		if rollbackErr == nil {
+			return nil
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+		}
 	}
+	return rollbackErr
+}
+
+func publishDevelopmentBuild(build *developmentBuild) error {
+	if build == nil || build.publish == nil {
+		return nil
+	}
+	if err := build.publish(); err != nil {
+		return err
+	}
+	build.publish = nil
+	return nil
+}
+
+func commitDevelopmentBuild(build *developmentBuild) error {
+	if build == nil {
+		return nil
+	}
+	if build.finalize == nil {
+		build.rollback = nil
+		return nil
+	}
+	finalize := build.finalize
+	if err := finalize(); err != nil {
+		return err
+	}
+	build.finalize = nil
+	build.rollback = nil
+	return nil
 }
 
 func waitForDevelopmentChange(
@@ -577,6 +692,10 @@ func buildDevelopmentServer(
 	if formatErr := requireProjectFormatRange(minimumWorkflowFormat, maximumWorkflowFormat); formatErr != nil {
 		return nil, errors.Join(formatErr, lock.Close())
 	}
+	projectFormat, err := projectFormat()
+	if err != nil {
+		return nil, errors.Join(err, lock.Close())
+	}
 	previousViews, err := captureDevelopmentFile(generatedViewsPath)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("capture last-good views: %w", err), lock.Close())
@@ -584,48 +703,277 @@ func buildDevelopmentServer(
 	if ormErr := generateORM(true, stdout); ormErr != nil {
 		return nil, errors.Join(ormErr, lock.Close())
 	}
-	if compileErr := prepareProjectViews(ctx, stdin, stdout, stderr, processes); compileErr != nil {
-		restoreErr := previousViews.restore(generatedViewsPath)
-		return nil, errors.Join(compileErr, restoreErr, lock.Close())
-	}
-	publishedViews, err := captureDevelopmentFile(generatedViewsPath)
-	if err != nil {
-		restoreErr := previousViews.restore(generatedViewsPath)
-		return nil, errors.Join(fmt.Errorf("capture candidate views: %w", err), restoreErr, lock.Close())
+	publishedViews, viewCleanup, compileErr := stageDevelopmentViews(ctx, stdin, stdout, stderr, processes, output, projectFormat, previousViews)
+	if compileErr != nil {
+		return nil, errors.Join(compileErr, viewCleanup(), lock.Close())
 	}
 	if closeErr := lock.Close(); closeErr != nil {
-		rollbackErr := rollbackDevelopmentViews(previousViews, publishedViews)
-		return nil, errors.Join(closeErr, rollbackErr)
+		return nil, errors.Join(closeErr, viewCleanup())
 	}
-	rollback := func() error { return rollbackDevelopmentViews(previousViews, publishedViews) }
-	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "build", "-trimpath", "-o", output, "./cmd/server"); err != nil {
-		return nil, errors.Join(err, rollback())
+
+	candidateViewsPath := output + ".views.go"
+	overlayPath := output + ".overlay.json"
+	cleanupStaging := func() error {
+		cleanupErr := viewCleanup()
+		for _, path := range []string{candidateViewsPath, overlayPath} {
+			if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove development staging file %s: %w", path, removeErr))
+			}
+		}
+		return cleanupErr
+	}
+	if err := writeManagedFile(candidateViewsPath, publishedViews.data); err != nil {
+		return nil, errors.Join(fmt.Errorf("stage candidate views: %w", err), cleanupStaging())
+	}
+	generatedAbsolute, err := filepath.Abs(generatedViewsPath)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("resolve generated views path: %w", err), cleanupStaging())
+	}
+	candidateAbsolute, err := filepath.Abs(candidateViewsPath)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("resolve candidate views path: %w", err), cleanupStaging())
+	}
+	overlay, err := json.Marshal(struct {
+		Replace map[string]string
+	}{Replace: map[string]string{generatedAbsolute: candidateAbsolute}})
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("encode development build overlay: %w", err), cleanupStaging())
+	}
+	if err := writeManagedFile(overlayPath, overlay); err != nil {
+		return nil, errors.Join(fmt.Errorf("stage development build overlay: %w", err), cleanupStaging())
+	}
+	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "build", "-trimpath", "-overlay", overlayPath, "-o", output, "./cmd/server"); err != nil {
+		return nil, errors.Join(err, cleanupStaging())
 	}
 	info, err := os.Stat(output)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("inspect development server binary: %w", err), rollback())
+		return nil, errors.Join(fmt.Errorf("inspect development server binary: %w", err), cleanupStaging())
 	}
 	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return nil, errors.Join(errors.New("development server build produced no executable"), rollback())
+		return nil, errors.Join(errors.New("development server build produced no executable"), cleanupStaging())
 	}
-	return &developmentBuild{binary: output, rollback: rollback}, nil
+	if err := cleanupStaging(); err != nil {
+		return nil, fmt.Errorf("clean development build staging: %w", err)
+	}
+	var transactionMu sync.Mutex
+	publishedByBuild := false
+	var promotionLock *generatorLock
+	publish := func() error {
+		transactionMu.Lock()
+		defer transactionMu.Unlock()
+		if publishedByBuild {
+			return nil
+		}
+		lock, err := acquireDevelopmentGeneratorLock()
+		if err != nil {
+			return err
+		}
+		published, publishErr := compareAndSwapDevelopmentViewsLocked(previousViews, publishedViews, true)
+		if published {
+			publishedByBuild = true
+			promotionLock = lock
+			return publishErr
+		}
+		return errors.Join(publishErr, lock.Close())
+	}
+	rollback := func() error {
+		transactionMu.Lock()
+		defer transactionMu.Unlock()
+		var rollbackErr error
+		if publishedByBuild {
+			var restored bool
+			restored, rollbackErr = compareAndSwapDevelopmentViewsLocked(publishedViews, previousViews, false)
+			if restored || rollbackErr == nil {
+				publishedByBuild = false
+				rollbackErr = errors.Join(rollbackErr, promotionLock.Close())
+				promotionLock = nil
+			}
+		}
+		return rollbackErr
+	}
+	finalize := func() error {
+		transactionMu.Lock()
+		defer transactionMu.Unlock()
+		if !publishedByBuild {
+			return nil
+		}
+		publishedByBuild = false
+		lock := promotionLock
+		promotionLock = nil
+		return lock.Close()
+	}
+	return &developmentBuild{
+		binary:   output,
+		publish:  publish,
+		rollback: rollback,
+		finalize: finalize,
+	}, nil
+}
+
+func stageDevelopmentViews(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	processes processRunner,
+	output string,
+	format int,
+	previous developmentFileState,
+) (developmentFileState, func() error, error) {
+	cleanup := func() error { return nil }
+	if format < 5 {
+		found, err := hasDevelopmentViewSources()
+		if err != nil {
+			return developmentFileState{}, cleanup, err
+		}
+		if !found {
+			return previous, cleanup, nil
+		}
+		compiled, err := compileLegacyForge(os.DirFS("resources/views"))
+		if err != nil {
+			return developmentFileState{}, cleanup, fmt.Errorf("compile project views: %w", err)
+		}
+		if _, err := view.ParseCompiled(compiled, nil); err != nil {
+			return developmentFileState{}, cleanup, fmt.Errorf("validate project views: %w", err)
+		}
+		artifact, err := renderLegacyCompiledViews(compiled)
+		if err != nil {
+			return developmentFileState{}, cleanup, err
+		}
+		return developmentFileState{exists: true, mode: 0o644, data: []byte(artifact)}, cleanup, nil
+	}
+
+	directoryRunner, ok := processes.(directoryProcessRunner)
+	if !ok {
+		return developmentFileState{}, cleanup, errors.New("development process runner cannot execute the project view compiler in a staging directory")
+	}
+	compilerPath := output + ".views-compiler"
+	if runtime.GOOS == "windows" {
+		compilerPath += ".exe"
+	}
+	stagingRoot := output + ".views-root"
+	cleanup = func() error {
+		var cleanupErr error
+		if err := os.Remove(compilerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove staged view compiler: %w", err))
+		}
+		if err := os.RemoveAll(stagingRoot); err != nil && !errors.Is(err, os.ErrNotExist) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove staged view source: %w", err))
+		}
+		return cleanupErr
+	}
+	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "build", "-trimpath", "-o", compilerPath, "./cmd/views"); err != nil {
+		return developmentFileState{}, cleanup, err
+	}
+	if err := copyDevelopmentViewSources(stagingRoot); err != nil {
+		return developmentFileState{}, cleanup, err
+	}
+	absoluteCompiler, err := filepath.Abs(compilerPath)
+	if err != nil {
+		return developmentFileState{}, cleanup, fmt.Errorf("resolve staged view compiler: %w", err)
+	}
+	if err := directoryRunner.RunInDirectory(ctx, stdin, stdout, stderr, stagingRoot, absoluteCompiler); err != nil {
+		return developmentFileState{}, cleanup, err
+	}
+	candidate, err := captureDevelopmentFile(filepath.Join(stagingRoot, filepath.FromSlash(generatedViewsPath)))
+	if err != nil {
+		return developmentFileState{}, cleanup, fmt.Errorf("capture candidate views: %w", err)
+	}
+	if !candidate.exists {
+		return developmentFileState{}, cleanup, errors.New("project view compiler produced no generated views")
+	}
+	return candidate, cleanup, nil
+}
+
+func copyDevelopmentViewSources(stagingRoot string) error {
+	root := filepath.FromSlash("resources/views")
+	if err := os.MkdirAll(filepath.Join(stagingRoot, root), 0o755); err != nil {
+		return fmt.Errorf("create staged view directory: %w", err)
+	}
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("inspect project views: %w", err)
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".forge.html") {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("project view %s is not a regular file", filepath.ToSlash(path))
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read project view %s: %w", filepath.ToSlash(path), err)
+		}
+		destination := filepath.Join(stagingRoot, path)
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			return fmt.Errorf("create staged view directory: %w", err)
+		}
+		if err := writeManagedFile(destination, content); err != nil {
+			return fmt.Errorf("stage project view %s: %w", filepath.ToSlash(path), err)
+		}
+		return nil
+	})
+}
+
+func hasDevelopmentViewSources() (bool, error) {
+	found := false
+	err := filepath.WalkDir(filepath.FromSlash("resources/views"), func(_ string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".forge.html") {
+			found = true
+		}
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect project views: %w", err)
+	}
+	return found, nil
 }
 
 func rollbackDevelopmentViews(previous, published developmentFileState) error {
+	_, err := compareAndSwapDevelopmentViews(published, previous, false)
+	return err
+}
+
+func compareAndSwapDevelopmentViews(expected, replacement developmentFileState, mismatchIsError bool) (bool, error) {
+	lock, err := acquireDevelopmentGeneratorLock()
+	if err != nil {
+		return false, err
+	}
+	swapped, swapErr := compareAndSwapDevelopmentViewsLocked(expected, replacement, mismatchIsError)
+	return swapped, errors.Join(swapErr, lock.Close())
+}
+
+func acquireDevelopmentGeneratorLock() (*generatorLock, error) {
 	rollbackContext, cancel := context.WithTimeout(context.Background(), serveStopTimeout)
 	defer cancel()
-	lock, err := acquireGeneratorLock(rollbackContext)
-	if err != nil {
-		return err
-	}
+	return acquireGeneratorLock(rollbackContext)
+}
+
+func compareAndSwapDevelopmentViewsLocked(expected, replacement developmentFileState, mismatchIsError bool) (bool, error) {
 	current, captureErr := captureDevelopmentFile(generatedViewsPath)
 	if captureErr != nil {
-		return errors.Join(captureErr, lock.Close())
+		return false, captureErr
 	}
-	if !current.equal(published) {
-		return lock.Close()
+	if !current.equal(expected) {
+		if mismatchIsError {
+			return false, errors.New("compiled views changed while staging a development candidate")
+		}
+		return false, nil
 	}
-	return errors.Join(previous.restore(generatedViewsPath), lock.Close())
+	restoreErr := replacement.restore(generatedViewsPath)
+	installed := restoreErr == nil
+	var inspectErr error
+	if restoreErr != nil {
+		var after developmentFileState
+		after, inspectErr = captureDevelopmentFile(generatedViewsPath)
+		installed = inspectErr == nil && after.equal(replacement)
+	}
+	return installed, errors.Join(restoreErr, inspectErr)
 }
 
 type developmentFileState struct {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -69,7 +70,7 @@ type ormTemplateRelation struct {
 	TargetFields         []ormTemplateField
 }
 
-func runORMGenerate(args []string, stdout io.Writer) error {
+func runORMGenerate(ctx context.Context, args []string, stdout io.Writer) (err error) {
 	check := false
 	switch {
 	case len(args) == 0:
@@ -81,6 +82,14 @@ func runORMGenerate(args []string, stdout io.Writer) error {
 	if err := requireProjectFormatRange(4, 8); err != nil {
 		return err
 	}
+	if check {
+		return generateORM(true, stdout)
+	}
+	lock, err := acquireGeneratorLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
 	return generateORM(check, stdout)
 }
 

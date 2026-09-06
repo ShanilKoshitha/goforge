@@ -13,13 +13,38 @@ type processRunner interface {
 	Run(context.Context, io.Reader, io.Writer, io.Writer, string, ...string) error
 }
 
+type directoryProcessRunner interface {
+	RunInDirectory(context.Context, io.Reader, io.Writer, io.Writer, string, string, ...string) error
+}
+
 type execProcessRunner struct{}
 
 func (execProcessRunner) Run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, name string, args ...string) error {
+	return runExecProcess(ctx, stdin, stdout, stderr, "", name, args...)
+}
+
+func (execProcessRunner) RunInDirectory(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	directory, name string,
+	args ...string,
+) error {
+	return runExecProcess(ctx, stdin, stdout, stderr, directory, name, args...)
+}
+
+func runExecProcess(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	directory, name string,
+	args ...string,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	command := exec.Command(name, args...)
+	command.Dir = directory
 	if err := configureChildProcess(command); err != nil {
 		return err
 	}
