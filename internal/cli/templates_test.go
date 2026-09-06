@@ -33,6 +33,9 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
 		t.Fatal("project name must be quoted YAML")
 	}
+	if !strings.Contains(files["forge.yaml"], "version: 8") {
+		t.Fatal("fresh scaffold must declare format 8")
+	}
 	if !strings.Contains(files["resources/views/pages/welcome.forge.html"], "{{.Title}}") {
 		t.Fatal("HTML template expression was altered")
 	}
@@ -54,19 +57,22 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		"APP_REQUEST_TIMEOUT=15s", "APP_READ_HEADER_TIMEOUT=5s", "APP_READ_TIMEOUT=30s",
 		"APP_WRITE_TIMEOUT=30s", "APP_IDLE_TIMEOUT=2m", "APP_MAX_HEADER_BYTES=1048576",
 		"APP_ENABLE_HSTS=false", "TRUSTED_PROXIES=",
+		"SESSION_IDLE_LIFETIME=2h", "SESSION_ABSOLUTE_LIFETIME=24h",
 	} {
 		if !strings.Contains(files[".env.example"], setting) {
 			t.Errorf("generated .env.example omits %q", setting)
 		}
 	}
 	readme := files["README.md"]
-	for _, guidance := range []string{"APP_ENABLE_HSTS", "always uses HTTPS", "TRUSTED_PROXIES", "comma-separated CIDR", "forwarding headers are ignored"} {
+	for _, guidance := range []string{"APP_ENABLE_HSTS", "always uses HTTPS", "TRUSTED_PROXIES", "comma-separated CIDR", "forwarding headers are ignored", "SESSION_IDLE_LIFETIME", "SESSION_ABSOLUTE_LIFETIME", "/settings/security"} {
 		if !strings.Contains(readme, guidance) {
 			t.Errorf("generated README omits deployment guidance %q", guidance)
 		}
 	}
 	if !strings.Contains(files["internal/models/user.go"], `forge:"primary,generated,protected,required"`) ||
-		!strings.Contains(files[generatedORMPath], "var UserColumns") {
+		!strings.Contains(files["internal/models/user.go"], "CredentialVersion") ||
+		!strings.Contains(files[generatedORMPath], "var UserColumns") ||
+		!strings.Contains(files[generatedORMPath], "CredentialVersion") {
 		t.Fatal("scaffold must contain its application-owned User and current typed ORM")
 	}
 	if strings.TrimSpace(files["database/migrations/000002_create_jobs.up.sql"]) != strings.TrimSpace(jobpostgres.Schema) {
@@ -95,7 +101,9 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		t.Fatal("generated failed-job listing must escape control characters in diagnostics")
 	}
 	authRepository := files["internal/auth/repository.go"]
-	if !strings.Contains(authRepository, "postgres.Classify(err)") || !strings.Contains(authRepository, "errors.Is(err, orm.ErrUnique)") || strings.Contains(authRepository, "pgconn") {
+	if !strings.Contains(authRepository, "postgres.Classify(err)") || !strings.Contains(authRepository, "errors.Is(err, orm.ErrUnique)") ||
+		!strings.Contains(authRepository, "RehashPassword") || !strings.Contains(authRepository, "ChangePassword") ||
+		!strings.Contains(authRepository, "RevokeSessions") || strings.Contains(authRepository, "pgconn") {
 		t.Fatal("auth repository must classify driver errors without coupling application code to pgx")
 	}
 	second, err := scaffoldFiles("example.com/app", "", "app")

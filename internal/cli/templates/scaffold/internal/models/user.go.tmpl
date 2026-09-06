@@ -5,10 +5,11 @@ import "time"
 // User is application-owned persistence data. Authentication refers to this
 // model through an alias, so application code can extend its behavior directly.
 type User struct {
-	ID           int64     `json:"id" forge:"primary,generated,protected,required"`
-	Name         string    `json:"name" forge:"required"`
-	Email        string    `json:"email" forge:"required,unique"`
-	PasswordHash string    `json:"-" db:"password_hash" forge:"protected,required"`
-	CreatedAt    time.Time `json:"created_at" forge:"generated,protected,required"`
-	UpdatedAt    time.Time `json:"updated_at" forge:"generated,protected,required"`
+	ID                int64     `json:"id" forge:"primary,generated,protected,required"`
+	Name              string    `json:"name" forge:"required"`
+	Email             string    `json:"email" forge:"required,unique"`
+	PasswordHash      string    `json:"-" db:"password_hash" forge:"protected,required"`
+	CredentialVersion int64     `json:"-" db:"credential_version" forge:"generated,protected,required"`
+	CreatedAt         time.Time `json:"created_at" forge:"generated,protected,required"`
+	UpdatedAt         time.Time `json:"updated_at" forge:"generated,protected,required"`
 }

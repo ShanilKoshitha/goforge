@@ -18,9 +18,11 @@ import (
 )
 
 func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions session.Store, attemptStore ratelimit.Store, settings config.Config) error {
-	manager, err := session.NewManager(sessions, []byte(settings.SessionSecret), session.Cookie{
+	manager, err := session.NewManagerWithPolicy(sessions, []byte(settings.SessionSecret), session.Cookie{
 		UnsafeAllowHTTP: settings.Environment == "local",
-	}, 2*time.Hour)
+	}, session.Policy{
+		IdleLifetime: settings.SessionIdleLifetime, AbsoluteLifetime: settings.SessionAbsoluteLifetime,
+	})
 	if err != nil {
 		return err
 	}
@@ -59,6 +61,8 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 	authenticated := router.Group("", requireAuth)
 	authenticated.GET("/auth/me", authController.Me)
 	authenticated.POST("/auth/logout", authController.Logout)
+	authenticated.PUT("/auth/password", authController.ChangePassword)
+	authenticated.POST("/auth/logout-all", authController.RevokeAll)
 	browser := router.Group("", web.Sessions(manager), web.CSRF())
 	browser.Named("web.auth.register.form", "GET", "/register", webAuthController.RegisterForm)
 	browser.Named("web.auth.login.form", "GET", "/login", webAuthController.LoginForm)
@@ -66,9 +70,12 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 		limitRegister(web.Sessions(manager)(web.CSRF()(webAuthController.Register))))
 	router.Named("web.auth.login", "POST", "/login",
 		limitLogin(web.Sessions(manager)(web.CSRF()(webAuthController.Login))))
-	authenticatedBrowser := router.Group("", web.Sessions(manager), web.CSRF(), requireWebAuth)
+	authenticatedBrowser := router.Group("", web.Sessions(manager), requireWebAuth, web.CSRF())
 	authenticatedBrowser.Named("web.dashboard", "GET", "/app", webAuthController.Dashboard)
 	authenticatedBrowser.Named("web.auth.logout", "POST", "/logout", webAuthController.Logout)
+	authenticatedBrowser.Named("web.auth.security", "GET", "/settings/security", webAuthController.Security)
+	authenticatedBrowser.Named("web.auth.password", "POST", "/settings/password", webAuthController.ChangePassword)
+	authenticatedBrowser.Named("web.auth.logout_all", "POST", "/settings/logout-all", webAuthController.RevokeAll)
 	registerResources(router, renderer, db, manager, requireAuth, requireWebAuth)
 	return nil
 }

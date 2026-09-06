@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/ShanilKoshitha/goforge/httpx"
 	"github.com/ShanilKoshitha/goforge/security/password"
 	"github.com/ShanilKoshitha/goforge/security/ratelimit"
 	"github.com/ShanilKoshitha/goforge/session"
+	"github.com/ShanilKoshitha/goforge/validation"
 )
 
 type Controller struct {
@@ -19,7 +21,10 @@ type Controller struct {
 	attempts  *ratelimit.Limiter
 }
 
-var ErrInvalidCredentials = errors.New("invalid credentials")
+var (
+	ErrInvalidCredentials     = errors.New("invalid credentials")
+	ErrInvalidCurrentPassword = errors.New("current password is incorrect")
+)
 
 func NewController(users UserRepository, sessions *session.Manager, passwords password.Hasher, attempts *ratelimit.Limiter) *Controller {
 	return &Controller{users: users, sessions: sessions, passwords: passwords, attempts: attempts}
@@ -40,7 +45,7 @@ func (controller *Controller) Register(ctx *httpx.Context) error {
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
-	if err := controller.startSession(ctx, user.ID); err != nil {
+	if err := controller.startSession(ctx, user); err != nil {
 		return err
 	}
 	return ctx.JSON(http.StatusCreated, map[string]any{"data": user})
@@ -61,10 +66,77 @@ func (controller *Controller) Login(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := controller.startSession(ctx, user.ID); err != nil {
+	if err := controller.startSession(ctx, user); err != nil {
 		return err
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"data": user})
+}
+
+func (controller *Controller) ChangePassword(ctx *httpx.Context) error {
+	var request PasswordChangeRequest
+	if err := request.DecodeJSON(ctx); err != nil {
+		return err
+	}
+	if problems := request.Validate(); !problems.Empty() {
+		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
+	}
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	current, ok := authenticatedSession(ctx)
+	if !ok {
+		return errors.New("authenticated session is unavailable")
+	}
+	updated, err := controller.changePassword(ctx, user, request)
+	if errors.Is(err, ErrInvalidCurrentPassword) {
+		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").
+			WithDetails(currentPasswordProblem())
+	}
+	if errors.Is(err, ErrCredentialsChanged) {
+		if destroyErr := controller.sessions.Invalidate(ctx.Request.Context(), ctx.Response, current); destroyErr != nil {
+			return destroyErr
+		}
+		return httpx.NewHTTPError(http.StatusConflict, "credentials changed; sign in again")
+	}
+	if err != nil {
+		return err
+	}
+	if err := controller.sessions.RegenerateOrCreate(ctx.Request.Context(), current); err != nil {
+		return err
+	}
+	if err := putAuthenticatedIdentity(current, updated); err != nil {
+		return err
+	}
+	if err := controller.sessions.Save(ctx.Request.Context(), ctx.Response, current); err != nil {
+		return err
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
+func (controller *Controller) RevokeAll(ctx *httpx.Context) error {
+	// Requiring JSON keeps the cookie-authenticated API route unavailable to a
+	// plain cross-site form. The browser action has its own CSRF-protected route.
+	var request struct{}
+	if err := ctx.BindJSON(&request); err != nil {
+		return err
+	}
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	current, ok := authenticatedSession(ctx)
+	if !ok {
+		return errors.New("authenticated session is unavailable")
+	}
+	_, err := controller.users.RevokeSessions(ctx.Request.Context(), user.ID)
+	if err != nil {
+		return err
+	}
+	if err := controller.sessions.Destroy(ctx.Request.Context(), ctx.Response, current); err != nil {
+		return err
+	}
+	return ctx.NoContent(http.StatusNoContent)
 }
 
 func (controller *Controller) createUser(ctx context.Context, request RegisterRequest) (User, error) {
@@ -99,14 +171,45 @@ func (controller *Controller) authenticate(ctx context.Context, request LoginReq
 	if err != nil {
 		return User{}, err
 	}
-	matched, err := controller.passwords.Verify(user.PasswordHash, request.Password)
+	matched, err := controller.passwords.VerifyCurrent(user.PasswordHash, request.Password)
 	if err != nil {
 		return User{}, err
 	}
 	if !matched {
 		return User{}, ErrInvalidCredentials
 	}
+	if controller.passwords.NeedsRehash(user.PasswordHash) {
+		return controller.rehashPassword(ctx, user, request.Password)
+	}
 	return user, nil
+}
+
+func (controller *Controller) rehashPassword(ctx context.Context, user User, plain string) (User, error) {
+	replacement, err := controller.passwords.Hash(plain)
+	if err != nil {
+		return User{}, fmt.Errorf("rehash password: %w", err)
+	}
+	updated, err := controller.users.RehashPassword(ctx, user.ID, user.PasswordHash, replacement)
+	if !errors.Is(err, ErrCredentialsChanged) {
+		return updated, err
+	}
+	// Another request changed the hash after verification. Re-read once and
+	// verify the submitted secret against the winner; never overwrite it here.
+	latest, loadErr := controller.users.ByID(ctx, user.ID)
+	if errors.Is(loadErr, ErrUserNotFound) {
+		return User{}, ErrInvalidCredentials
+	}
+	if loadErr != nil {
+		return User{}, loadErr
+	}
+	matched, verifyErr := controller.passwords.Verify(latest.PasswordHash, plain)
+	if verifyErr != nil {
+		return User{}, verifyErr
+	}
+	if !matched {
+		return User{}, ErrInvalidCredentials
+	}
+	return latest, nil
 }
 
 func (controller *Controller) authenticateRequest(ctx *httpx.Context, request LoginRequest) (User, error) {
@@ -131,9 +234,9 @@ func (controller *Controller) Logout(ctx *httpx.Context) error {
 	if err := ctx.BindJSON(&request); err != nil {
 		return err
 	}
-	current, err := controller.sessions.Load(ctx.Request.Context(), ctx.Request)
-	if err != nil {
-		return err
+	current, ok := authenticatedSession(ctx)
+	if !ok {
+		return errors.New("authenticated session is unavailable")
 	}
 	if err := controller.sessions.Destroy(ctx.Request.Context(), ctx.Response, current); err != nil {
 		return err
@@ -149,7 +252,7 @@ func (controller *Controller) Me(ctx *httpx.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]any{"data": user})
 }
 
-func (controller *Controller) startSession(ctx *httpx.Context, userID int64) error {
+func (controller *Controller) startSession(ctx *httpx.Context, user User) error {
 	current, err := controller.sessions.Load(ctx.Request.Context(), ctx.Request)
 	if err != nil {
 		return err
@@ -157,8 +260,40 @@ func (controller *Controller) startSession(ctx *httpx.Context, userID int64) err
 	if err := controller.sessions.Regenerate(ctx.Request.Context(), current); err != nil {
 		return err
 	}
-	if err := current.Put("user_id", userID); err != nil {
+	if err := putAuthenticatedIdentity(current, user); err != nil {
 		return err
 	}
 	return controller.sessions.Save(ctx.Request.Context(), ctx.Response, current)
+}
+
+func (controller *Controller) changePassword(ctx *httpx.Context, user User, request PasswordChangeRequest) (User, error) {
+	key := ratelimit.Key("auth-account-password", strconv.FormatInt(user.ID, 10))
+	if err := controller.attempts.Enforce(ctx, key); err != nil {
+		return User{}, err
+	}
+	matched, err := controller.passwords.Verify(user.PasswordHash, request.CurrentPassword)
+	if err != nil {
+		return User{}, err
+	}
+	if !matched {
+		return User{}, ErrInvalidCurrentPassword
+	}
+	if err := controller.attempts.Reset(ctx.Request.Context(), key); err != nil {
+		return User{}, err
+	}
+	replacement, err := controller.passwords.Hash(request.Password)
+	if err != nil {
+		return User{}, fmt.Errorf("hash replacement password: %w", err)
+	}
+	return controller.users.ChangePassword(
+		ctx.Request.Context(), user.ID, user.CredentialVersion, user.PasswordHash, replacement,
+	)
+}
+
+func currentPasswordProblem() validation.Report {
+	return validation.Apply("current_password", validation.Present(struct{}{}),
+		validation.RuleFunc[struct{}](func(validation.Input[struct{}]) []validation.Issue {
+			return []validation.Issue{{Code: "password.current", Message: ErrInvalidCurrentPassword.Error()}}
+		}),
+	)
 }

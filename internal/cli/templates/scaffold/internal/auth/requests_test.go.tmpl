@@ -1,8 +1,12 @@
 package auth_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
 
 	"[[.Module]]/internal/auth"
 )
@@ -21,5 +25,78 @@ func TestLoginRejectsOversizedPasswords(t *testing.T) {
 	request := auth.LoginRequest{Email: "ada@example.com", Password: strings.Repeat("x", 129)}
 	if len(request.Validate().For("password")) == 0 {
 		t.Fatal("expected the registration password limit to apply to login")
+	}
+}
+
+func TestPasswordChangeRequiresConfirmedDifferentPassword(t *testing.T) {
+	request := auth.PasswordChangeRequest{
+		CurrentPassword: "a secure passphrase", Password: "a secure passphrase",
+		PasswordConfirmation: "a different passphrase",
+	}
+	problems := request.Validate()
+	if violations := problems.For("password"); len(violations) != 1 || violations[0].Code != "password.different" {
+		t.Fatalf("new-password violations = %+v", violations)
+	}
+	if violations := problems.For("password_confirmation"); len(violations) != 1 || violations[0].Code != "password.confirmed" {
+		t.Fatalf("confirmation violations = %+v", violations)
+	}
+}
+
+func TestPasswordChangeJSONBoundaryHasExactFailures(t *testing.T) {
+	router := httpx.NewRouter()
+	router.PUT("/request", func(ctx *httpx.Context) error {
+		var request auth.PasswordChangeRequest
+		return request.DecodeJSON(ctx)
+	})
+	tests := []struct {
+		name, contentType, body string
+		want                    int
+	}{
+		{name: "wrong media type", contentType: "text/plain", body: `{}`, want: http.StatusUnsupportedMediaType},
+		{name: "malformed", contentType: "application/json", body: `{"current_password":`, want: http.StatusBadRequest},
+		{name: "type invalid", contentType: "application/json", body: `{"current_password":42}`, want: http.StatusBadRequest},
+		{name: "null root", contentType: "application/json", body: `null`, want: http.StatusBadRequest},
+		{name: "unknown field", contentType: "application/json", body: `{"admin":true}`, want: http.StatusBadRequest},
+		{name: "multiple values", contentType: "application/json", body: `{} {}`, want: http.StatusBadRequest},
+		{name: "oversized", contentType: "application/json", body: `{"current_password":"` + strings.Repeat("x", (1<<20)+1) + `"}`, want: http.StatusRequestEntityTooLarge},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPut, "/request", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", test.contentType)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestPasswordChangeFormBoundaryHasExactFailures(t *testing.T) {
+	router := httpx.NewRouter()
+	router.POST("/request", func(ctx *httpx.Context) error {
+		var request auth.PasswordChangeRequest
+		return request.DecodeForm(ctx)
+	})
+	tests := []struct {
+		name, contentType, body string
+		want                    int
+	}{
+		{name: "wrong media type", contentType: "text/plain", body: "current_password=old", want: http.StatusUnsupportedMediaType},
+		{name: "malformed", contentType: "application/x-www-form-urlencoded", body: "current_password=%zz", want: http.StatusBadRequest},
+		{name: "repeated scalar", contentType: "application/x-www-form-urlencoded", body: "current_password=old&current_password=again", want: http.StatusBadRequest},
+		{name: "oversized", contentType: "application/x-www-form-urlencoded", body: "current_password=" + strings.Repeat("x", (1<<20)+1), want: http.StatusRequestEntityTooLarge},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/request", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", test.contentType)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+		})
 	}
 }

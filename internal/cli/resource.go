@@ -29,7 +29,7 @@ type plannedFile struct {
 }
 
 func makeResource(name string, stdout io.Writer) error {
-	if err := requireProjectFormatRange(7, 7); err != nil {
+	if err := requireProjectFormatRange(8, 8); err != nil {
 		return err
 	}
 	return makeResourceWithDependencies(context.Background(), name, nil, stdout, stdout, execProcessRunner{}, writeManagedFile)
@@ -40,7 +40,7 @@ func makeResourceWithWriter(name string, stdout io.Writer, managedWrite func(str
 }
 
 func makeResourceWithProcess(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
-	if err := requireProjectFormatRange(7, 7); err != nil {
+	if err := requireProjectFormatRange(8, 8); err != nil {
 		return err
 	}
 	return makeResourceWithDependencies(ctx, name, stdin, stdout, stderr, processes, writeManagedFile)

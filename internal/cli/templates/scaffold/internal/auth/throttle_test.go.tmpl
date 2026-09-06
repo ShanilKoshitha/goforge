@@ -175,3 +175,59 @@ func TestBrowserRegisterUsesTheSameAccountThrottle(t *testing.T) {
 		t.Fatal("browser throttle response disclosed the account identifier")
 	}
 }
+
+func TestPasswordChangeThrottlesByAuthenticatedAccountWithoutDisclosure(t *testing.T) {
+	hasher := password.Hasher{Iterations: 1}
+	encoded, err := hasher.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := &fakeUsers{user: auth.User{
+		ID: 23, Email: "ada@example.com", PasswordHash: encoded, CredentialVersion: 1,
+	}}
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", users.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", users.user.CredentialVersion); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := seed.Result().Cookies()[0]
+	controller := auth.NewController(users, manager, hasher, strictAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.PUT("/auth/password", auth.Require(manager, users)(controller.ChangePassword))
+
+	change := func(cookie *http.Cookie) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPut, "/auth/password", strings.NewReader(
+			`{"current_password":"incorrect password","password":"a replacement passphrase","password_confirmation":"a replacement passphrase"}`,
+		))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	first := change(cookie)
+	if first.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("first password failure: %d: %s", first.Code, first.Body.String())
+	}
+	cookie = first.Result().Cookies()[0]
+	second := change(cookie)
+	if second.Code != http.StatusTooManyRequests || second.Header().Get("Retry-After") == "" {
+		t.Fatalf("password throttle: %d retry=%q: %s", second.Code, second.Header().Get("Retry-After"), second.Body.String())
+	}
+	if strings.Contains(second.Body.String(), "incorrect password") || strings.Contains(second.Body.String(), "a replacement passphrase") || strings.Contains(second.Body.String(), "ada@example.com") {
+		t.Fatalf("password throttle disclosed credentials or identity: %s", second.Body.String())
+	}
+}

@@ -22,6 +22,13 @@ type DashboardPage struct {
 	User   User
 }
 
+type SecurityPage struct {
+	Title  string
+	Form   view.Form
+	Notice string
+	User   User
+}
+
 type WebController struct {
 	auth  *Controller
 	views *view.Engine
@@ -109,6 +116,89 @@ func (controller *WebController) Dashboard(ctx *httpx.Context) error {
 	})
 }
 
+func (controller *WebController) Security(ctx *httpx.Context) error {
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	current, ok := web.Session(ctx)
+	if !ok {
+		return errors.New("browser session is unavailable")
+	}
+	var notice string
+	if _, err := current.Get("notice", &notice); err != nil {
+		return err
+	}
+	return controller.renderSecurity(ctx, http.StatusOK, SecurityPage{
+		Title: "Account security", Notice: notice, User: user,
+	})
+}
+
+func (controller *WebController) ChangePassword(ctx *httpx.Context) error {
+	var request PasswordChangeRequest
+	if err := request.DecodeForm(ctx); err != nil {
+		return err
+	}
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	page := SecurityPage{Title: "Account security", User: user}
+	if problems := request.Validate(); !problems.Empty() {
+		page.Form.ValidationErrors = problems.Messages()
+		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
+	}
+	updated, err := controller.auth.changePassword(ctx, user, request)
+	if errors.Is(err, ErrInvalidCurrentPassword) {
+		page.Form.ValidationErrors = currentPasswordProblem().Messages()
+		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
+	}
+	if errors.Is(err, ErrCredentialsChanged) {
+		if destroyErr := web.Invalidate(ctx); destroyErr != nil {
+			return destroyErr
+		}
+		return web.Redirect(ctx, "/login")
+	}
+	if limited, response := controller.renderSecurityRateLimit(ctx, err, page); limited {
+		return response
+	}
+	if err != nil {
+		return err
+	}
+	if err := web.RegenerateOrCreate(ctx); err != nil {
+		return err
+	}
+	current, ok := web.Session(ctx)
+	if !ok {
+		return errors.New("browser session is unavailable")
+	}
+	if err := putAuthenticatedIdentity(current, updated); err != nil {
+		return err
+	}
+	if _, err := web.RotateCSRF(ctx); err != nil {
+		return err
+	}
+	if err := current.Flash("notice", "Your password was changed and other sessions were signed out."); err != nil {
+		return err
+	}
+	return web.Redirect(ctx, "/settings/security")
+}
+
+func (controller *WebController) RevokeAll(ctx *httpx.Context) error {
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	_, err := controller.auth.users.RevokeSessions(ctx.Request.Context(), user.ID)
+	if err != nil {
+		return err
+	}
+	if err := web.Destroy(ctx); err != nil {
+		return err
+	}
+	return web.Redirect(ctx, "/login")
+}
+
 func (controller *WebController) Logout(ctx *httpx.Context) error {
 	if err := web.Destroy(ctx); err != nil {
 		return err
@@ -144,6 +234,29 @@ func (controller *WebController) renderRateLimit(ctx *httpx.Context, err error, 
 	})
 }
 
+func (controller *WebController) renderSecurity(ctx *httpx.Context, status int, page SecurityPage) error {
+	token, err := web.CSRFToken(ctx)
+	if err != nil {
+		return err
+	}
+	page.Form.CSRFToken = token
+	if page.Form.ValidationErrors == nil {
+		page.Form.ValidationErrors = make(validation.Errors)
+	}
+	return web.Render(ctx, controller.views, status, "auth/security", page)
+}
+
+func (controller *WebController) renderSecurityRateLimit(ctx *httpx.Context, err error, page SecurityPage) (bool, error) {
+	var httpError *httpx.HTTPError
+	if !errors.As(err, &httpError) || httpError.Status != http.StatusTooManyRequests {
+		return false, nil
+	}
+	page.Form.ValidationErrors = validation.Errors{
+		"current_password": {"Too many attempts. Try again later."},
+	}
+	return true, controller.renderSecurity(ctx, http.StatusTooManyRequests, page)
+}
+
 func (controller *WebController) authenticated(ctx *httpx.Context, user User, notice string) error {
 	if err := web.Regenerate(ctx); err != nil {
 		return err
@@ -152,7 +265,7 @@ func (controller *WebController) authenticated(ctx *httpx.Context, user User, no
 	if !ok {
 		return errors.New("browser session is unavailable")
 	}
-	if err := current.Put("user_id", user.ID); err != nil {
+	if err := putAuthenticatedIdentity(current, user); err != nil {
 		return err
 	}
 	if _, err := web.RotateCSRF(ctx); err != nil {

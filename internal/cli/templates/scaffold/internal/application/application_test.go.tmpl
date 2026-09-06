@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ShanilKoshitha/goforge/httpx"
 	"github.com/ShanilKoshitha/goforge/security/ratelimit"
@@ -18,6 +19,7 @@ import (
 func TestHealth(t *testing.T) {
 	app, err := application.New(config.Config{
 		Address: ":8080", Environment: "test", SessionSecret: strings.Repeat("s", 32),
+		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
 	}, application.Dependencies{Sessions: session.NewMemoryStore(), RateLimits: ratelimit.NewMemoryStore(100)})
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +39,7 @@ func TestHealth(t *testing.T) {
 func TestBrowserAndAPIErrorsKeepExplicitSurfaces(t *testing.T) {
 	app, err := application.New(config.Config{
 		Address: ":8080", Environment: "test", SessionSecret: strings.Repeat("s", 32),
+		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
 	}, application.Dependencies{Sessions: session.NewMemoryStore(), RateLimits: ratelimit.NewMemoryStore(100)})
 	if err != nil {
 		t.Fatal(err)

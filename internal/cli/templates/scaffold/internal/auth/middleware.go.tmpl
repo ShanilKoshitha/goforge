@@ -8,34 +8,76 @@ import (
 	"github.com/ShanilKoshitha/goforge/session"
 )
 
-const userContextKey = "auth.user"
+const (
+	userContextKey    = "auth.user"
+	sessionContextKey = "auth.session"
+)
 
-func Require(sessions *session.Manager, users UserRepository) httpx.Middleware {
+func Require(sessions *session.Manager, users UserReader) httpx.Middleware {
 	return func(next httpx.Handler) httpx.Handler {
 		return func(ctx *httpx.Context) error {
 			current, err := sessions.Load(ctx.Request.Context(), ctx.Request)
 			if err != nil {
 				return err
 			}
-			var userID int64
-			present, err := current.Get("user_id", &userID)
+			userID, credentialVersion, present, err := authenticatedIdentity(current)
 			if err != nil {
 				return err
 			}
 			if !present {
+				if err := sessions.Invalidate(ctx.Request.Context(), ctx.Response, current); err != nil {
+					return err
+				}
 				return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 			}
 			user, err := users.ByID(ctx.Request.Context(), userID)
 			if errors.Is(err, ErrUserNotFound) {
+				if destroyErr := sessions.Invalidate(ctx.Request.Context(), ctx.Response, current); destroyErr != nil {
+					return destroyErr
+				}
 				return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 			}
 			if err != nil {
 				return err
+			}
+			if user.CredentialVersion != credentialVersion {
+				if err := sessions.Invalidate(ctx.Request.Context(), ctx.Response, current); err != nil {
+					return err
+				}
+				return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+			}
+			ctx.Set(sessionContextKey, current)
+			if err := sessions.Save(ctx.Request.Context(), ctx.Response, current); err != nil {
+				return err
+			}
+			if current.ID() == "" {
+				return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 			}
 			ctx.Set(userContextKey, user)
 			return next(ctx)
 		}
 	}
+}
+
+func authenticatedIdentity(current *session.Session) (int64, int64, bool, error) {
+	var userID int64
+	userPresent, err := current.Get("user_id", &userID)
+	if err != nil || !userPresent {
+		return 0, 0, false, err
+	}
+	var credentialVersion int64
+	versionPresent, err := current.Get("credential_version", &credentialVersion)
+	if err != nil || !versionPresent || credentialVersion < 1 {
+		return 0, 0, false, err
+	}
+	return userID, credentialVersion, true, nil
+}
+
+func putAuthenticatedIdentity(current *session.Session, user User) error {
+	if err := current.Put("user_id", user.ID); err != nil {
+		return err
+	}
+	return current.Put("credential_version", user.CredentialVersion)
 }
 
 func UserFrom(ctx *httpx.Context) (User, bool) {
@@ -45,4 +87,13 @@ func UserFrom(ctx *httpx.Context) (User, bool) {
 	}
 	user, ok := value.(User)
 	return user, ok
+}
+
+func authenticatedSession(ctx *httpx.Context) (*session.Session, bool) {
+	value, ok := ctx.Get(sessionContextKey)
+	if !ok {
+		return nil, false
+	}
+	current, ok := value.(*session.Session)
+	return current, ok
 }

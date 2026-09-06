@@ -153,6 +153,90 @@ func (request LoginRequest) Validate() validation.Report {
 	)
 }
 
+// PasswordChangeRequest is shared by the JSON and browser account-security
+// surfaces. Password fields are never normalized or copied into page state.
+type PasswordChangeRequest struct {
+	CurrentPassword      string `json:"current_password" form:"current_password"`
+	Password             string `json:"password" form:"password"`
+	PasswordConfirmation string `json:"password_confirmation" form:"password_confirmation"`
+
+	currentPasswordInput      validation.Input[string]
+	passwordInput             validation.Input[string]
+	passwordConfirmationInput validation.Input[string]
+}
+
+func (request *PasswordChangeRequest) DecodeJSON(ctx *httpx.Context) error {
+	var body *struct {
+		CurrentPassword      json.RawMessage `json:"current_password"`
+		Password             json.RawMessage `json:"password"`
+		PasswordConfirmation json.RawMessage `json:"password_confirmation"`
+	}
+	if err := ctx.BindJSON(&body); err != nil {
+		return err
+	}
+	if body == nil {
+		return httpx.NewHTTPError(http.StatusBadRequest, "JSON body must be an object")
+	}
+	var err error
+	if request.CurrentPassword, request.currentPasswordInput, err = decodeString("current_password", body.CurrentPassword, identity); err != nil {
+		return err
+	}
+	if request.Password, request.passwordInput, err = decodeString("password", body.Password, identity); err != nil {
+		return err
+	}
+	if request.PasswordConfirmation, request.passwordConfirmationInput, err = decodeString("password_confirmation", body.PasswordConfirmation, identity); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (request *PasswordChangeRequest) DecodeForm(ctx *httpx.Context) error {
+	form, err := ctx.Form()
+	if err != nil {
+		return err
+	}
+	if request.CurrentPassword, request.currentPasswordInput, err = formString(form, "current_password", identity); err != nil {
+		return err
+	}
+	if request.Password, request.passwordInput, err = formString(form, "password", identity); err != nil {
+		return err
+	}
+	if request.PasswordConfirmation, request.passwordConfirmationInput, err = formString(form, "password_confirmation", identity); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (request PasswordChangeRequest) Validate() validation.Report {
+	current := fallbackInput(request.currentPasswordInput, request.CurrentPassword, identity)
+	password := fallbackInput(request.passwordInput, request.Password, identity)
+	confirmation := fallbackInput(request.passwordConfirmationInput, request.PasswordConfirmation, identity)
+	confirmed := validation.RuleFunc[string](func(input validation.Input[string]) []validation.Issue {
+		value, present := input.Value()
+		original, originalPresent := password.Value()
+		if present && originalPresent && value != original {
+			return []validation.Issue{{Code: "password.confirmed", Message: "must match password"}}
+		}
+		return nil
+	})
+	different := validation.RuleFunc[string](func(input validation.Input[string]) []validation.Issue {
+		value, present := input.Value()
+		old, oldPresent := current.Value()
+		if present && oldPresent && value == old {
+			return []validation.Issue{{Code: "password.different", Message: "must differ from current password"}}
+		}
+		return nil
+	})
+	return validation.Join(
+		validation.Apply("current_password", current,
+			validation.Required[string](), validation.StringLength(0, 128)),
+		validation.Apply("password", password,
+			validation.Required[string](), validation.StringLength(12, 128), different),
+		validation.Apply("password_confirmation", confirmation,
+			validation.Required[string](), confirmed),
+	)
+}
+
 func decodeString(field string, raw json.RawMessage, normalize func(string) string) (string, validation.Input[string], error) {
 	if raw == nil {
 		return "", validation.Missing[string](), nil

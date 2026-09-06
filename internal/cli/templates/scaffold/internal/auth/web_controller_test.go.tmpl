@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -39,7 +40,7 @@ func TestBrowserAuthenticationLifecycle(t *testing.T) {
 	public.POST("/register", browser.Register)
 	public.GET("/login", browser.LoginForm)
 	public.POST("/login", browser.Login)
-	private := router.Group("", web.Sessions(manager), web.CSRF(), auth.RequireWeb(users))
+	private := router.Group("", web.Sessions(manager), auth.RequireWeb(users), web.CSRF())
 	private.GET("/app", browser.Dashboard)
 	private.POST("/logout", browser.Logout)
 
@@ -172,6 +173,200 @@ func TestRegistrationFormBoundaryHasExactFailures(t *testing.T) {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestBrowserPasswordChangeAndGlobalRevocation(t *testing.T) {
+	hasher := password.Hasher{Iterations: 1}
+	encoded, err := hasher.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := &fakeUsers{user: auth.User{
+		ID: 15, Name: "Ada", Email: "ada@example.com", PasswordHash: encoded, CredentialVersion: 1,
+	}}
+	manager, err := session.NewManagerWithPolicy(
+		session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true},
+		session.Policy{IdleLifetime: time.Hour, AbsoluteLifetime: 24 * time.Hour},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := auth.NewController(users, manager, hasher, testAttemptLimiter(t))
+	browser := auth.NewWebController(controller, renderer)
+	router := httpx.NewRouter()
+	public := router.Group("", web.Sessions(manager), web.CSRF())
+	public.GET("/login", browser.LoginForm)
+	public.POST("/login", browser.Login)
+	private := router.Group("", web.Sessions(manager), auth.RequireWeb(users), web.CSRF())
+	private.GET("/app", browser.Dashboard)
+	private.GET("/settings/security", browser.Security)
+	private.POST("/settings/password", browser.ChangePassword)
+	private.POST("/settings/logout-all", browser.RevokeAll)
+
+	login := func() *http.Cookie {
+		t.Helper()
+		form := httptest.NewRecorder()
+		router.ServeHTTP(form, httptest.NewRequest(http.MethodGet, "/login", nil))
+		token := csrfToken(t, form.Body.String())
+		cookie := form.Result().Cookies()[0]
+		response := submitForm(router, http.MethodPost, "/login", url.Values{
+			"_token": {token}, "email": {"ada@example.com"}, "password": {"a secure passphrase"},
+		}, cookie)
+		if response.Code != http.StatusSeeOther {
+			t.Fatalf("login: %d: %s", response.Code, response.Body.String())
+		}
+		cookies := response.Result().Cookies()
+		return cookies[len(cookies)-1]
+	}
+	first, second := login(), login()
+
+	securityPage := httptest.NewRecorder()
+	securityRequest := httptest.NewRequest(http.MethodGet, "/settings/security", nil)
+	securityRequest.AddCookie(first)
+	router.ServeHTTP(securityPage, securityRequest)
+	if securityPage.Code != http.StatusOK || !strings.Contains(securityPage.Body.String(), "Change password") ||
+		!strings.Contains(securityPage.Body.String(), "Sign out everywhere") {
+		t.Fatalf("security page: %d: %s", securityPage.Code, securityPage.Body.String())
+	}
+	token := csrfToken(t, securityPage.Body.String())
+	first = securityPage.Result().Cookies()[0]
+
+	const wrongSecret = "wrong current secret"
+	const replacement = "a replacement passphrase"
+	wrong := submitForm(router, http.MethodPost, "/settings/password", url.Values{
+		"_token": {token}, "current_password": {wrongSecret}, "password": {replacement}, "password_confirmation": {replacement},
+	}, first)
+	if wrong.Code != http.StatusUnprocessableEntity || !strings.Contains(wrong.Body.String(), auth.ErrInvalidCurrentPassword.Error()) ||
+		strings.Contains(wrong.Body.String(), wrongSecret) || strings.Contains(wrong.Body.String(), replacement) {
+		t.Fatalf("wrong current password was not safely rendered: %d: %s", wrong.Code, wrong.Body.String())
+	}
+	token = csrfToken(t, wrong.Body.String())
+	first = wrong.Result().Cookies()[0]
+
+	changed := submitForm(router, http.MethodPost, "/settings/password", url.Values{
+		"_token": {token}, "current_password": {"a secure passphrase"}, "password": {replacement}, "password_confirmation": {replacement},
+	}, first)
+	if changed.Code != http.StatusSeeOther || changed.Header().Get("Location") != "/settings/security" {
+		t.Fatalf("password change: %d %q: %s", changed.Code, changed.Header().Get("Location"), changed.Body.String())
+	}
+	changedCookies := changed.Result().Cookies()
+	if len(changedCookies) != 1 || changedCookies[0].Value == first.Value || users.user.CredentialVersion != 2 {
+		t.Fatalf("password change did not preserve only a rotated caller: cookies=%+v version=%d", changedCookies, users.user.CredentialVersion)
+	}
+	first = changedCookies[0]
+
+	staleUnsafe := submitForm(router, http.MethodPost, "/settings/logout-all", nil, second)
+	if staleUnsafe.Code != http.StatusSeeOther || staleUnsafe.Header().Get("Location") != "/login" {
+		t.Fatalf("stale unsafe request reached CSRF before authentication: %d %q", staleUnsafe.Code, staleUnsafe.Header().Get("Location"))
+	}
+	if cookies := staleUnsafe.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("stale unsafe response could overwrite a rotated cookie: %+v", cookies)
+	}
+
+	stale := httptest.NewRecorder()
+	staleRequest := httptest.NewRequest(http.MethodGet, "/app", nil)
+	staleRequest.AddCookie(second)
+	router.ServeHTTP(stale, staleRequest)
+	if stale.Code != http.StatusSeeOther || stale.Header().Get("Location") != "/login" {
+		t.Fatalf("stale browser session remained valid: %d %q", stale.Code, stale.Header().Get("Location"))
+	}
+
+	current := httptest.NewRecorder()
+	currentRequest := httptest.NewRequest(http.MethodGet, "/settings/security", nil)
+	currentRequest.AddCookie(first)
+	router.ServeHTTP(current, currentRequest)
+	if current.Code != http.StatusOK || !strings.Contains(current.Body.String(), "other sessions were signed out") {
+		t.Fatalf("rotated browser session was not preserved: %d: %s", current.Code, current.Body.String())
+	}
+	token = csrfToken(t, current.Body.String())
+	first = current.Result().Cookies()[0]
+	revoked := submitForm(router, http.MethodPost, "/settings/logout-all", url.Values{"_token": {token}}, first)
+	if revoked.Code != http.StatusSeeOther || revoked.Header().Get("Location") != "/login" {
+		t.Fatalf("sign out everywhere: %d %q", revoked.Code, revoked.Header().Get("Location"))
+	}
+	if cookies := revoked.Result().Cookies(); len(cookies) != 1 || cookies[0].MaxAge != -1 {
+		t.Fatalf("sign out everywhere did not expire the caller cookie: %+v", cookies)
+	}
+}
+
+func TestBrowserPasswordChangeThrottleRendersSafeHTML(t *testing.T) {
+	hasher := password.Hasher{Iterations: 1}
+	encoded, err := hasher.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := &fakeUsers{user: auth.User{
+		ID: 25, Name: "Ada", Email: "ada@example.com", PasswordHash: encoded, CredentialVersion: 1,
+	}}
+	manager, err := session.NewManager(
+		session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", users.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", users.user.CredentialVersion); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := seed.Result().Cookies()[0]
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := auth.NewController(users, manager, hasher, strictAttemptLimiter(t))
+	browser := auth.NewWebController(controller, renderer)
+	router := httpx.NewRouter()
+	private := router.Group("", web.Sessions(manager), auth.RequireWeb(users), web.CSRF())
+	private.GET("/settings/security", browser.Security)
+	private.POST("/settings/password", browser.ChangePassword)
+
+	page := httptest.NewRecorder()
+	pageRequest := httptest.NewRequest(http.MethodGet, "/settings/security", nil)
+	pageRequest.AddCookie(cookie)
+	router.ServeHTTP(page, pageRequest)
+	if page.Code != http.StatusOK {
+		t.Fatalf("security page: %d: %s", page.Code, page.Body.String())
+	}
+	token := csrfToken(t, page.Body.String())
+	cookie = page.Result().Cookies()[0]
+	change := func(cookie *http.Cookie, token string) *httptest.ResponseRecorder {
+		return submitForm(router, http.MethodPost, "/settings/password", url.Values{
+			"_token": {token}, "current_password": {"incorrect password"},
+			"password": {"a replacement passphrase"}, "password_confirmation": {"a replacement passphrase"},
+		}, cookie)
+	}
+	first := change(cookie, token)
+	if first.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("first password failure: %d: %s", first.Code, first.Body.String())
+	}
+	token = csrfToken(t, first.Body.String())
+	cookie = first.Result().Cookies()[0]
+	second := change(cookie, token)
+	if second.Code != http.StatusTooManyRequests || second.Header().Get("Retry-After") == "" {
+		t.Fatalf("password throttle: %d retry=%q: %s", second.Code, second.Header().Get("Retry-After"), second.Body.String())
+	}
+	if contentType := second.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+		t.Fatalf("password throttle content type = %q", contentType)
+	}
+	for _, secret := range []string{"incorrect password", "a replacement passphrase", encoded} {
+		if strings.Contains(second.Body.String(), secret) {
+			t.Fatalf("password throttle disclosed %q: %s", secret, second.Body.String())
+		}
 	}
 }
 

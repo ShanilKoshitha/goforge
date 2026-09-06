@@ -22,6 +22,8 @@ type Config struct {
 	TrustedProxies    string
 	DatabaseURL       string
 	SessionSecret     string
+	SessionIdleLifetime     time.Duration
+	SessionAbsoluteLifetime time.Duration
 }
 
 func Load() (Config, error) {
@@ -43,6 +45,8 @@ func Load() (Config, error) {
 		TrustedProxies:    environment.String("TRUSTED_PROXIES", ""),
 		DatabaseURL:       environment.Required("DATABASE_URL"),
 		SessionSecret:     environment.Required("SESSION_SECRET"),
+		SessionIdleLifetime:     environment.Duration("SESSION_IDLE_LIFETIME", 2*time.Hour),
+		SessionAbsoluteLifetime: environment.Duration("SESSION_ABSOLUTE_LIFETIME", 24*time.Hour),
 	}
 	return settings, errors.Join(environment.Err(), settings.validate())
 }
@@ -72,6 +76,15 @@ func (settings Config) validate() error {
 	}
 	if settings.MaxHeaderBytes < 1024 || settings.MaxHeaderBytes > 16<<20 {
 		problems = append(problems, errors.New("APP_MAX_HEADER_BYTES must be between 1024 and 16777216"))
+	}
+	if settings.SessionIdleLifetime <= 0 {
+		problems = append(problems, errors.New("SESSION_IDLE_LIFETIME must be positive"))
+	}
+	if settings.SessionAbsoluteLifetime <= 0 {
+		problems = append(problems, errors.New("SESSION_ABSOLUTE_LIFETIME must be positive"))
+	}
+	if settings.SessionIdleLifetime > 0 && settings.SessionAbsoluteLifetime > 0 && settings.SessionAbsoluteLifetime < settings.SessionIdleLifetime {
+		problems = append(problems, errors.New("SESSION_ABSOLUTE_LIFETIME cannot be shorter than SESSION_IDLE_LIFETIME"))
 	}
 	return errors.Join(problems...)
 }

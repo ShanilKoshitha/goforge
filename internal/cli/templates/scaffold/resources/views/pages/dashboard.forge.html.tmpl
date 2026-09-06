@@ -5,6 +5,7 @@
       @with(.User)<p>Welcome, {{.Name}}</p>@endwith
       @if(.Notice)<p role="status">{{.Notice}}</p>@else<p>Your authenticated browser application is ready for resources.</p>@endif
       @slot("actions")
+        <a href="/settings/security">Account security</a>
         <form action="/logout" method="post">
           @csrf
           <button type="submit">Sign out</button>

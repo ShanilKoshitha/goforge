@@ -27,6 +27,9 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
+	if err := requireProjectFormatRange(1, 8); err != nil {
+		return err
+	}
 
 	var path, content string
 	var err error
@@ -59,7 +62,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 }
 
 func makeComponent(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
-	if err := requireProjectFormatRange(5, 7); err != nil {
+	if err := requireProjectFormatRange(5, 8); err != nil {
 		return err
 	}
 	componentName, err := snake(name)

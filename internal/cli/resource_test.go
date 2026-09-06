@@ -279,7 +279,7 @@ func TestMakeResourceInvalidORMLeavesPreviousApplicationIntact(t *testing.T) {
 }
 
 func TestMakeResourceRefusesOlderProjectFormatBeforeWriting(t *testing.T) {
-	for _, format := range []string{"4", "5", "6"} {
+	for _, format := range []string{"4", "5", "6", "7"} {
 		t.Run(format, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
@@ -287,7 +287,7 @@ func TestMakeResourceRefusesOlderProjectFormatBeforeWriting(t *testing.T) {
 				t.Fatal(err)
 			}
 			err := makeResource("Issue", &bytes.Buffer{})
-			if err == nil || !strings.Contains(err.Error(), "upgrade the project to format 7") {
+			if err == nil || !strings.Contains(err.Error(), "upgrade the project to format 8") {
 				t.Fatalf("expected explicit project upgrade error, got %v", err)
 			}
 			if _, err := os.Stat(filepath.Join("internal", "resources", "issue")); !errors.Is(err, os.ErrNotExist) {
@@ -300,7 +300,7 @@ func TestMakeResourceRefusesOlderProjectFormatBeforeWriting(t *testing.T) {
 func TestMakeResourceRefusesNewerProjectFormatBeforeWriting(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 8\n"), 0o644); err != nil {
+	if err := os.WriteFile("forge.yaml", []byte("version: 9\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := makeResource("Issue", &bytes.Buffer{})

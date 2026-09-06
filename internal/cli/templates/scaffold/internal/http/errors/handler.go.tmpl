@@ -48,5 +48,6 @@ func browserSurface(ctx *httpx.Context) bool {
 	}
 	// Global middleware may fail before route metadata is available.
 	path := ctx.Request.URL.Path
-	return path == "/register" || path == "/login" || path == "/logout" || path == "/app" || strings.HasPrefix(path, "/app/")
+	return path == "/register" || path == "/login" || path == "/logout" || path == "/app" ||
+		strings.HasPrefix(path, "/app/") || strings.HasPrefix(path, "/settings/")
 }

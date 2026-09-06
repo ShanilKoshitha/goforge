@@ -48,8 +48,8 @@ func TestFormat6ApplicationRemainsCompatible(t *testing.T) {
 	}
 	output.Reset()
 	err = Run([]string{"make:resource", "MustUpgrade"}, &output, &output)
-	if err == nil || !strings.Contains(err.Error(), "upgrade the project to format 7") {
-		t.Fatalf("v0.7-only resource generator did not require an explicit format upgrade: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "upgrade the project to format 8") {
+		t.Fatalf("format-8 resource generator did not require an explicit format upgrade: %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join("internal", "resources", "must_upgrade")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("refused resource generator changed the format-6 application: %v", statErr)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,46 @@ import (
 
 type fakeUsers struct{ user auth.User }
 
+type rehashConflictUsers struct {
+	*fakeUsers
+	winnerHash string
+}
+
+type concurrentChangeUsers struct {
+	*fakeUsers
+	mu      sync.Mutex
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (users *concurrentChangeUsers) ByID(_ context.Context, id int64) (auth.User, error) {
+	users.mu.Lock()
+	defer users.mu.Unlock()
+	if users.user.ID != id {
+		return auth.User{}, auth.ErrUserNotFound
+	}
+	return users.user, nil
+}
+
+func (users *concurrentChangeUsers) ChangePassword(_ context.Context, id, expectedVersion int64, expectedHash, replacementHash string) (auth.User, error) {
+	users.entered <- struct{}{}
+	<-users.release
+	users.mu.Lock()
+	defer users.mu.Unlock()
+	if users.user.ID != id || users.user.CredentialVersion != expectedVersion || users.user.PasswordHash != expectedHash {
+		return auth.User{}, auth.ErrCredentialsChanged
+	}
+	users.user.PasswordHash = replacementHash
+	users.user.CredentialVersion++
+	return users.user, nil
+}
+
+func (users *rehashConflictUsers) RehashPassword(_ context.Context, _ int64, _, _ string) (auth.User, error) {
+	users.user.PasswordHash = users.winnerHash
+	users.user.CredentialVersion++
+	return auth.User{}, auth.ErrCredentialsChanged
+}
+
 func testAttemptLimiter(t *testing.T) *ratelimit.Limiter {
 	t.Helper()
 	limiter, err := ratelimit.New(ratelimit.NewMemoryStore(100), ratelimit.Policy{Limit: 50, Window: time.Minute})
@@ -28,7 +69,32 @@ func testAttemptLimiter(t *testing.T) *ratelimit.Limiter {
 }
 
 func (users *fakeUsers) Create(_ context.Context, name, email, encoded string) (auth.User, error) {
-	users.user = auth.User{ID: 1, Name: name, Email: email, PasswordHash: encoded, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	users.user = auth.User{ID: 1, Name: name, Email: email, PasswordHash: encoded, CredentialVersion: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	return users.user, nil
+}
+
+func (users *fakeUsers) RehashPassword(_ context.Context, id int64, expectedHash, replacementHash string) (auth.User, error) {
+	if users.user.ID != id || users.user.PasswordHash != expectedHash {
+		return auth.User{}, auth.ErrCredentialsChanged
+	}
+	users.user.PasswordHash = replacementHash
+	return users.user, nil
+}
+
+func (users *fakeUsers) ChangePassword(_ context.Context, id, expectedVersion int64, expectedHash, replacementHash string) (auth.User, error) {
+	if users.user.ID != id || users.user.CredentialVersion != expectedVersion || users.user.PasswordHash != expectedHash {
+		return auth.User{}, auth.ErrCredentialsChanged
+	}
+	users.user.PasswordHash = replacementHash
+	users.user.CredentialVersion++
+	return users.user, nil
+}
+
+func (users *fakeUsers) RevokeSessions(_ context.Context, id int64) (auth.User, error) {
+	if users.user.ID != id {
+		return auth.User{}, auth.ErrCredentialsChanged
+	}
+	users.user.CredentialVersion++
 	return users.user, nil
 }
 
@@ -219,5 +285,300 @@ func TestAPILogoutRequiresJSONAndPreservesSessionOnFormSubmission(t *testing.T) 
 	router.ServeHTTP(response, me)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("JSON logout left session valid: expected 401, got %d", response.Code)
+	}
+}
+
+func TestPasswordChangeRotatesCurrentSessionAndRevokesOthers(t *testing.T) {
+	hasher := password.Hasher{Iterations: 1}
+	oldHash, err := hasher.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := &fakeUsers{user: auth.User{
+		ID: 7, Name: "Ada", Email: "ada@example.com", PasswordHash: oldHash, CredentialVersion: 1,
+	}}
+	manager, err := session.NewManagerWithPolicy(
+		session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true},
+		session.Policy{IdleLifetime: time.Hour, AbsoluteLifetime: 24 * time.Hour},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := auth.NewController(users, manager, hasher, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.POST("/auth/login", controller.Login)
+	authenticated := router.Group("", auth.Require(manager, users))
+	authenticated.GET("/auth/me", controller.Me)
+	authenticated.PUT("/auth/password", controller.ChangePassword)
+	authenticated.POST("/auth/logout-all", controller.RevokeAll)
+
+	login := func(secret string) (*httptest.ResponseRecorder, *http.Cookie) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(
+			`{"email":"ada@example.com","password":"`+secret+`"}`,
+		))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		cookies := response.Result().Cookies()
+		if response.Code != http.StatusOK || len(cookies) == 0 {
+			return response, nil
+		}
+		return response, cookies[len(cookies)-1]
+	}
+	_, firstCookie := login("a secure passphrase")
+	_, secondCookie := login("a secure passphrase")
+	if firstCookie == nil || secondCookie == nil {
+		t.Fatal("could not create two authenticated sessions")
+	}
+
+	wrong := httptest.NewRequest(http.MethodPut, "/auth/password", strings.NewReader(
+		`{"current_password":"wrong secret","password":"a replacement passphrase","password_confirmation":"a replacement passphrase"}`,
+	))
+	wrong.Header.Set("Content-Type", "application/json")
+	wrong.AddCookie(firstCookie)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, wrong)
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"code":"password.current"`) ||
+		strings.Contains(response.Body.String(), "wrong secret") || strings.Contains(response.Body.String(), "a replacement passphrase") {
+		t.Fatalf("wrong-current-password response was not safe: %d: %s", response.Code, response.Body.String())
+	}
+	if users.user.CredentialVersion != 1 || users.user.PasswordHash != oldHash {
+		t.Fatal("failed password change mutated credentials")
+	}
+
+	change := httptest.NewRequest(http.MethodPut, "/auth/password", strings.NewReader(
+		`{"current_password":"a secure passphrase","password":"a replacement passphrase","password_confirmation":"a replacement passphrase"}`,
+	))
+	change.Header.Set("Content-Type", "application/json")
+	change.AddCookie(firstCookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, change)
+	cookies := response.Result().Cookies()
+	if response.Code != http.StatusNoContent || len(cookies) != 1 {
+		t.Fatalf("password change: %d cookies=%d: %s", response.Code, len(cookies), response.Body.String())
+	}
+	rotatedCookie := cookies[0]
+	if rotatedCookie.Value == firstCookie.Value || users.user.CredentialVersion != 2 {
+		t.Fatal("password change did not rotate the caller and advance credentials")
+	}
+
+	assertMe := func(cookie *http.Cookie, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+		request.AddCookie(cookie)
+		result := httptest.NewRecorder()
+		router.ServeHTTP(result, request)
+		if result.Code != want {
+			t.Fatalf("me with cookie: got %d, want %d: %s", result.Code, want, result.Body.String())
+		}
+		return result
+	}
+	assertMe(rotatedCookie, http.StatusOK)
+	stale := assertMe(secondCookie, http.StatusUnauthorized)
+	if cookies := stale.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("stale response could overwrite a concurrent rotated cookie: %+v", cookies)
+	}
+	if oldLogin, _ := login("a secure passphrase"); oldLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("old password still authenticated: %d", oldLogin.Code)
+	}
+	if newLogin, _ := login("a replacement passphrase"); newLogin.Code != http.StatusOK {
+		t.Fatalf("new password did not authenticate: %d: %s", newLogin.Code, newLogin.Body.String())
+	}
+}
+
+func TestSignOutEverywhereInvalidatesEverySession(t *testing.T) {
+	hasher := password.Hasher{Iterations: 1}
+	encoded, err := hasher.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := &fakeUsers{user: auth.User{ID: 9, Email: "ada@example.com", PasswordHash: encoded, CredentialVersion: 1}}
+	manager, _ := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	controller := auth.NewController(users, manager, hasher, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.POST("/auth/login", controller.Login)
+	authenticated := router.Group("", auth.Require(manager, users))
+	authenticated.GET("/auth/me", controller.Me)
+	authenticated.POST("/auth/logout-all", controller.RevokeAll)
+
+	login := func() *http.Cookie {
+		request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"ada@example.com","password":"a secure passphrase"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response.Result().Cookies()[0]
+	}
+	first, second := login(), login()
+	revoke := httptest.NewRequest(http.MethodPost, "/auth/logout-all", strings.NewReader(`{}`))
+	revoke.Header.Set("Content-Type", "application/json")
+	revoke.AddCookie(first)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, revoke)
+	if response.Code != http.StatusNoContent || users.user.CredentialVersion != 2 {
+		t.Fatalf("sign out everywhere: %d version=%d: %s", response.Code, users.user.CredentialVersion, response.Body.String())
+	}
+	for _, cookie := range []*http.Cookie{first, second} {
+		request := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+		request.AddCookie(cookie)
+		result := httptest.NewRecorder()
+		router.ServeHTTP(result, request)
+		if result.Code != http.StatusUnauthorized {
+			t.Fatalf("revoked session remained valid: %d", result.Code)
+		}
+	}
+}
+
+func TestConcurrentPasswordChangesWithSameCookiePreserveOnlyWinner(t *testing.T) {
+	hasher := password.Hasher{Iterations: 1}
+	encoded, err := hasher.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &fakeUsers{user: auth.User{
+		ID: 19, Email: "ada@example.com", PasswordHash: encoded, CredentialVersion: 1,
+	}}
+	users := &concurrentChangeUsers{
+		fakeUsers: base, entered: make(chan struct{}, 2), release: make(chan struct{}),
+	}
+	manager, err := session.NewManager(
+		session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", int64(19)); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", int64(1)); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := seed.Result().Cookies()[0]
+
+	controller := auth.NewController(users, manager, hasher, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	authenticated := router.Group("", auth.Require(manager, users))
+	authenticated.PUT("/auth/password", controller.ChangePassword)
+	authenticated.GET("/auth/me", controller.Me)
+
+	type result struct{ response *httptest.ResponseRecorder }
+	results := make(chan result, 2)
+	change := func(replacement string) {
+		request := httptest.NewRequest(http.MethodPut, "/auth/password", strings.NewReader(
+			`{"current_password":"a secure passphrase","password":"`+replacement+`","password_confirmation":"`+replacement+`"}`,
+		))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		results <- result{response: response}
+	}
+	go change("first replacement passphrase")
+	go change("second replacement passphrase")
+	<-users.entered
+	<-users.entered
+	close(users.release)
+	first, second := (<-results).response, (<-results).response
+
+	var winner, loser *httptest.ResponseRecorder
+	for _, response := range []*httptest.ResponseRecorder{first, second} {
+		switch response.Code {
+		case http.StatusNoContent:
+			if winner != nil {
+				t.Fatal("both password changes won")
+			}
+			winner = response
+		case http.StatusConflict:
+			loser = response
+		default:
+			t.Fatalf("concurrent password change status = %d: %s", response.Code, response.Body.String())
+		}
+	}
+	if winner == nil || loser == nil {
+		t.Fatalf("winner=%v loser=%v", winner != nil, loser != nil)
+	}
+	if cookies := loser.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("loser emitted a cookie that could overwrite the winner: %+v", cookies)
+	}
+	winnerCookies := winner.Result().Cookies()
+	if len(winnerCookies) != 1 || winnerCookies[0].Value == cookie.Value {
+		t.Fatalf("winner did not receive one rotated cookie: %+v", winnerCookies)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	request.AddCookie(winnerCookies[0])
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("winner session was not preserved: %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestLoginTransparentlyRehashesWithoutRevokingSessions(t *testing.T) {
+	weak := password.Hasher{Iterations: 1}
+	current := password.Hasher{Iterations: 2}
+	encoded, err := weak.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := &fakeUsers{user: auth.User{ID: 11, Email: "ada@example.com", PasswordHash: encoded, CredentialVersion: 4}}
+	manager, _ := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	controller := auth.NewController(users, manager, current, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.POST("/auth/login", controller.Login)
+
+	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"ada@example.com","password":"a secure passphrase"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || current.NeedsRehash(users.user.PasswordHash) || users.user.CredentialVersion != 4 {
+		t.Fatalf("transparent rehash failed: status=%d version=%d", response.Code, users.user.CredentialVersion)
+	}
+	rehashed := users.user.PasswordHash
+
+	request = httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"ada@example.com","password":"incorrect password"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || users.user.PasswordHash != rehashed {
+		t.Fatal("failed login changed the stored hash")
+	}
+}
+
+func TestConcurrentPasswordChangeCannotBeOverwrittenByRehash(t *testing.T) {
+	weak := password.Hasher{Iterations: 1}
+	current := password.Hasher{Iterations: 2}
+	oldHash, err := weak.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	winnerHash, err := current.Hash("a concurrent replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &fakeUsers{user: auth.User{
+		ID: 17, Email: "ada@example.com", PasswordHash: oldHash, CredentialVersion: 1,
+	}}
+	users := &rehashConflictUsers{fakeUsers: base, winnerHash: winnerHash}
+	manager, _ := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	controller := auth.NewController(users, manager, current, testAttemptLimiter(t))
+	router := httpx.NewRouter()
+	router.POST("/auth/login", controller.Login)
+	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"ada@example.com","password":"a secure passphrase"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("stale login authenticated after concurrent password change: %d: %s", response.Code, response.Body.String())
+	}
+	if users.user.PasswordHash != winnerHash || users.user.CredentialVersion != 2 {
+		t.Fatal("stale rehash overwrote the concurrent password change")
 	}
 }

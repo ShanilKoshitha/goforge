@@ -24,6 +24,10 @@ HTTP limits and timeouts are listed in `.env.example`. Enable
 the trusted proxy-to-client path. `TRUSTED_PROXIES` accepts explicit,
 comma-separated CIDR ranges; when it is empty, forwarding headers are ignored
 and authentication throttles use the direct network peer.
+`SESSION_IDLE_LIFETIME` controls inactivity expiry and
+`SESSION_ABSOLUTE_LIFETIME` is a non-sliding hard deadline; the absolute value
+must be at least the idle value. Keep application hosts and PostgreSQL on
+synchronized clocks because both enforce session deadlines.
 
 Create a persistence model without an HTTP resource using either
 `forge make:model Invoice` or `forge make model Invoice`. This writes ordinary
@@ -53,7 +57,11 @@ starting the application.
 Send `Content-Type: application/json` with JSON request bodies. Other media
 types receive 415 so browser forms cannot submit JSON authentication requests.
 Register a user with `POST /auth/register`, then use the returned session cookie
-with the authenticated resource endpoints. Run `go test ./...` and build a
+with the authenticated resource endpoints. `PUT /auth/password` changes the
+password while rotating the caller and revoking older sessions;
+`POST /auth/logout-all` signs out every session. The browser equivalents live
+at `/settings/security` and are CSRF protected. Successful login upgrades an
+outdated password hash without revoking sessions. Run `go test ./...` and build a
 production binary with `go build -trimpath -o bin/app ./cmd/server`.
 
 Inspect command implementations in `cmd/server`, `cmd/worker`, `cmd/console`, and `cmd/views`,

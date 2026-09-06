@@ -27,8 +27,8 @@ func prepareProjectViews(ctx context.Context, stdin io.Reader, stdout, stderr io
 	if err != nil {
 		return err
 	}
-	if format > 7 {
-		return fmt.Errorf("project format version %d is newer than this CLI supports (format 7); upgrade the GoForge CLI", format)
+	if format > 8 {
+		return fmt.Errorf("project format version %d is newer than this CLI supports (format 8); upgrade the GoForge CLI", format)
 	}
 	if format >= 5 {
 		return processes.Run(ctx, stdin, stdout, stderr, "go", "run", "./cmd/views")
@@ -44,8 +44,8 @@ func runProjectViewCompiler(ctx context.Context, stdin io.Reader, stdout, stderr
 	if err != nil {
 		return err
 	}
-	if format > 7 {
-		return fmt.Errorf("project format version %d is newer than this CLI supports (format 7); upgrade the GoForge CLI", format)
+	if format > 8 {
+		return fmt.Errorf("project format version %d is newer than this CLI supports (format 8); upgrade the GoForge CLI", format)
 	}
 	if format >= 5 {
 		arguments := []string{"run", "./cmd/views"}

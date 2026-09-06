@@ -14,7 +14,7 @@ func TestVersionMatchesPatchRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.7.1\n" {
+	if output.String() != "forge 0.8.0\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -47,6 +47,7 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"resources/views/functions.go",
 		"resources/views/viewfuncs/functions.go",
 		"resources/views/pages/welcome.forge.html",
+		"resources/views/auth/security.forge.html",
 		"resources/views/views_gen.go",
 	} {
 		if _, err := os.Stat(filepath.Join(directory, filepath.FromSlash(name))); err != nil {
@@ -67,6 +68,9 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
+	if !strings.Contains(string(manifest), "version: 8") {
+		t.Fatalf("fresh scaffold is not format 8:\n%s", manifest)
+	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +82,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generatedORM), "var UserMapper") || !strings.Contains(string(generatedORM), "func (store Store) Users() UserQuery") {
+	if !strings.Contains(string(generatedORM), "var UserMapper") || !strings.Contains(string(generatedORM), "func (store Store) Users() UserQuery") ||
+		!strings.Contains(string(generatedORM), "CredentialVersion") {
 		t.Fatalf("scaffold ORM is not current inspectable generated Go:\n%s", generatedORM)
 	}
 	moduleFile, err := os.ReadFile(filepath.Join(directory, "go.mod"))
@@ -168,6 +173,30 @@ func TestGeneratorsRefuseToOverwrite(t *testing.T) {
 	}
 	if err := Run([]string{"make:controller", "Users"}, &output, &output); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
 		t.Fatalf("expected overwrite refusal, got %v", err)
+	}
+}
+
+func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
+	for _, command := range []string{"controller", "request", "migration"} {
+		t.Run(command, func(t *testing.T) {
+			directory := t.TempDir()
+			t.Chdir(directory)
+			if err := os.WriteFile("forge.yaml", []byte("version: 9\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			err := Run([]string{"make:" + command, "Future"}, &output, &output)
+			if err == nil || !strings.Contains(err.Error(), "newer than this CLI supports") {
+				t.Fatalf("expected future-format refusal, got %v", err)
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || entries[0].Name() != "forge.yaml" {
+				t.Fatalf("future-format refusal wrote files: %+v", entries)
+			}
+		})
 	}
 }
 

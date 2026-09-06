@@ -15,7 +15,8 @@ func TestHTTPConfigurationHasBoundedDefaultsAndRejectsInvalidLimits(t *testing.T
 	}
 	if settings.RequestTimeout != 15*time.Second || settings.ReadTimeout != 30*time.Second ||
 		settings.WriteTimeout != 30*time.Second || settings.IdleTimeout != 2*time.Minute ||
-		settings.MaxHeaderBytes != 1<<20 {
+		settings.MaxHeaderBytes != 1<<20 || settings.SessionIdleLifetime != 2*time.Hour ||
+		settings.SessionAbsoluteLifetime != 24*time.Hour {
 		t.Fatalf("unexpected HTTP defaults: %+v", settings)
 	}
 
@@ -24,6 +25,16 @@ func TestHTTPConfigurationHasBoundedDefaultsAndRejectsInvalidLimits(t *testing.T
 	t.Setenv("APP_MAX_HEADER_BYTES", "1")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "APP_REQUEST_TIMEOUT") || !strings.Contains(err.Error(), "APP_MAX_HEADER_BYTES") {
 		t.Fatalf("invalid HTTP limits were not accumulated: %v", err)
+	}
+}
+
+func TestSessionConfigurationRejectsInvalidLifetimePolicy(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/application")
+	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
+	t.Setenv("SESSION_IDLE_LIFETIME", "4h")
+	t.Setenv("SESSION_ABSOLUTE_LIFETIME", "2h")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SESSION_ABSOLUTE_LIFETIME") {
+		t.Fatalf("invalid session lifetime policy was accepted: %v", err)
 	}
 }
 

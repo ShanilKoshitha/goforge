@@ -13,14 +13,22 @@ import (
 )
 
 var (
-	ErrEmailTaken   = errors.New("email already registered")
-	ErrUserNotFound = errors.New("user not found")
+	ErrEmailTaken         = errors.New("email already registered")
+	ErrUserNotFound       = errors.New("user not found")
+	ErrCredentialsChanged = errors.New("credentials changed concurrently")
 )
 
+type UserReader interface {
+	ByID(ctx context.Context, id int64) (User, error)
+}
+
 type UserRepository interface {
+	UserReader
 	Create(ctx context.Context, name, email, passwordHash string) (User, error)
 	ByEmail(ctx context.Context, email string) (User, error)
-	ByID(ctx context.Context, id int64) (User, error)
+	RehashPassword(ctx context.Context, id int64, expectedHash, replacementHash string) (User, error)
+	ChangePassword(ctx context.Context, id, expectedVersion int64, expectedHash, replacementHash string) (User, error)
+	RevokeSessions(ctx context.Context, id int64) (User, error)
 }
 
 // PostgresUserRepository keeps the executor visible so callers may bind the
@@ -55,6 +63,54 @@ func (repository *PostgresUserRepository) ByID(ctx context.Context, id int64) (U
 	return userResult(user, err)
 }
 
+// RehashPassword upgrades storage parameters without revoking sessions because
+// the user's password has not changed. The observed hash predicate prevents a
+// stale login from overwriting a concurrent password change.
+func (repository *PostgresUserRepository) RehashPassword(ctx context.Context, id int64, expectedHash, replacementHash string) (User, error) {
+	user, err := repository.query().Update(models.UserChanges{},
+		models.UserColumns.PasswordHash.Set(replacementHash),
+		orm.SetCurrentTime(models.UserColumns.UpdatedAt),
+	).Where(
+		models.UserColumns.ID.Eq(id),
+		models.UserColumns.PasswordHash.Eq(expectedHash),
+	).One(ctx, repository.Executor)
+	return credentialResult(user, err)
+}
+
+// ChangePassword advances the credential generation in the same statement as
+// the hash replacement. Both observed values participate in the predicate so
+// two requests authenticated against the same credentials cannot both win.
+func (repository *PostgresUserRepository) ChangePassword(ctx context.Context, id, expectedVersion int64, expectedHash, replacementHash string) (User, error) {
+	user, err := repository.query().Update(models.UserChanges{},
+		models.UserColumns.PasswordHash.Set(replacementHash),
+		orm.Increment(models.UserColumns.CredentialVersion, int64(1)),
+		orm.SetCurrentTime(models.UserColumns.UpdatedAt),
+	).Where(
+		models.UserColumns.ID.Eq(id),
+		models.UserColumns.CredentialVersion.Eq(expectedVersion),
+		models.UserColumns.PasswordHash.Eq(expectedHash),
+	).One(ctx, repository.Executor)
+	return credentialResult(user, err)
+}
+
+// RevokeSessions unconditionally advances the generation for the authenticated
+// account. Keeping the increment in one statement makes it linearizable with a
+// concurrent password change: either that change loses its CAS, or this later
+// increment invalidates the change winner too.
+func (repository *PostgresUserRepository) RevokeSessions(ctx context.Context, id int64) (User, error) {
+	user, err := repository.query().Update(models.UserChanges{},
+		orm.Increment(models.UserColumns.CredentialVersion, int64(1)),
+		orm.SetCurrentTime(models.UserColumns.UpdatedAt),
+	).Where(
+		models.UserColumns.ID.Eq(id),
+	).One(ctx, repository.Executor)
+	return credentialResult(user, err)
+}
+
+func (repository *PostgresUserRepository) query() models.UserQuery {
+	return models.NewStore(repository.Executor).Users()
+}
+
 func userResult(user models.User, err error) (User, error) {
 	err = postgres.Classify(err)
 	if errors.Is(err, orm.ErrNotFound) {
@@ -62,6 +118,17 @@ func userResult(user models.User, err error) (User, error) {
 	}
 	if err != nil {
 		return User{}, fmt.Errorf("query user: %w", err)
+	}
+	return user, nil
+}
+
+func credentialResult(user models.User, err error) (User, error) {
+	err = postgres.Classify(err)
+	if errors.Is(err, orm.ErrNotFound) {
+		return User{}, ErrCredentialsChanged
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("update credentials: %w", err)
 	}
 	return user, nil
 }

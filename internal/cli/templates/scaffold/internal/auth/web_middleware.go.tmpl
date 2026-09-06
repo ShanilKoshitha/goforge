@@ -7,28 +7,38 @@ import (
 	"github.com/ShanilKoshitha/goforge/web"
 )
 
-func RequireWeb(users UserRepository) httpx.Middleware {
+func RequireWeb(users UserReader) httpx.Middleware {
 	return func(next httpx.Handler) httpx.Handler {
 		return func(ctx *httpx.Context) error {
 			current, ok := web.Session(ctx)
 			if !ok {
 				return errors.New("browser session is unavailable")
 			}
-			var userID int64
-			present, err := current.Get("user_id", &userID)
+			userID, credentialVersion, present, err := authenticatedIdentity(current)
 			if err != nil {
 				return err
 			}
 			if !present {
+				if err := web.Invalidate(ctx); err != nil {
+					return err
+				}
 				return web.Redirect(ctx, "/login")
 			}
 			user, err := users.ByID(ctx.Request.Context(), userID)
 			if errors.Is(err, ErrUserNotFound) {
-				current.Forget("user_id")
+				if err := web.Invalidate(ctx); err != nil {
+					return err
+				}
 				return web.Redirect(ctx, "/login")
 			}
 			if err != nil {
 				return err
+			}
+			if user.CredentialVersion != credentialVersion {
+				if err := web.Invalidate(ctx); err != nil {
+					return err
+				}
+				return web.Redirect(ctx, "/login")
 			}
 			ctx.Set(userContextKey, user)
 			return next(ctx)

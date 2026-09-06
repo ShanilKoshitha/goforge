@@ -15,7 +15,7 @@ import (
 
 func registerResources(router *httpx.Router, renderer *view.Engine, db *sql.DB, manager *session.Manager, requireAuth, requireWebAuth httpx.Middleware) {
 	browserRoute := func(handler httpx.Handler) httpx.Handler {
-		return web.Sessions(manager)(web.CSRF()(requireWebAuth(handler)))
+		return web.Sessions(manager)(requireWebAuth(web.CSRF()(handler)))
 	}
 [[range .Resources]]	[[.Package]]Repository := [[.Package]]resource.NewPostgresRepository(db)
 	[[.Package]]Controller := [[.Package]]resource.NewController([[.Package]]Repository)
