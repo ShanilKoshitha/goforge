@@ -1,7 +1,6 @@
 # v0.10 last-good development server scorecard
 
-Status: **in progress** — local gates pass; public PostgreSQL and compatibility
-gates are pending — 2026-09-06
+Status: **accepted** — 2026-09-06
 
 Target:
 
@@ -27,8 +26,8 @@ Target:
 | Process replacement and exit semantics are bounded | passing locally | Managed process trees, joined cleanup failures, candidate exits during proxy startup/promotion, exact PID/address listener ownership, cancellation, proxy limits, and port cleanup have native Windows race coverage |
 | Template compatibility is retained | passing locally | The frozen format-4 watched journey passes twice; format-specific compiler tests retain application-owned format 5–8 function maps and format/ORM gates are revalidated for every candidate |
 | Production remains conventional | passing locally | Candidate binaries use an OS temporary directory; inspection and scaffold tests show no watcher, compiler, reload endpoint, or injected browser script in application/runtime source |
-| Fresh application journey passes twice | pending | A generated PostgreSQL application must prove valid view and Go edits, invalid-edit preservation and recovery, atomic-save/new-directory detection, readiness, response changes, cancellation cleanup, and port reuse in two consecutive runs |
-| Independent compatibility and platform review passes | pending | Framework race/vet/build, frozen and public released-project checks, Linux PostgreSQL acceptance, and native Windows watcher/process tests must pass twice with no P0–P2 review blocker |
+| Fresh application journey passes twice | passing | Public push and pull-request runs each generated PostgreSQL applications twice and proved valid view/Go edits, invalid-edit preservation and recovery, atomic-save/new-directory detection, readiness, response changes, cancellation cleanup, and port reuse |
+| Independent compatibility and platform review passes | passing | Framework race/vet/build, frozen and public released-project checks, Linux PostgreSQL acceptance, and native Windows watcher/process tests passed in both public runs; independent review found no P0–P2 blocker |
 
 ## Local evidence — 2026-09-06
 
@@ -43,8 +42,14 @@ Target:
 - The frozen format-4 build/serve/check/last-good journey passes twice with a
   real watched server and complete cancellation cleanup.
 - A CGO-free Linux CLI test binary compiles successfully. The fresh PostgreSQL
-  development journey is present but remains pending on public CI because this
-  workstation has no `GOFORGE_TEST_DATABASE_URL`.
+  development journey remains unavailable on this workstation because it has
+  no `GOFORGE_TEST_DATABASE_URL`; the public evidence below closes that gate.
+- [Push CI run 34065415454](https://github.com/ShanilKoshitha/goforge/actions/runs/34065415454)
+  passed Linux/PostgreSQL in 6m36s and native Windows in 3m18s.
+- [Pull-request CI run 34065753884](https://github.com/ShanilKoshitha/goforge/actions/runs/34065753884)
+  independently passed Linux/PostgreSQL in 6m27s and native Windows in 2m57s.
+- Independent product and architecture reviews approved the final transaction,
+  process, compatibility, and acceptance boundaries with no P0–P2 finding.
 
 ## Baseline — 2026-09-06
 
