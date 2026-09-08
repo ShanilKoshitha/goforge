@@ -1,3 +1,119 @@
+# v0.11 typed scalar resource generation scorecard
+
+Status: **in progress** — 2026-09-08
+
+Target:
+
+> From a fresh format-8 application, describe an authenticated resource with
+> repeated one-shot `--field` arguments and generate one complete,
+> production-shaped JSON and browser CRUD slice. String, text, integer, and
+> boolean fields must have consistent required or nullable behavior across
+> ordinary Go models, PostgreSQL migrations, typed requests, validation,
+> repositories, compiled views, and generated tests. New output requires an
+> optimistic version for updates and keeps every query owner-scoped. Invalid,
+> cancelled, failed, or concurrent generation must not corrupt an existing
+> project. The field description is generation input only: no persisted schema,
+> runtime interpretation, reflection, or project-format change is introduced.
+
+The intended command shape is:
+
+```text
+forge make:resource Issue \
+  --field title:string \
+  --field notes:text:nullable \
+  --field priority:integer:required \
+  --field active:boolean
+```
+
+Each `--field` is `<name>:<type>[:required|nullable]`. Required is the default;
+spelling it explicitly is supported. Repeating a modifier, combining
+`required` with `nullable`, or using any undeclared type or modifier is an
+error. Calling `forge make:resource Issue` without `--field` retains the
+existing single required `name` field workflow.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| CLI parsing is exact and useful | passing locally | Parser and CLI tests cover both command spellings, both flag forms, declaration order, bounds, malformed values, unsafe/duplicate/reserved names, types, modifiers, and no-write failure |
+| One field contract drives every layer | passing locally | Deterministic generation tests inspect the same ordered four-type contract through models, SQL, ORM input, requests, validation, repositories, controllers, views, and generated tests |
+| Generated persistence is typed and inspectable | passing locally | Generated application tests compile concrete Go/PostgreSQL types and prove nullable pointers plus an application-writable-only `Attributes` boundary |
+| JSON and form semantics are deliberate | passing locally | Generated controller suites cover missing/null/empty/zero/false, malformed and repeated input, exact JSON member names and duplicates, 400/422 classification, nullable clearing, and contextual escaping |
+| New updates are concurrency-safe by default | passing locally | Generated JSON and browser tests require positive versions, prove one winner and one 409, retain the winning record, and refresh stale browser forms with safe submitted values |
+| Authentication and ownership remain structural | covered; PostgreSQL CI pending | Generated repositories and controller tests retain authenticated owner derivation and predicates; the expanded real-PostgreSQL workflow exercises cross-owner JSON and browser isolation |
+| Generation is one failure-safe transaction | passing locally | Failure-injection tests cover collisions, invalid state, rendering/compiler failures, every cancellation/publication boundary, exclusive/managed writes, mode restoration, editor races, and stale ORM rejection |
+| Concurrent generators converge without orphaned state | passing locally | Twelve independent CLI processes and same-name contenders converge on complete source, routes, metadata, views, ORM, and migrations; compare-and-swap rollback preserves newer editor bytes |
+| Production contains no field-schema machinery | passing locally | State inspection finds no persisted field descriptions; fresh generated tests/builds use static application-owned Go, SQL, and Forge templates with direct repository, ORM, `database/sql`, router, and template seams |
+| Format-8 and public compatibility are retained | passing locally | Implicit no-field output retains TEXT, 2–200 validation, legacy rendering, and versionless updates; a no-`replace` public-v0.10.0 smoke generated legacy and typed resources, verified modules, tested, and built; CI now repeats it |
+| A fresh PostgreSQL application works end to end | covered; PostgreSQL CI pending | The generated workflow now creates an all-branch typed resource and exercises ORM/views, migration, JSON/browser CRUD, validation, CSRF, ownership, stale writes, zero/false versus NULL, build, test, serve, and direct-Go paths |
+| The milestone passes twice without regression | pending public CI | Local full and race suites, vet, build, no-`replace` smoke, and independent reviews pass after fixes; two isolated public PostgreSQL/platform runs remain required |
+
+## Local evidence — 2026-09-08
+
+- `go test ./...`, `go test -race ./...`, `go vet ./...`, and a Windows CLI
+  build pass; the built CLI reports `forge 0.11.0`.
+- Focused generation tests compile and test implicit legacy, explicit
+  `name:string`, mixed scalar, text-only nullable, and nullable integer/boolean
+  applications. Twelve independent CLI generator processes converge without
+  orphaned registry, metadata, ORM, view, migration, or source state.
+- Transaction tests inject editor changes, cancellation at every managed
+  boundary, stale model/ORM input, compiler failures, and exclusive/managed
+  publication failures. Rollback restores exact prior bytes and modes while
+  refusing to overwrite newer editor bytes.
+- A clean temporary application with no `replace` retained public runtime
+  v0.10.0, generated both implicit legacy and mixed typed resources, passed
+  `go mod verify` and `go test ./...`, and built the conventional application
+  binary. The CI distribution gate now repeats this exact compatibility path.
+- The real PostgreSQL workflow is expanded to distinguish nullable zero/false
+  pointers from SQL `NULL` and to exercise the complete typed JSON/browser
+  slice. This workstation has no `GOFORGE_TEST_DATABASE_URL`, so the required
+  two isolated executions remain assigned to public Linux CI.
+- Independent architecture, security, and release reviews identified the
+  public-runtime binding gap and release identity as blockers. Strict JSON
+  decoding was moved into application-owned generated source, legacy behavior
+  was restored, the public compatibility gate was expanded, and the release
+  identity was advanced to v0.11.0. Final re-review is pending.
+
+## Baseline — 2026-09-08
+
+- Format 8 already generates a complete authenticated JSON and browser resource,
+  but every layer is fixed to one required `Name string` / `name TEXT` field.
+- Resource generation already holds the project-wide interprocess generator
+  lock, preflights all destination paths, renders candidate ORM and view
+  artifacts, and attempts rollback after a failed managed publication. These
+  are reusable primitives, not evidence that arbitrary fields are safe.
+- The ORM model parser already understands concrete scalar and nullable Go
+  types, protected fields, indexes, defaults, and relationships. This milestone
+  uses only the four bounded resource types above and does not expose the full
+  model-tag surface as a generator language.
+- Existing JSON and browser resource tests prove authentication, owner-scoped
+  CRUD, CSRF, escaping, pagination, validation, and optional optimistic
+  concurrency for the fixed field. Field-aware output must preserve those
+  behaviors while making the optimistic version mandatory for newly described
+  resources.
+- Public CI already runs race, vet, build, released-project compatibility,
+  native Windows CLI checks, and fresh PostgreSQL applications. The milestone
+  must extend the real generated-application journey rather than relying only
+  on template substring or compilation tests.
+
+## Explicit non-goals for v0.11
+
+- Persisting field definitions in `.forge`, loading a project schema at runtime,
+  reflecting over request or model structs, or adding a project format.
+- Updating, merging, or regenerating the fields of an existing resource. The
+  command remains a one-shot generator that refuses to overwrite human-owned
+  files.
+- Relationships, foreign-key selection, enums, dates/times, decimal or money
+  policy, JSON, binary data, uploads, rich text, array fields, or polymorphism.
+- Field defaults, unique or custom indexes, arbitrary database types or SQL
+  expressions, database-backed validation, custom validation-rule syntax, or
+  schema inference from a live database.
+- PATCH semantics, bulk CRUD, search/filter generation, sorting policy, soft
+  deletion, API versioning, authorization roles, or automatic migration at
+  application startup.
+- Interactive prompts, schema files, configuration-driven generation, admin UI
+  builders, frontend JavaScript generation, or client-side validation output.
+
 # v0.10 last-good development server scorecard
 
 Status: **accepted** — 2026-09-06
