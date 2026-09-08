@@ -2,9 +2,11 @@ package [[.Package]]_test
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -73,31 +75,112 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	if newPage.Code != http.StatusOK {
 		t.Fatalf("new page: %d: %s", newPage.Code, newPage.Body.String())
 	}
-	token := browserCSRFToken(t, newPage.Body.String())
+[[range .Fields]]	if !strings.Contains(newPage.Body.String(), `name="[[.Name]]"`) {
+		t.Fatalf("new page has no [[.Name]] control: %s", newPage.Body.String())
+	}
+[[end]]	token := browserCSRFToken(t, newPage.Body.String())
 	cookie = responseCookie(newPage, cookie)
 
-	missing := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", url.Values{"name": {"Example"}}, cookie)
+	missing := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", sampleResourceFormValues(), cookie)
 	if missing.Code != http.StatusForbidden {
 		t.Fatalf("missing CSRF: %d: %s", missing.Code, missing.Body.String())
 	}
-	controlText := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", url.Values{
-		"_token": {token}, "name": {"ab\x00"},
-	}, cookie)
-	if controlText.Code != http.StatusUnprocessableEntity || !strings.Contains(controlText.Body.String(), "must not contain control characters") || strings.Contains(controlText.Body.String(), "\x00") || repository.item.ID != 0 {
+[[if .HasTextualFields]]	controlValues := sampleResourceFormValues()
+	controlValues.Set("_token", token)
+	controlValues.Set("[[.FirstTextualField.Name]]", "ab\x00")
+	controlText := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", controlValues, cookie)
+	if controlText.Code != http.StatusUnprocessableEntity || !strings.Contains(controlText.Body.String(), "must not contain [[if .FirstTextualField.Text]]unsupported [[end]]control characters") || strings.Contains(controlText.Body.String(), "\x00") || repository.item.ID != 0 {
 		t.Fatalf("control-text form reached persistence: %d item=%+v: %s", controlText.Code, repository.item, controlText.Body.String())
 	}
+[[end]]	for _, field := range []string{
+[[range .Fields]]		"[[.Name]]",
+[[end]]	} {
+		repeatedValues := sampleResourceFormValues()
+		repeatedValues.Set("_token", token)
+		repeatedValues.Add(field, repeatedValues.Get(field))
+		repeated := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", repeatedValues, cookie)
+		if repeated.Code != http.StatusBadRequest || repository.item.ID != 0 || !reflect.DeepEqual(repository.createdAttributes, resource.Attributes{}) {
+			t.Fatalf("repeated %s form value reached persistence: %d item=%+v attributes=%+v: %s", field, repeated.Code, repository.item, repository.createdAttributes, repeated.Body.String())
+		}
+	}
 
-	created := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", url.Values{
-		"_token": {token}, "name": {"<script>alert(1)</script>"},
-	}, cookie)
+	for _, field := range []string{
+[[range .Fields]][[if .Required]]		"[[.Name]]",
+[[end]][[end]]	} {
+		missingValues := sampleResourceFormValues()
+		missingValues.Set("_token", token)
+		missingValues.Del(field)
+		missingRequired := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", missingValues, cookie)
+		if missingRequired.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 || !reflect.DeepEqual(repository.createdAttributes, resource.Attributes{}) {
+			t.Fatalf("missing required %s reached persistence: %d item=%+v attributes=%+v: %s", field, missingRequired.Code, repository.item, repository.createdAttributes, missingRequired.Body.String())
+		}
+
+		emptyValues := sampleResourceFormValues()
+		emptyValues.Set("_token", token)
+		emptyValues.Set(field, "")
+		emptyRequired := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", emptyValues, cookie)
+		if emptyRequired.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 || !reflect.DeepEqual(repository.createdAttributes, resource.Attributes{}) {
+			t.Fatalf("empty required %s reached persistence: %d item=%+v attributes=%+v: %s", field, emptyRequired.Code, repository.item, repository.createdAttributes, emptyRequired.Body.String())
+		}
+	}
+
+[[range .Fields]][[if .Nullable]]	for _, state := range []struct {
+		name   string
+		mutate func(url.Values)
+	}{
+		{name: "missing", mutate: func(values url.Values) { values.Del("[[.Name]]") }},
+		{name: "empty", mutate: func(values url.Values) { values.Set("[[.Name]]", "") }},
+	} {
+		nullableValues := sampleResourceFormValues()
+		nullableValues.Set("_token", token)
+		state.mutate(nullableValues)
+		nullable := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", nullableValues, cookie)
+		if nullable.Code != http.StatusSeeOther || repository.createdAttributes.[[.GoName]] != nil {
+			t.Fatalf("nullable [[.Name]] %s was not accepted as nil: %d attributes=%+v: %s", state.name, nullable.Code, repository.createdAttributes, nullable.Body.String())
+		}
+		cookie = responseCookie(nullable, cookie)
+		repository.item = resource.[[$.Name]]{}
+		repository.createdAttributes = resource.Attributes{}
+	}
+
+[[if .Integer]]	zeroValues := sampleResourceFormValues()
+	zeroValues.Set("_token", token)
+	zeroValues.Set("[[.Name]]", "0")
+	zero := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", zeroValues, cookie)
+	if zero.Code != http.StatusSeeOther || repository.createdAttributes.[[.GoName]] == nil || *repository.createdAttributes.[[.GoName]] != 0 {
+		t.Fatalf("nullable integer [[.Name]]=0 was not preserved as a present zero: %d attributes=%+v: %s", zero.Code, repository.createdAttributes, zero.Body.String())
+	}
+	cookie = responseCookie(zero, cookie)
+	repository.item = resource.[[$.Name]]{}
+	repository.createdAttributes = resource.Attributes{}
+
+[[else if .Boolean]]	falseValues := sampleResourceFormValues()
+	falseValues.Set("_token", token)
+	falseValues.Set("[[.Name]]", "false")
+	falseResponse := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", falseValues, cookie)
+	if falseResponse.Code != http.StatusSeeOther || repository.createdAttributes.[[.GoName]] == nil || *repository.createdAttributes.[[.GoName]] {
+		t.Fatalf("nullable boolean [[.Name]]=false was not preserved as a present false: %d attributes=%+v: %s", falseResponse.Code, repository.createdAttributes, falseResponse.Body.String())
+	}
+	cookie = responseCookie(falseResponse, cookie)
+	repository.item = resource.[[$.Name]]{}
+	repository.createdAttributes = resource.Attributes{}
+
+[[end]][[end]][[end]]
+	createValues := sampleResourceFormValues()
+	createValues.Set("_token", token)
+	created := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", createValues, cookie)
 	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != "/app/[[.Plural]]/1" || repository.item.UserID != 9 {
 		t.Fatalf("create: %d %q owner=%d: %s", created.Code, created.Header().Get("Location"), repository.item.UserID, created.Body.String())
 	}
+	if !reflect.DeepEqual(repository.createdAttributes, sampleWebAttributes()) {
+		t.Fatalf("create attributes = %+v, want %+v", repository.createdAttributes, sampleWebAttributes())
+	}
 	cookie = responseCookie(created, cookie)
 	index := browserRequest(router, http.MethodGet, "/app/[[.Plural]]", nil, cookie)
-	if index.Code != http.StatusOK || strings.Contains(index.Body.String(), "<script>") || !strings.Contains(index.Body.String(), "&lt;script&gt;") {
-		t.Fatalf("index did not list escaped model data: %d: %s", index.Code, index.Body.String())
+	if index.Code != http.StatusOK {
+		t.Fatalf("index: %d: %s", index.Code, index.Body.String())
 	}
+	assertResourcePresentation(t, index.Body.String(), sampleResourceFormValues())
 	if repository.paginationUserID != 9 || repository.pageNumber != 1 || repository.pageSize != 20 {
 		t.Fatalf("default pagination: owner=%d page=%d per_page=%d", repository.paginationUserID, repository.pageNumber, repository.pageSize)
 	}
@@ -129,38 +212,87 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	}
 
 	show := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1", nil, cookie)
-	if show.Code != http.StatusOK || strings.Contains(show.Body.String(), "<script>") || !strings.Contains(show.Body.String(), "&lt;script&gt;") {
-		t.Fatalf("show did not contextually escape model data: %d: %s", show.Code, show.Body.String())
+	if show.Code != http.StatusOK {
+		t.Fatalf("show: %d: %s", show.Code, show.Body.String())
 	}
+	assertResourcePresentation(t, show.Body.String(), sampleResourceFormValues())
 	cookie = responseCookie(show, cookie)
 	edit := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1/edit", nil, cookie)
-	if edit.Code != http.StatusOK || strings.Contains(edit.Body.String(), "<script>") || !strings.Contains(edit.Body.String(), "&lt;script&gt;") {
-		t.Fatalf("edit did not display escaped model data: %d: %s", edit.Code, edit.Body.String())
+	if edit.Code != http.StatusOK {
+		t.Fatalf("edit: %d: %s", edit.Code, edit.Body.String())
 	}
-	token = browserCSRFToken(t, edit.Body.String())
+	assertResourceFormValues(t, edit.Body.String(), sampleResourceFormValues())
+	cookie = responseCookie(edit, cookie)
+
+[[if .HasTextualFields]]	const hostileText = "<script>alert(1)</script>"
+	repository.item.[[.FirstTextualField.GoName]] = [[if .FirstTextualField.Nullable]]pointer(hostileText)[[else]]hostileText[[end]]
+	hostileShow := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1", nil, cookie)
+	hostileEdit := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1/edit", nil, cookie)
+	for name, response := range map[string]*httptest.ResponseRecorder{"show": hostileShow, "edit": hostileEdit} {
+		if response.Code != http.StatusOK || strings.Contains(response.Body.String(), hostileText) || !strings.Contains(response.Body.String(), html.EscapeString(hostileText)) {
+			t.Fatalf("%s did not contextually escape model data: %d: %s", name, response.Code, response.Body.String())
+		}
+	}
+	repository.item.[[.FirstTextualField.GoName]] = [[.FirstTextualField.SampleGoValue]]
+	edit = browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1/edit", nil, cookie)
+[[end]]	token = browserCSRFToken(t, edit.Body.String())
 	version := browserVersion(t, edit.Body.String())
 	cookie = responseCookie(edit, cookie)
 
-	repository.item.Version++ // Simulate another request winning after the edit page was loaded.
-	stale := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", url.Values{
-		"_token": {token}, "_method": {http.MethodPut}, "name": {"Renamed"}, "version": {version},
-	}, cookie)
-	if stale.Code != http.StatusConflict || repository.item.Name == "Renamed" || !strings.Contains(stale.Body.String(), "was changed by another request") {
-		t.Fatalf("stale browser update: %d name=%q: %s", stale.Code, repository.item.Name, stale.Body.String())
+[[if .SchemaDriven]]	versionlessValues := updatedResourceFormValues()
+	versionlessValues.Set("_token", token)
+	versionlessValues.Set("_method", http.MethodPut)
+	versionless := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", versionlessValues, cookie)
+	if versionless.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(versionless.Body.String(), "is required") ||
+		!reflect.DeepEqual(webAttributesFromModel(repository.item), sampleWebAttributes()) {
+		t.Fatalf("schema-driven browser update accepted a missing version: %d: %s", versionless.Code, versionless.Body.String())
+	}
+	cookie = responseCookie(versionless, cookie)
+[[end]]	repository.item.Version++ // Simulate another request winning after the edit page was loaded.
+	staleValues := updatedResourceFormValues()
+	staleValues.Set("_token", token)
+	staleValues.Set("_method", http.MethodPut)
+	staleValues.Set("version", version)
+	stale := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", staleValues, cookie)
+	if stale.Code != http.StatusConflict || !reflect.DeepEqual(webAttributesFromModel(repository.item), sampleWebAttributes()) || !strings.Contains(stale.Body.String(), "was changed by another request") {
+		t.Fatalf("stale browser update changed attributes: %d item=%+v: %s", stale.Code, repository.item, stale.Body.String())
 	}
 	refreshedVersion := browserVersion(t, stale.Body.String())
-	if refreshedVersion == version || !strings.Contains(stale.Body.String(), `value="Renamed"`) {
-		t.Fatalf("stale form did not preserve input and refresh version: old=%s new=%s: %s", version, refreshedVersion, stale.Body.String())
+	if refreshedVersion == version {
+		t.Fatalf("stale form did not refresh version: old=%s new=%s: %s", version, refreshedVersion, stale.Body.String())
 	}
+	assertResourceFormValues(t, stale.Body.String(), updatedResourceFormValues())
 	token = browserCSRFToken(t, stale.Body.String())
 	cookie = responseCookie(stale, cookie)
-	updated := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", url.Values{
-		"_token": {token}, "_method": {http.MethodPut}, "name": {"Renamed"}, "version": {refreshedVersion},
-	}, cookie)
-	if updated.Code != http.StatusSeeOther || repository.item.Name != "Renamed" {
-		t.Fatalf("method-override update: %d name=%q: %s", updated.Code, repository.item.Name, updated.Body.String())
+	updateValues := updatedResourceFormValues()
+	updateValues.Set("_token", token)
+	updateValues.Set("_method", http.MethodPut)
+	updateValues.Set("version", refreshedVersion)
+	updated := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", updateValues, cookie)
+	if updated.Code != http.StatusSeeOther || !reflect.DeepEqual(repository.updatedAttributes, updatedWebAttributes()) {
+		t.Fatalf("method-override update: %d item=%+v: %s", updated.Code, repository.item, updated.Body.String())
 	}
 	cookie = responseCookie(updated, cookie)
+
+	clearValues := updatedResourceFormValues()
+	hasNullable := false
+[[range .Fields]][[if .Nullable]]	clearValues.Set("[[.Name]]", "")
+	hasNullable = true
+[[end]][[end]]	if hasNullable {
+		clearEdit := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1/edit", nil, cookie)
+		clearValues.Set("_token", browserCSRFToken(t, clearEdit.Body.String()))
+		clearValues.Set("_method", http.MethodPut)
+		clearValues.Set("version", browserVersion(t, clearEdit.Body.String()))
+		cleared := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", clearValues, responseCookie(clearEdit, cookie))
+		if cleared.Code != http.StatusSeeOther {
+			t.Fatalf("clear nullable fields: %d: %s", cleared.Code, cleared.Body.String())
+		}
+[[range .Fields]][[if .Nullable]]		if repository.item.[[.GoName]] != nil {
+			t.Fatalf("blank nullable [[.Name]] was not stored as nil: %+v", repository.item.[[.GoName]])
+		}
+[[end]][[end]]		cookie = responseCookie(cleared, cookie)
+	}
 
 	show = browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1", nil, cookie)
 	token = browserCSRFToken(t, show.Body.String())
@@ -172,6 +304,56 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 		t.Fatalf("method-override delete: %d %q: %s", deleted.Code, deleted.Header().Get("Location"), deleted.Body.String())
 	}
 }
+
+func sampleResourceFormValues() url.Values {
+	values := make(url.Values, [[len .Fields]])
+[[range .Fields]]	values.Set("[[.Name]]", [[printf "%q" .SampleFormValue]])
+[[end]]	return values
+}
+
+func updatedResourceFormValues() url.Values {
+	values := make(url.Values, [[len .Fields]])
+[[range .Fields]]	values.Set("[[.Name]]", [[printf "%q" .UpdatedFormValue]])
+[[end]]	return values
+}
+
+func sampleWebAttributes() resource.Attributes {
+	return resource.Attributes{
+[[range .Fields]]		[[.GoName]]: [[.SampleGoValue]],
+[[end]]	}
+}
+
+func updatedWebAttributes() resource.Attributes {
+	return resource.Attributes{
+[[range .Fields]]		[[.GoName]]: [[.UpdatedGoValue]],
+[[end]]	}
+}
+
+func webAttributesFromModel(item resource.[[.Name]]) resource.Attributes {
+	return resource.Attributes{
+[[range .Fields]]		[[.GoName]]: item.[[.GoName]],
+[[end]]	}
+}
+
+func assertResourcePresentation(t *testing.T, body string, values url.Values) {
+	t.Helper()
+[[range .Fields]]	if value := values.Get("[[.Name]]"); !strings.Contains(body, html.EscapeString(value)) {
+		t.Errorf("presentation does not contain escaped [[.Name]] %q: %s", value, body)
+	}
+[[end]]}
+
+func assertResourceFormValues(t *testing.T, body string, values url.Values) {
+	t.Helper()
+[[range .Fields]]	{
+		value := html.EscapeString(values.Get("[[.Name]]"))
+[[if .Text]]	marker := `>` + value + `</textarea>`
+[[else if .Boolean]]	marker := `value="` + value + `" selected`
+[[else]]	marker := `name="[[.Name]]" value="` + value + `"`
+[[end]]		if !strings.Contains(body, marker) {
+			t.Errorf("form does not retain [[.Name]] %q using marker %q: %s", value, marker, body)
+		}
+	}
+[[end]]}
 
 func browserRequest(router http.Handler, method, target string, values url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
 	var body *strings.Reader

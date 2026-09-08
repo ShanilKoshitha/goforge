@@ -21,9 +21,9 @@ var (
 type Repository interface {
 	List(ctx context.Context, userID int64) ([][[.Name]], error)
 	Paginate(ctx context.Context, userID int64, page, perPage int) ([[.Name]]Page, error)
-	Create(ctx context.Context, userID int64, name string) ([[.Name]], error)
+	Create(ctx context.Context, userID int64, attributes Attributes) ([[.Name]], error)
 	Find(ctx context.Context, userID, id int64) ([[.Name]], error)
-	Update(ctx context.Context, userID, id int64, name string, expectedVersion *int64) ([[.Name]], error)
+	Update(ctx context.Context, userID, id int64, attributes Attributes, expectedVersion *int64) ([[.Name]], error)
 	Delete(ctx context.Context, userID, id int64) error
 }
 
@@ -121,9 +121,11 @@ func normalizePagination(page, perPage int) (int, int) {
 	return page, perPage
 }
 
-func (repository *PostgresRepository) Create(ctx context.Context, userID int64, name string) ([[.Name]], error) {
+func (repository *PostgresRepository) Create(ctx context.Context, userID int64, attributes Attributes) ([[.Name]], error) {
 	item, err := repository.query().Create(
-		models.[[.Name]]CreateInput{Name: name},
+		models.[[.Name]]CreateInput{
+[[range .Fields]]			[[.GoName]]: [[if .Nullable]]nullableField(attributes.[[.GoName]])[[else]]attributes.[[.GoName]][[end]],
+[[end]]		},
 		models.[[.Name]]Columns.UserID.Set(userID),
 	).One(ctx, repository.Executor)
 	if err != nil {
@@ -140,11 +142,13 @@ func (repository *PostgresRepository) Find(ctx context.Context, userID, id int64
 	return repositoryResult(item, err)
 }
 
-func (repository *PostgresRepository) Update(ctx context.Context, userID, id int64, name string, expectedVersion *int64) ([[.Name]], error) {
+func (repository *PostgresRepository) Update(ctx context.Context, userID, id int64, attributes Attributes, expectedVersion *int64) ([[.Name]], error) {
 	if expectedVersion != nil && *expectedVersion < 1 {
 		return [[.Name]]{}, fmt.Errorf("update [[.Package]]: expected version must be at least 1")
 	}
-	changes := models.[[.Name]]Changes{Name: orm.Value(name)}
+	changes := models.[[.Name]]Changes{
+[[range .Fields]]		[[.GoName]]: [[if .Nullable]]nullableField(attributes.[[.GoName]])[[else]]orm.Value(attributes.[[.GoName]])[[end]],
+[[end]]	}
 	updatedAt := orm.SetCurrentTime(models.[[.Name]]Columns.UpdatedAt)
 	var update orm.UpdateBuilder[models.[[.Name]]]
 	if expectedVersion == nil {
@@ -185,6 +189,13 @@ func (repository *PostgresRepository) Delete(ctx context.Context, userID, id int
 		return ErrNotFound
 	}
 	return nil
+}
+
+func nullableField[T any](value *T) orm.Field[*T] {
+	if value == nil {
+		return orm.Null[*T]()
+	}
+	return orm.Value(value)
 }
 
 func repositoryResult(item models.[[.Name]], err error) ([[.Name]], error) {

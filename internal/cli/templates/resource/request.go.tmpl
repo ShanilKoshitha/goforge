@@ -3,48 +3,132 @@ package [[.Package]]
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/ShanilKoshitha/goforge/httpx"
 	"github.com/ShanilKoshitha/goforge/validation"
-
-	"[[.Module]]/internal/validationrules"
 )
 
 // WriteRequest owns both transport decoders, normalization, and semantic
 // policy. Controllers do not maintain parallel JSON and browser rules.
 type WriteRequest struct {
-	Name    string `json:"name"`
-	Version *int64 `json:"version,omitempty"`
+	Attributes Attributes
+	Version    *int64
 
-	nameInput    validation.Input[string]
-	versionInput validation.Input[int64]
+[[range .Fields]]	[[.Name]]Input validation.Input[[`[`]][[.BaseGoType]]]
+[[end]]	versionInput validation.Input[int64]
+	formValues  map[string]string
 }
 
 func (request *WriteRequest) DecodeJSON(ctx *httpx.Context) error {
-	var body *struct {
-		Name    json.RawMessage `json:"name"`
-		Version json.RawMessage `json:"version"`
-	}
-	if err := ctx.BindJSON(&body); err != nil {
-		return err
-	}
-	if body == nil {
-		return httpx.NewHTTPError(http.StatusBadRequest, "JSON body must be an object")
-	}
-	name, nameInput, err := decodeJSONString("name", body.Name)
+	body, err := decodeExactJSONObject(ctx,
+[[range .Fields]]		"[[.Name]]",
+[[end]]		"version",
+	)
 	if err != nil {
 		return err
 	}
-	version, versionInput, err := decodeJSONInt64("version", body.Version)
+[[range .Fields]][[if or .String .Text]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, err := decodeJSONString("[[.Name]]", body["[[.Name]]"], [[.Text]])
+[[else if .Integer]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, err := decodeJSONInt64("[[.Name]]", body["[[.Name]]"])
+[[else]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, err := decodeJSONBoolean("[[.Name]]", body["[[.Name]]"])
+[[end]]	if err != nil {
+		return err
+	}
+	request.[[.Name]]Input = [[.Name]]Input
+[[if .Nullable]]	request.Attributes.[[.GoName]] = inputPointer([[.Name]]Input)
+[[else]]	request.Attributes.[[.GoName]] = [[.Name]]Value
+[[end]][[end]]	_, versionInput, err := decodeJSONInt64("version", body["version"])
 	if err != nil {
 		return err
 	}
-	request.Name, request.nameInput = name, nameInput
-	request.Version, request.versionInput = version, versionInput
+	request.Version, request.versionInput = inputPointer(versionInput), versionInput
 	return nil
+}
+
+func decodeExactJSONObject(ctx *httpx.Context, allowedKeys ...string) (map[string]json.RawMessage, error) {
+	mediaType, _, err := mime.ParseMediaType(ctx.Request.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return nil, httpx.NewHTTPError(http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+	}
+	if ctx.Request.Body == nil {
+		return nil, httpx.NewHTTPError(http.StatusBadRequest, "request body is required")
+	}
+
+	allowed := make(map[string]struct{}, len(allowedKeys))
+	for _, key := range allowedKeys {
+		if _, exists := allowed[key]; exists {
+			return nil, fmt.Errorf("exact JSON object key %q is configured more than once", key)
+		}
+		allowed[key] = struct{}{}
+	}
+
+	ctx.Request.Body = http.MaxBytesReader(ctx.Response, ctx.Request.Body, 1<<20)
+	encoded, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return nil, httpx.NewHTTPError(http.StatusRequestEntityTooLarge, "JSON body is too large").WithCause(err)
+		}
+		return nil, invalidJSONBody(err)
+	}
+	if !utf8.Valid(encoded) {
+		return nil, httpx.NewHTTPError(http.StatusBadRequest, "JSON body must be valid UTF-8")
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, invalidJSONBody(err)
+	}
+	if delimiter, ok := opening.(json.Delim); !ok || delimiter != '{' {
+		return nil, httpx.NewHTTPError(http.StatusBadRequest, "JSON body must be an object")
+	}
+	values := make(map[string]json.RawMessage, len(allowedKeys))
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, invalidJSONBody(err)
+		}
+		key, ok := token.(string)
+		if !ok {
+			return nil, httpx.NewHTTPError(http.StatusBadRequest, "invalid JSON object member")
+		}
+		if _, exists := values[key]; exists {
+			return nil, httpx.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("JSON field %q must appear at most once", key))
+		}
+		if _, exists := allowed[key]; !exists {
+			return nil, httpx.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("unknown JSON field %q", key))
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, invalidJSONBody(err)
+		}
+		values[key] = value
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return nil, invalidJSONBody(err)
+	}
+	if delimiter, ok := closing.(json.Delim); !ok || delimiter != '}' {
+		return nil, httpx.NewHTTPError(http.StatusBadRequest, "invalid JSON body")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, invalidJSONBody(err)
+	}
+	return values, nil
+}
+
+func invalidJSONBody(err error) error {
+	return httpx.NewHTTPError(http.StatusBadRequest, "invalid JSON body").WithCause(err)
 }
 
 func (request *WriteRequest) DecodeForm(ctx *httpx.Context) error {
@@ -52,62 +136,76 @@ func (request *WriteRequest) DecodeForm(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	name, err := form.Value("name")
+	request.formValues = make(map[string]string, [[len .Fields]])
+[[range .Fields]][[if or .String .Text]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, err := decodeFormString(form, "[[.Name]]", [[.Text]])
+[[else if .Integer]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, err := decodeFormInt64(form, "[[.Name]]")
+[[else]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, err := decodeFormBoolean(form, "[[.Name]]")
+[[end]]	if err != nil {
+		return err
+	}
+	request.[[.Name]]Input = [[.Name]]Input
+	if form.Has("[[.Name]]") {
+		request.formValues["[[.Name]]"] = [[.Name]]Raw
+	}
+[[if .Nullable]]	request.Attributes.[[.GoName]] = inputPointer([[.Name]]Input)
+[[else]]	request.Attributes.[[.GoName]] = [[.Name]]Value
+[[end]][[end]]	_, versionInput, versionRaw, err := decodeFormInt64(form, "version")
 	if err != nil {
 		return err
 	}
-	request.Name = strings.TrimSpace(name)
-	switch {
-	case !form.Has("name"):
-		request.nameInput = validation.Missing[string]()
-	case request.Name == "":
-		request.nameInput = validation.Empty[string]()
-	default:
-		request.nameInput = validation.Present(request.Name)
+	request.Version, request.versionInput = inputPointer(versionInput), versionInput
+	if form.Has("version") {
+		request.formValues["version"] = versionRaw
 	}
-	if !form.Has("version") {
-		request.Version = nil
-		request.versionInput = validation.Missing[int64]()
-		return nil
-	}
-	rawVersion, err := form.Value("version")
-	if err != nil {
-		return err
-	}
-	rawVersion = strings.TrimSpace(rawVersion)
-	if rawVersion == "" {
-		request.Version = nil
-		request.versionInput = validation.Empty[int64]()
-		return nil
-	}
-	version, err := strconv.ParseInt(rawVersion, 10, 64)
-	if err != nil {
-		return httpx.NewHTTPError(http.StatusBadRequest, "version must be one integer").WithCause(err)
-	}
-	request.Version = &version
-	request.versionInput = validation.Present(version)
 	return nil
 }
 
-func (request WriteRequest) Validate() validation.Report {
-	nameInput := request.nameInput
-	if nameInput.State() == validation.StateMissing && request.Name != "" {
-		nameInput = validation.Present(strings.TrimSpace(request.Name))
-	}
-	versionInput := request.versionInput
-	if versionInput.State() == validation.StateMissing && request.Version != nil {
-		versionInput = validation.Present(*request.Version)
-	}
+func (request WriteRequest) ValidateCreate() validation.Report {
 	return validation.Join(
-		validation.Apply("name", nameInput,
-			validation.Required[string](), validation.StringLength(2, 200), validationrules.SafeText()),
-		validation.Apply("version", versionInput,
-			validation.When(versionInput.Provided(),
+		request.validate(false),
+		validation.Apply("version", request.versionInput, versionNotAllowedOnCreate()),
+	)
+}
+
+func (request WriteRequest) ValidateUpdate() validation.Report {
+	return request.validate([[.SchemaDriven]])
+}
+
+func (request WriteRequest) validate(requireVersion bool) validation.Report {
+	return validation.Join(
+[[range .Fields]][[if .String]]		validation.Apply("[[.Name]]", request.[[.Name]]Input,
+[[if .Required]]			validation.Required[string](),
+[[end]][[if $.SchemaDriven]]			validation.StringLength(1, 255), safeSingleLineText()),
+[[else]]			validation.StringLength(2, 200), safeSingleLineText()),
+[[end]]
+[[else if .Text]]		validation.Apply("[[.Name]]", request.[[.Name]]Input,
+[[if .Required]]			validation.Required[string](),
+[[end]]			validation.StringLength(1, 65535), safeMultilineText()),
+[[else if .Required]]		validation.Apply("[[.Name]]", request.[[.Name]]Input, validation.Required[[`[`]][[.BaseGoType]]]()),
+[[end]][[end]]		validation.Apply("version", request.versionInput,
+			validation.When(requireVersion || request.versionInput.Provided(),
 				validation.Required[int64](), validation.NumberRange[int64](1, int64(^uint64(0)>>1)))),
 	)
 }
 
-func decodeJSONString(field string, raw json.RawMessage) (string, validation.Input[string], error) {
+func versionNotAllowedOnCreate() validation.Rule[int64] {
+	return validation.RuleFunc[int64](func(input validation.Input[int64]) []validation.Issue {
+		if !input.Provided() {
+			return nil
+		}
+		return []validation.Issue{{Code: "prohibited", Message: "must not be provided when creating a resource"}}
+	})
+}
+
+func (request WriteRequest) FormValues() map[string]string {
+	values := make(map[string]string, len(request.formValues))
+	for name, value := range request.formValues {
+		values[name] = value
+	}
+	return values
+}
+
+func decodeJSONString(field string, raw json.RawMessage, multiline bool) (string, validation.Input[string], error) {
 	if raw == nil {
 		return "", validation.Missing[string](), nil
 	}
@@ -118,23 +216,138 @@ func decodeJSONString(field string, raw json.RawMessage) (string, validation.Inp
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", validation.Missing[string](), httpx.NewHTTPError(http.StatusBadRequest, field+" must be a string").WithCause(err)
 	}
-	value = strings.TrimSpace(value)
+	value = normalizeString(value, multiline)
 	if value == "" {
 		return "", validation.Empty[string](), nil
 	}
 	return value, validation.Present(value), nil
 }
 
-func decodeJSONInt64(field string, raw json.RawMessage) (*int64, validation.Input[int64], error) {
+func decodeJSONInt64(field string, raw json.RawMessage) (int64, validation.Input[int64], error) {
 	if raw == nil {
-		return nil, validation.Missing[int64](), nil
+		return 0, validation.Missing[int64](), nil
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil, validation.Null[int64](), nil
+		return 0, validation.Null[int64](), nil
 	}
 	var value int64
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, validation.Missing[int64](), httpx.NewHTTPError(http.StatusBadRequest, field+" must be an integer").WithCause(err)
+		return 0, validation.Missing[int64](), httpx.NewHTTPError(http.StatusBadRequest, field+" must be an integer").WithCause(err)
 	}
-	return &value, validation.Present(value), nil
+	return value, validation.Present(value), nil
+}
+
+func decodeJSONBoolean(field string, raw json.RawMessage) (bool, validation.Input[bool], error) {
+	if raw == nil {
+		return false, validation.Missing[bool](), nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return false, validation.Null[bool](), nil
+	}
+	var value bool
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return false, validation.Missing[bool](), httpx.NewHTTPError(http.StatusBadRequest, field+" must be a boolean").WithCause(err)
+	}
+	return value, validation.Present(value), nil
+}
+
+func decodeFormString(form httpx.Form, field string, multiline bool) (string, validation.Input[string], string, error) {
+	raw, err := form.Value(field)
+	if err != nil {
+		return "", validation.Missing[string](), "", err
+	}
+	if !form.Has(field) {
+		return "", validation.Missing[string](), "", nil
+	}
+	raw = normalizeString(raw, multiline)
+	if raw == "" {
+		return "", validation.Empty[string](), raw, nil
+	}
+	return raw, validation.Present(raw), raw, nil
+}
+
+func decodeFormInt64(form httpx.Form, field string) (int64, validation.Input[int64], string, error) {
+	raw, err := form.Value(field)
+	if err != nil {
+		return 0, validation.Missing[int64](), "", err
+	}
+	if !form.Has(field) {
+		return 0, validation.Missing[int64](), "", nil
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, validation.Empty[int64](), raw, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, validation.Missing[int64](), raw, httpx.NewHTTPError(http.StatusBadRequest, field+" must be an integer").WithCause(err)
+	}
+	return value, validation.Present(value), raw, nil
+}
+
+func decodeFormBoolean(form httpx.Form, field string) (bool, validation.Input[bool], string, error) {
+	raw, err := form.Value(field)
+	if err != nil {
+		return false, validation.Missing[bool](), "", err
+	}
+	if !form.Has(field) {
+		return false, validation.Missing[bool](), "", nil
+	}
+	raw = strings.TrimSpace(raw)
+	switch raw {
+	case "":
+		return false, validation.Empty[bool](), raw, nil
+	case "true":
+		return true, validation.Present(true), raw, nil
+	case "false":
+		return false, validation.Present(false), raw, nil
+	default:
+		return false, validation.Missing[bool](), raw, httpx.NewHTTPError(http.StatusBadRequest, field+" must be true or false")
+	}
+}
+
+func inputPointer[T any](input validation.Input[T]) *T {
+	value, present := input.Value()
+	if !present {
+		return nil
+	}
+	return &value
+}
+
+func normalizeString(value string, multiline bool) string {
+	if multiline {
+		value = strings.ReplaceAll(value, "\r\n", "\n")
+		value = strings.ReplaceAll(value, "\r", "\n")
+	}
+	return strings.TrimSpace(value)
+}
+
+func safeSingleLineText() validation.Rule[string] {
+	return validation.RuleFunc[string](func(input validation.Input[string]) []validation.Issue {
+		value, present := input.Value()
+		if !present {
+			return nil
+		}
+		for _, character := range value {
+			if unicode.IsControl(character) {
+				return []validation.Issue{{Code: "string.control", Message: "must not contain control characters"}}
+			}
+		}
+		return nil
+	})
+}
+
+func safeMultilineText() validation.Rule[string] {
+	return validation.RuleFunc[string](func(input validation.Input[string]) []validation.Issue {
+		value, present := input.Value()
+		if !present {
+			return nil
+		}
+		for _, character := range value {
+			if unicode.IsControl(character) && character != '\n' && character != '\t' {
+				return []validation.Issue{{Code: "text.control", Message: "must not contain unsupported control characters"}}
+			}
+		}
+		return nil
+	})
 }

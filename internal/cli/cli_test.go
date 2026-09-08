@@ -9,12 +9,12 @@ import (
 	"testing"
 )
 
-func TestVersionMatchesPatchRelease(t *testing.T) {
+func TestVersionMatchesRelease(t *testing.T) {
 	var output bytes.Buffer
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.10.1\n" {
+	if output.String() != "forge 0.11.0\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }

@@ -38,10 +38,10 @@ func (controller *Controller) Create(ctx *httpx.Context) error {
 	if err := request.DecodeJSON(ctx); err != nil {
 		return err
 	}
-	if problems := request.Validate(); !problems.Empty() {
+	if problems := request.ValidateCreate(); !problems.Empty() {
 		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
 	}
-	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Name)
+	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Attributes)
 	if err != nil {
 		return err
 	}
@@ -80,10 +80,10 @@ func (controller *Controller) Update(ctx *httpx.Context) error {
 	if err := request.DecodeJSON(ctx); err != nil {
 		return err
 	}
-	if problems := request.Validate(); !problems.Empty() {
+	if problems := request.ValidateUpdate(); !problems.Empty() {
 		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
 	}
-	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Name, request.Version)
+	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Attributes, request.Version)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}

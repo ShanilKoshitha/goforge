@@ -46,6 +46,15 @@ func generatedFileMode(path string) os.FileMode {
 }
 
 func writeManagedFile(path string, content []byte) error {
+	mode := generatedFileMode(path)
+	if info, err := os.Stat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("managed destination %s is not a regular file", filepath.ToSlash(path))
+		}
+		mode = info.Mode().Perm()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".goforge-managed-")
 	if err != nil {
 		return err
@@ -57,6 +66,10 @@ func writeManagedFile(path string, content []byte) error {
 		return err
 	}
 	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Chmod(mode); err != nil {
 		_ = temporary.Close()
 		return err
 	}

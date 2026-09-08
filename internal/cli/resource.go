@@ -28,25 +28,34 @@ type plannedFile struct {
 	content string
 }
 
+type resourceManagedPublisher func(string, developmentFileState, []byte) error
+
 func makeResource(name string, stdout io.Writer) error {
 	if err := requireProjectFormatRange(8, 8); err != nil {
 		return err
 	}
-	return makeResourceWithDependencies(context.Background(), name, nil, stdout, stdout, execProcessRunner{}, writeManagedFile)
+	return makeResourceWithDependencies(context.Background(), name, defaultResourceFields(), false, nil, stdout, stdout, execProcessRunner{}, publishResourceManagedFile)
 }
 
 func makeResourceWithWriter(name string, stdout io.Writer, managedWrite func(string, []byte) error) error {
-	return makeResourceWithDependencies(context.Background(), name, nil, stdout, stdout, execProcessRunner{}, managedWrite)
+	publish := func(path string, _ developmentFileState, contents []byte) error {
+		return managedWrite(path, contents)
+	}
+	return makeResourceWithDependencies(context.Background(), name, defaultResourceFields(), false, nil, stdout, stdout, execProcessRunner{}, publish)
 }
 
 func makeResourceWithProcess(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
+	return makeResourceWithProcessFields(ctx, name, defaultResourceFields(), false, stdin, stdout, stderr, processes)
+}
+
+func makeResourceWithProcessFields(ctx context.Context, name string, fields []resourceField, schemaDriven bool, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
 	if err := requireProjectFormatRange(8, 8); err != nil {
 		return err
 	}
-	return makeResourceWithDependencies(ctx, name, stdin, stdout, stderr, processes, writeManagedFile)
+	return makeResourceWithDependencies(ctx, name, fields, schemaDriven, stdin, stdout, stderr, processes, publishResourceManagedFile)
 }
 
-func makeResourceWithDependencies(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner, managedWrite func(string, []byte) error) error {
+func makeResourceWithDependencies(ctx context.Context, name string, fields []resourceField, schemaDriven bool, stdin io.Reader, stdout, stderr io.Writer, processes processRunner, publishManaged resourceManagedPublisher) error {
 	state, err := loadResourceState()
 	if err != nil {
 		return err
@@ -59,7 +68,12 @@ func makeResourceWithDependencies(ctx context.Context, name string, stdin io.Rea
 	if err != nil {
 		return err
 	}
-	files, err := resourceFiles(module, spec)
+	definition := resourceDefinition{
+		resourceSpec: spec,
+		Fields:       append([]resourceField(nil), fields...),
+		SchemaDriven: schemaDriven,
+	}
+	files, err := resourceFiles(module, definition)
 	if err != nil {
 		return err
 	}
@@ -102,51 +116,51 @@ func makeResourceWithDependencies(ctx context.Context, name string, stdin io.Rea
 
 	registryPath := filepath.Join("routes", "resources_gen.go")
 	statePath := filepath.Join(".forge", "resources.json")
-	oldState, err := os.ReadFile(statePath)
+	oldState, err := captureDevelopmentFile(statePath)
 	if err != nil {
 		return fmt.Errorf("read resource metadata: %w", err)
 	}
-	oldRegistry, err := os.ReadFile(registryPath)
+	oldRegistry, err := captureDevelopmentFile(registryPath)
 	if err != nil {
 		return fmt.Errorf("read generated resource registry: %w", err)
 	}
-	oldViews, err := os.ReadFile(filepath.FromSlash(generatedViewsPath))
+	oldViews, err := captureDevelopmentFile(filepath.FromSlash(generatedViewsPath))
 	if err != nil {
 		return fmt.Errorf("read generated views: %w", err)
 	}
-	oldORM, err := os.ReadFile(filepath.FromSlash(generatedORMPath))
-	ormWasMissing := errors.Is(err, os.ErrNotExist)
-	if err != nil && !ormWasMissing {
+	oldORM, err := captureDevelopmentFile(filepath.FromSlash(generatedORMPath))
+	if err != nil {
 		return fmt.Errorf("read generated ORM: %w", err)
 	}
-	var created []string
+	type publication struct {
+		path  string
+		state developmentFileState
+	}
+	var created []publication
+	var publishedRegistry developmentFileState
+	var publishedViews developmentFileState
+	var publishedORM developmentFileState
+	var publishedState developmentFileState
 	var registryChanged bool
 	var viewsChanged bool
 	var ormChanged bool
 	var stateChanged bool
 	rollback := func(cause error) error {
-		for _, path := range created {
-			if err := os.Remove(path); err != nil {
-				cause = errors.Join(cause, fmt.Errorf("remove incomplete resource %s: %w", path, err))
-			}
+		for index := len(created) - 1; index >= 0; index-- {
+			file := created[index]
+			cause = errors.Join(cause, rollbackResourcePublication(file.path, file.state, developmentFileState{}))
 		}
 		if registryChanged {
-			cause = errors.Join(cause, managedWrite(registryPath, oldRegistry))
+			cause = errors.Join(cause, rollbackResourcePublication(registryPath, publishedRegistry, oldRegistry))
 		}
 		if viewsChanged {
-			cause = errors.Join(cause, managedWrite(filepath.FromSlash(generatedViewsPath), oldViews))
+			cause = errors.Join(cause, rollbackResourcePublication(filepath.FromSlash(generatedViewsPath), publishedViews, oldViews))
 		}
 		if ormChanged {
-			if ormWasMissing {
-				if err := os.Remove(filepath.FromSlash(generatedORMPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
-					cause = errors.Join(cause, fmt.Errorf("remove incomplete generated ORM: %w", err))
-				}
-			} else {
-				cause = errors.Join(cause, managedWrite(filepath.FromSlash(generatedORMPath), oldORM))
-			}
+			cause = errors.Join(cause, rollbackResourcePublication(filepath.FromSlash(generatedORMPath), publishedORM, oldORM))
 		}
 		if stateChanged {
-			cause = errors.Join(cause, managedWrite(statePath, oldState))
+			cause = errors.Join(cause, rollbackResourcePublication(statePath, publishedState, oldState))
 		}
 		for _, directory := range createdDirectories {
 			entries, err := os.ReadDir(directory)
@@ -164,29 +178,71 @@ func makeResourceWithDependencies(ctx context.Context, name string, stdin io.Rea
 		return cause
 	}
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return rollback(err)
+		}
 		if err := writeExclusive(file.path, file.content); err != nil {
 			return rollback(err)
 		}
-		created = append(created, file.path)
+		published, err := captureDevelopmentFile(file.path)
+		if err != nil {
+			return rollback(fmt.Errorf("capture generated resource %s: %w", filepath.ToSlash(file.path), err))
+		}
+		created = append(created, publication{path: file.path, state: published})
 	}
-	if err := managedWrite(registryPath, []byte(registry)); err != nil {
+	if err := ctx.Err(); err != nil {
+		return rollback(err)
+	}
+	publishedRegistry = resourceManagedPublicationState(registryPath, oldRegistry, []byte(registry))
+	registryChanged = true
+	if err := publishManaged(registryPath, oldRegistry, publishedRegistry.data); err != nil {
 		return rollback(fmt.Errorf("write generated resource registry: %w", err))
 	}
-	registryChanged = true
-	if err := managedWrite(filepath.FromSlash(generatedViewsPath), []byte(compiledViews)); err != nil {
+	if err := ctx.Err(); err != nil {
+		return rollback(err)
+	}
+	viewsPath := filepath.FromSlash(generatedViewsPath)
+	publishedViews = resourceManagedPublicationState(viewsPath, oldViews, []byte(compiledViews))
+	viewsChanged = true
+	if err := publishManaged(viewsPath, oldViews, publishedViews.data); err != nil {
 		return rollback(fmt.Errorf("write generated views: %w", err))
 	}
-	viewsChanged = true
-	if err := managedWrite(filepath.FromSlash(generatedORMPath), []byte(generatedORM)); err != nil {
+	if err := ctx.Err(); err != nil {
+		return rollback(err)
+	}
+	ormPath := filepath.FromSlash(generatedORMPath)
+	publishedORM = resourceManagedPublicationState(ormPath, oldORM, []byte(generatedORM))
+	ormChanged = true
+	if err := publishManaged(ormPath, oldORM, publishedORM.data); err != nil {
 		return rollback(fmt.Errorf("write generated ORM: %w", err))
 	}
-	ormChanged = true
-	if err := managedWrite(statePath, encodedState); err != nil {
+	if err := ctx.Err(); err != nil {
+		return rollback(err)
+	}
+	publishedState = resourceManagedPublicationState(statePath, oldState, encodedState)
+	stateChanged = true
+	if err := publishManaged(statePath, oldState, publishedState.data); err != nil {
 		return rollback(fmt.Errorf("write resource metadata: %w", err))
 	}
-	stateChanged = true
+	if err := ctx.Err(); err != nil {
+		return rollback(err)
+	}
 	if err := runProjectViewCompiler(ctx, stdin, stdout, stderr, processes, true); err != nil {
 		return rollback(fmt.Errorf("validate generated views: %w", err))
+	}
+	if err := ctx.Err(); err != nil {
+		return rollback(err)
+	}
+	currentModels, err := currentModelSourcesWithPlanned(nil)
+	if err != nil {
+		return rollback(fmt.Errorf("recheck resource models: %w", err))
+	}
+	currentORM, err := renderORMArtifactForModelSources(currentModels)
+	if err != nil {
+		return rollback(fmt.Errorf("recheck resource ORM: %w", err))
+	}
+	if currentORM != generatedORM {
+		return rollback(errors.New("application models changed during resource generation; retry the command"))
 	}
 
 	for _, file := range files {
@@ -196,6 +252,57 @@ func makeResourceWithDependencies(ctx context.Context, name string, stdin io.Rea
 	fmt.Fprintln(stdout, "updated resources/views/views_gen.go")
 	fmt.Fprintln(stdout, "updated internal/models/zz_orm_gen.go")
 	return nil
+}
+
+func resourceManagedPublicationState(path string, previous developmentFileState, contents []byte) developmentFileState {
+	mode := generatedFileMode(path)
+	if previous.exists {
+		mode = previous.mode
+	}
+	return developmentFileState{exists: true, mode: mode, data: append([]byte(nil), contents...)}
+}
+
+func publishResourceManagedFile(path string, expected developmentFileState, contents []byte) error {
+	current, err := captureDevelopmentFile(path)
+	if err != nil {
+		return fmt.Errorf("inspect %s before publication: %w", filepath.ToSlash(path), err)
+	}
+	if !sameResourceFileState(current, expected) {
+		return fmt.Errorf("refusing to overwrite changed %s; retry the command", filepath.ToSlash(path))
+	}
+	if err := writeManagedFile(path, contents); err != nil {
+		return err
+	}
+	published := resourceManagedPublicationState(path, expected, contents)
+	current, err = captureDevelopmentFile(path)
+	if err != nil {
+		return fmt.Errorf("inspect %s after publication: %w", filepath.ToSlash(path), err)
+	}
+	if !sameResourceFileState(current, published) {
+		return fmt.Errorf("%s changed during publication; newer bytes were preserved", filepath.ToSlash(path))
+	}
+	return nil
+}
+
+func rollbackResourcePublication(path string, published, previous developmentFileState) error {
+	current, err := captureDevelopmentFile(path)
+	if err != nil {
+		return fmt.Errorf("inspect generated resource publication %s: %w", filepath.ToSlash(path), err)
+	}
+	if sameResourceFileState(current, previous) {
+		return nil
+	}
+	if !sameResourceFileState(current, published) {
+		return fmt.Errorf("refusing to roll back changed %s; newer bytes were preserved", filepath.ToSlash(path))
+	}
+	if err := previous.restore(path); err != nil {
+		return fmt.Errorf("restore generated resource publication %s: %w", filepath.ToSlash(path), err)
+	}
+	return nil
+}
+
+func sameResourceFileState(left, right developmentFileState) bool {
+	return left.equal(right) && (!left.exists || left.mode == right.mode)
 }
 
 func missingParentDirectories(files []plannedFile) ([]string, error) {

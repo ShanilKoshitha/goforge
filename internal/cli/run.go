@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.10.1"
+const Version = "0.11.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -136,17 +136,22 @@ Usage:
   forge make request <name>
   forge make migration <name>
   forge make model <name>
-  forge make resource <name>
+  forge make resource <name> [--field <name>:<type>[:required|nullable]]...
   forge make component <name>
   forge make job <name>
   forge make:controller <name>
   forge make:request <name>
   forge make:migration <name>
   forge make:model <name>
-  forge make:resource <name>
+  forge make:resource <name> [--field <name>:<type>[:required|nullable]]...
   forge make:component <name>
   forge make:job <name>
   forge version
+
+Resource field types: string, text, integer, boolean. Fields are required by
+default; append :nullable to allow null. Without --field, resources retain the
+legacy name:string and versionless-update contract. Any explicit --field uses
+schema-driven output and requires a positive version on updates.
 
 Generators refuse to overwrite files. Generated applications keep routes,
 handlers, configuration, and SQL as ordinary source files you can edit.

@@ -5,3 +5,10 @@ import "[[.Module]]/internal/models"
 // [[.Name]] preserves the resource package API while the application-owned
 // model and generated ORM descriptors live in internal/models.
 type [[.Name]] = models.[[.Name]]
+
+// Attributes is the complete set of application-writable values for [[.Name]].
+// Identity, ownership, timestamps, optimistic versions, and relationships are
+// deliberately absent and cannot be mass-assigned.
+type Attributes struct {
+[[range .Fields]]	[[.GoName]] [[.GoType]]
+[[end]]}

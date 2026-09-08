@@ -5,7 +5,14 @@
   @component("components/card", title=.Title, tone="resource")
     @if(.Notice)<p role="status">{{.Notice}}</p>@endif
     <ul>
-      @for(.Items)<li><a href="/app/[[.Plural]]/{{.ID}}">{{.Name}}</a></li>@empty<li>No [[.Plural]] yet.</li>@endfor
+      @for(.Items)<li>
+        <a href="/app/[[.Plural]]/{{.ID}}">[[if .SchemaDriven]][[.Name]] #{{.ID}}[[else]]{{.Name}}[[end]]</a>
+[[if .SchemaDriven]]
+        <dl>
+[[range .Fields]]          <dt>[[.Label]]</dt><dd>{{.[[.GoName]]}}</dd>
+[[end]]        </dl>
+[[end]]
+      </li>@empty<li>No [[.Plural]] yet.</li>@endfor
     </ul>
     <nav aria-label="Pagination">
       {{if .PreviousURL}}<a href="{{.PreviousURL}}">Previous</a>{{end}}

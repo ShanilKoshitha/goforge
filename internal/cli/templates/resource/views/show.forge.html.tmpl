@@ -1,8 +1,13 @@
 @extends("layouts/app")
 @section("title"){{.Title}}@endsection
 @section("content")
-  @component("components/card", title=.Item.Name, tone="resource")
+  @component("components/card", title=[[if .SchemaDriven]].Title[[else]].Item.Name[[end]], tone="resource")
     @if(.Notice)<p role="status">{{.Notice}}</p>@endif
+[[if .SchemaDriven]]
+    <dl>
+[[range .Fields]]      <dt>[[.Label]]</dt><dd>{{.Item.[[.GoName]]}}</dd>
+[[end]]    </dl>
+[[end]]
     <form action="/app/[[.Plural]]/{{.Item.ID}}" method="post">
       @csrf
       @method("DELETE")

@@ -21,8 +21,20 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	} else {
 		kind, rest = strings.TrimPrefix(args[0], "make:"), args[1:]
 	}
-	if len(rest) != 1 {
-		return fmt.Errorf("usage: forge make:%s <name>", kind)
+	name := ""
+	var resourceFields []resourceField
+	resourceSchemaDriven := false
+	if kind == "resource" {
+		var err error
+		name, resourceFields, resourceSchemaDriven, err = parseMakeResourceArguments(rest)
+		if err != nil {
+			return err
+		}
+	} else {
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: forge make:%s <name>", kind)
+		}
+		name = rest[0]
 	}
 	if err := requireProjectRoot(); err != nil {
 		return err
@@ -41,19 +53,19 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	var path, content string
 	switch kind {
 	case "controller":
-		path, content, err = controllerFile(rest[0])
+		path, content, err = controllerFile(name)
 	case "request":
-		path, content, err = requestFile(rest[0])
+		path, content, err = requestFile(name)
 	case "migration":
-		return makeMigration(rest[0], stdout)
+		return makeMigration(name, stdout)
 	case "model":
-		return makeModel(rest[0], stdout)
+		return makeModel(name, stdout)
 	case "resource":
-		return makeResourceWithProcess(ctx, rest[0], stdin, stdout, stderr, processes)
+		return makeResourceWithProcessFields(ctx, name, resourceFields, resourceSchemaDriven, stdin, stdout, stderr, processes)
 	case "component":
-		return makeComponent(ctx, rest[0], stdin, stdout, stderr, processes)
+		return makeComponent(ctx, name, stdin, stdout, stderr, processes)
 	case "job":
-		return makeJob(rest[0], stdout)
+		return makeJob(name, stdout)
 	default:
 		return fmt.Errorf("unknown generator %q", kind)
 	}
