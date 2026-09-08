@@ -106,7 +106,9 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 
 	smtpServer := startRecoverySMTPServer(t, true)
 	address := freeAddress(t)
-	serverEnvironment := jobAcceptanceEnvironment(applicationEnvironment, map[string]string{"APP_ADDRESS": address})
+	serverEnvironment := jobAcceptanceEnvironment(applicationEnvironment, map[string]string{
+		"APP_ADDRESS": address, "SESSION_SECRET": strings.Repeat("s", 32),
+	})
 	server, serverOutput := startGeneratedServer(t, serverBinary, scratch, serverEnvironment)
 	serverRunning := true
 	t.Cleanup(func() {

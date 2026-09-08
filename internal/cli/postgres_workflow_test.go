@@ -1058,8 +1058,8 @@ func TestRelationshipAcceptanceFixtureEmitsInspectableGeneratedApp(t *testing.T)
 		filepath.Join("internal", "models", "tenant_profile.go"),
 		filepath.Join("internal", "models", "project.go"),
 		filepath.Join("internal", "models", "tag.go"),
-		filepath.Join("database", "migrations", "000004_relationship_acceptance.up.sql"),
-		filepath.Join("database", "migrations", "000004_relationship_acceptance.down.sql"),
+		filepath.Join("database", "migrations", "900001_relationship_acceptance.up.sql"),
+		filepath.Join("database", "migrations", "900001_relationship_acceptance.down.sql"),
 		filepath.Join(".forge", "relationship_acceptance.go"),
 	} {
 		if _, err := os.Stat(path); err != nil {
@@ -1082,8 +1082,8 @@ func writeRelationshipAcceptanceFixture(directory, module string) error {
 		filepath.Join("internal", "models", "tenant_profile.go"):                           relationshipTenantProfileModel,
 		filepath.Join("internal", "models", "project.go"):                                  relationshipProjectModel,
 		filepath.Join("internal", "models", "tag.go"):                                      relationshipTagModel,
-		filepath.Join("database", "migrations", "000004_relationship_acceptance.up.sql"):   relationshipMigrationUp,
-		filepath.Join("database", "migrations", "000004_relationship_acceptance.down.sql"): relationshipMigrationDown,
+		filepath.Join("database", "migrations", "900001_relationship_acceptance.up.sql"):   relationshipMigrationUp,
+		filepath.Join("database", "migrations", "900001_relationship_acceptance.down.sql"): relationshipMigrationDown,
 		filepath.Join(".forge", "relationship_acceptance.go"):                              strings.ReplaceAll(relationshipAcceptanceProgram, "example.com/issueboard", module),
 	}
 	for path, contents := range files {
