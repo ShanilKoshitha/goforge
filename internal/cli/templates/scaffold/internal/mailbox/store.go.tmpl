@@ -1,0 +1,272 @@
+// Package mailbox persists encrypted outbound messages until a delivery job
+// sends them. It deliberately keeps message addresses and bodies out of the
+// jobs table and out of plaintext database columns.
+package mailbox
+
+import (
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	netmail "net/mail"
+	"strconv"
+	"time"
+
+	frameworkmail "github.com/ShanilKoshitha/goforge/mail"
+)
+
+const recordVersion int16 = 1
+
+var (
+	ErrInvalidKey    = errors.New("mailbox: invalid encryption key")
+	ErrInvalidID     = errors.New("mailbox: invalid outbox id")
+	ErrInvalidRecord = errors.New("mailbox: invalid encrypted record")
+)
+
+// ID is the opaque identifier placed in a delivery job's payload. It contains
+// no recipient, subject, body, or other message metadata.
+type ID string
+
+// Executor is implemented by *sql.DB and *sql.Tx. Passing the transaction used
+// for a domain write makes the outbox insert part of the same commit.
+type Executor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// Store encrypts and persists outbound messages.
+type Store struct {
+	aead   cipher.AEAD
+	random io.Reader
+}
+
+// New constructs a store from exactly 32 bytes of application-specific key
+// material. The caller should decode MAIL_OUTBOX_KEY before calling New.
+func New(key []byte) (*Store, error) {
+	return newWithRandom(key, rand.Reader)
+}
+
+func newWithRandom(key []byte, random io.Reader) (*Store, error) {
+	if len(key) != 32 {
+		return nil, ErrInvalidKey
+	}
+	if random == nil {
+		return nil, errors.New("mailbox: random source is required")
+	}
+	block, err := aes.NewCipher(append([]byte(nil), key...))
+	if err != nil {
+		return nil, ErrInvalidKey
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, errors.New("mailbox: initialize encryption")
+	}
+	return &Store{aead: aead, random: random}, nil
+}
+
+// Enqueue encrypts message and inserts it through executor. Use a *sql.Tx when
+// the message and its delivery job must be committed atomically with other
+// application state.
+func (store *Store) Enqueue(ctx context.Context, executor Executor, message frameworkmail.Message) (ID, error) {
+	if executor == nil {
+		return "", errors.New("mailbox: enqueue requires an executor")
+	}
+	id, err := store.newID()
+	if err != nil {
+		return "", err
+	}
+	nonce, ciphertext, err := store.seal(id, recordVersion, message)
+	if err != nil {
+		return "", err
+	}
+	_, err = executor.ExecContext(ctx, `
+		INSERT INTO mail_outbox (id, version, nonce, ciphertext, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, string(id), recordVersion, nonce, ciphertext)
+	if err != nil {
+		return "", fmt.Errorf("mailbox: insert encrypted record: %w", err)
+	}
+	return id, nil
+}
+
+// Load decrypts one outbox message. A missing row is an idempotent miss rather
+// than an error, which makes replayed delivery jobs safe after successful
+// delivery and deletion.
+func (store *Store) Load(ctx context.Context, executor Executor, id ID) (frameworkmail.Message, bool, error) {
+	if executor == nil {
+		return frameworkmail.Message{}, false, errors.New("mailbox: load requires an executor")
+	}
+	if !validID(id) {
+		return frameworkmail.Message{}, false, ErrInvalidID
+	}
+	var version int16
+	var nonce, ciphertext []byte
+	err := executor.QueryRowContext(ctx, `
+		SELECT version, nonce, ciphertext
+		FROM mail_outbox
+		WHERE id = $1
+	`, string(id)).Scan(&version, &nonce, &ciphertext)
+	if errors.Is(err, sql.ErrNoRows) {
+		return frameworkmail.Message{}, false, nil
+	}
+	if err != nil {
+		return frameworkmail.Message{}, false, fmt.Errorf("mailbox: read encrypted record: %w", err)
+	}
+	message, err := store.open(id, version, nonce, ciphertext)
+	if err != nil {
+		return frameworkmail.Message{}, false, err
+	}
+	return message, true, nil
+}
+
+// Delete removes a message only after its transport has accepted delivery.
+// The bool reports whether a row existed; deleting an already absent row is
+// successful and therefore idempotent.
+func (store *Store) Delete(ctx context.Context, executor Executor, id ID) (bool, error) {
+	if executor == nil {
+		return false, errors.New("mailbox: delete requires an executor")
+	}
+	if !validID(id) {
+		return false, ErrInvalidID
+	}
+	result, err := executor.ExecContext(ctx, `DELETE FROM mail_outbox WHERE id = $1`, string(id))
+	if err != nil {
+		return false, fmt.Errorf("mailbox: delete encrypted record: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return false, errors.New("mailbox: inspect delete result")
+	}
+	return deleted != 0, nil
+}
+
+func (store *Store) newID() (ID, error) {
+	bytes := make([]byte, 16)
+	if _, err := io.ReadFull(store.random, bytes); err != nil {
+		return "", errors.New("mailbox: generate outbox id")
+	}
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(bytes)
+	return ID(encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32]), nil
+}
+
+func (store *Store) seal(id ID, version int16, message frameworkmail.Message) ([]byte, []byte, error) {
+	if !validID(id) || version != recordVersion {
+		return nil, nil, ErrInvalidRecord
+	}
+	stored := snapshotMessage(message)
+	if _, err := restoreMessage(stored); err != nil {
+		return nil, nil, fmt.Errorf("mailbox: invalid message: %w", frameworkmail.ErrInvalidMessage)
+	}
+	plaintext, err := json.Marshal(stored)
+	if err != nil {
+		return nil, nil, ErrInvalidRecord
+	}
+	nonce := make([]byte, store.aead.NonceSize())
+	if _, err := io.ReadFull(store.random, nonce); err != nil {
+		return nil, nil, errors.New("mailbox: generate encryption nonce")
+	}
+	ciphertext := store.aead.Seal(nil, nonce, plaintext, additionalData(id, version))
+	return nonce, ciphertext, nil
+}
+
+func (store *Store) open(id ID, version int16, nonce, ciphertext []byte) (frameworkmail.Message, error) {
+	if !validID(id) || version != recordVersion || len(nonce) != store.aead.NonceSize() || len(ciphertext) < store.aead.Overhead() {
+		return frameworkmail.Message{}, ErrInvalidRecord
+	}
+	plaintext, err := store.aead.Open(nil, nonce, ciphertext, additionalData(id, version))
+	if err != nil {
+		return frameworkmail.Message{}, ErrInvalidRecord
+	}
+	var stored storedMessage
+	if err := json.Unmarshal(plaintext, &stored); err != nil {
+		return frameworkmail.Message{}, ErrInvalidRecord
+	}
+	message, err := restoreMessage(stored)
+	if err != nil {
+		return frameworkmail.Message{}, ErrInvalidRecord
+	}
+	return message, nil
+}
+
+func additionalData(id ID, version int16) []byte {
+	return []byte("goforge-mail-outbox\x00" + string(id) + "\x00" + strconv.Itoa(int(version)))
+}
+
+type storedAddress struct {
+	Name    string `json:"name,omitempty"`
+	Address string `json:"address"`
+}
+
+type storedMessage struct {
+	From    storedAddress   `json:"from"`
+	To      []storedAddress `json:"to"`
+	ReplyTo *storedAddress  `json:"reply_to,omitempty"`
+	Subject string          `json:"subject"`
+	Text    string          `json:"text,omitempty"`
+	HTML    string          `json:"html,omitempty"`
+	Date    time.Time       `json:"date"`
+}
+
+func snapshotMessage(message frameworkmail.Message) storedMessage {
+	from := message.From()
+	recipients := message.To()
+	storedRecipients := make([]storedAddress, len(recipients))
+	for index, recipient := range recipients {
+		storedRecipients[index] = storedAddress{Name: recipient.Name, Address: recipient.Address}
+	}
+	stored := storedMessage{
+		From:    storedAddress{Name: from.Name, Address: from.Address},
+		To:      storedRecipients,
+		Subject: message.Subject(),
+		Text:    message.Text(),
+		HTML:    message.HTML(),
+		Date:    message.Date(),
+	}
+	if replyTo, ok := message.ReplyTo(); ok {
+		stored.ReplyTo = &storedAddress{Name: replyTo.Name, Address: replyTo.Address}
+	}
+	return stored
+}
+
+func restoreMessage(stored storedMessage) (frameworkmail.Message, error) {
+	recipients := make([]netmail.Address, len(stored.To))
+	for index, recipient := range stored.To {
+		recipients[index] = netmail.Address{Name: recipient.Name, Address: recipient.Address}
+	}
+	options := frameworkmail.MessageOptions{
+		From:    netmail.Address{Name: stored.From.Name, Address: stored.From.Address},
+		To:      recipients,
+		Subject: stored.Subject,
+		Text:    stored.Text,
+		HTML:    stored.HTML,
+		Date:    stored.Date,
+	}
+	if stored.ReplyTo != nil {
+		options.ReplyTo = &netmail.Address{Name: stored.ReplyTo.Name, Address: stored.ReplyTo.Address}
+	}
+	return frameworkmail.NewMessage(options)
+}
+
+func validID(id ID) bool {
+	value := string(id)
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			continue
+		}
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return value[14] == '4' && (value[19] == '8' || value[19] == '9' || value[19] == 'a' || value[19] == 'b')
+}

@@ -86,6 +86,23 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if strings.TrimSpace(files["database/migrations/000002_create_jobs.up.sql"]) != strings.TrimSpace(jobpostgres.Schema) {
 		t.Fatal("scaffold queue migration must match the public PostgreSQL adapter schema")
 	}
+	recoveryMigration := files["database/migrations/000004_create_account_recovery.up.sql"]
+	for _, want := range []string{"selector TEXT PRIMARY KEY", "secret_digest BYTEA", "credential_version BIGINT", "mail_outbox", "nonce BYTEA", "ciphertext BYTEA"} {
+		if !strings.Contains(recoveryMigration, want) {
+			t.Errorf("recovery migration omits %q", want)
+		}
+	}
+	for _, forbidden := range []string{"presented_token", "raw_token", "recipient", "subject", "body", "email TEXT"} {
+		if strings.Contains(recoveryMigration, forbidden) {
+			t.Errorf("recovery migration persists forbidden plaintext field %q", forbidden)
+		}
+	}
+	mailbox := files["internal/mailbox/store.go"]
+	for _, want := range []string{"aes.NewCipher", "cipher.NewGCM", "additionalData(id, version)", "frameworkmail.NewMessage", "type Executor interface"} {
+		if !strings.Contains(mailbox, want) {
+			t.Errorf("generated encrypted mailbox omits %q", want)
+		}
+	}
 	worker := files["cmd/worker/main.go"]
 	for _, want := range []string{"jobpostgres.New(db)", "jobs.NewRegistry", "job.NewWorker", "worker.Run(ctx)", "job.SlogObserver"} {
 		if !strings.Contains(worker, want) {

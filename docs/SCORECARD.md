@@ -31,7 +31,7 @@ The JSON equivalents are `POST /auth/password/forgot` and
 | Mail transport is explicit and production-safe | passing locally | Immutable messages and the small `mail.Sender` seam have bounded RFC 5322 encoding; the SMTP adapter enforces TLS/auth/plaintext policy, timeouts, cancellation, and disclosure-safe errors under focused race tests |
 | Mail authoring is application-owned | in progress | `forge make:mail` atomically generates ordinary Go plus compiled Forge HTML and an embedded standard-library text template; the built-in password-reset mail still needs to use the same visible path |
 | Reset issuance is enumeration-safe and bounded | missing | Browser and JSON responses are identical for known/unknown accounts; source/account throttles, normalized addresses, expiry, supersession, and database-clock behavior have focused tests |
-| Durable delivery does not persist the reset secret in plaintext | missing | One transaction stores only the token digest, encrypts the rendered envelope, and queues an outbox-ID-only job; failures roll back all three states and administration/logs disclose none of them |
+| Durable delivery does not persist the reset secret in plaintext | in progress | The scaffold now stores only selectors/digests and AES-256-GCM outbox ciphertext bound to row ID/version, with transaction-compatible enqueue and tamper/swap/wrong-key tests; atomic reset issuance plus outbox-ID-only job wiring remains |
 | Reset consumption is single-use and revocation-safe | missing | Expired, malformed, consumed, superseded, cross-account, and concurrent tokens share one safe failure; exactly one valid reset advances credentials and immediately invalidates every existing session |
 | Browser and JSON contracts are complete | missing | Exact decoding, CSRF, validation, status/redirect/flash behavior, contextual escaping, safe reset origins, and successful sign-in with only the replacement password pass generated tests |
 | Generation and configuration fail before partial state | in progress | Format 9, independent random outbox keys, loopback-only local Mailpit, strict APP_URL/reset/mail settings, and rollback-safe `make:mail` generation pass focused fresh-application tests; recovery routes and wiring remain |
@@ -63,6 +63,10 @@ The JSON equivalents are `POST /auth/password/forgot` and
 - Focused CLI and fresh-application tests pass for strict recovery/mail
   configuration and `forge make:mail AuditNotice`, including view compilation,
   collision preflight, rollback, and generated Go tests.
+- Generated mailbox race tests pass repeated AES-256-GCM round trips and reject
+  ciphertext tampering, row swaps, version changes, wrong keys, invalid IDs,
+  invalid messages, and nonce reuse. The migration exposes no plaintext message
+  columns and stores reset selectors plus SHA-256 digests only.
 
 ## Explicit non-goals for v0.12
 
