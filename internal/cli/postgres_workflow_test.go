@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -885,6 +886,9 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	shutdownAddress := freeAddress(t)
 	shutdownEnvironment := append(environment,
 		"APP_ADDRESS="+shutdownAddress,
+		"APP_URL=http://"+shutdownAddress,
+		"MAIL_FROM=GoForge Acceptance <no-reply@example.test>",
+		"MAIL_OUTBOX_KEY="+base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x6b}, 32)),
 		"SESSION_SECRET="+strings.Repeat("s", 32),
 	)
 	shutdownServer := exec.Command(binary)
