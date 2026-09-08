@@ -1,6 +1,7 @@
 package routes_test
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
@@ -29,7 +30,7 @@ func TestRegisterWiresBrowserMiddlewareAndViews(t *testing.T) {
 		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
 		ApplicationURL: "http://localhost:8080", PasswordResetTTL: 30 * time.Minute,
 		MailFrom: "GoForge <no-reply@example.test>", MailOutboxKey: []byte(strings.Repeat("k", 32)),
-	}, nil)
+	}, passwordRecoveryStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,47 @@ func TestRegisterWiresBrowserMiddlewareAndViews(t *testing.T) {
 			}
 		}
 	}
+
+	for attempt := 1; attempt <= 11; attempt++ {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/auth/password/forgot", strings.NewReader(`{"email":"ada@example.test"}`))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(response, request)
+		if attempt <= 10 && response.Code != http.StatusAccepted {
+			t.Fatalf("recovery attempt %d: expected 202, got %d: %s", attempt, response.Code, response.Body.String())
+		}
+		if attempt == 11 && response.Code != http.StatusTooManyRequests {
+			t.Fatalf("recovery limiter response: expected 429, got %d: %s", response.Code, response.Body.String())
+		}
+		assertPasswordRecoveryPrivacy(t, response)
+	}
+
+	csrf := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/reset-password", strings.NewReader("token=invalid"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	router.ServeHTTP(csrf, request)
+	if csrf.Code != http.StatusForbidden {
+		t.Fatalf("recovery CSRF response: expected 403, got %d: %s", csrf.Code, csrf.Body.String())
+	}
+	assertPasswordRecoveryPrivacy(t, csrf)
 }
+
+func assertPasswordRecoveryPrivacy(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	for header, want := range map[string]string{
+		"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex",
+	} {
+		if got := response.Header().Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
+}
+
+type passwordRecoveryStub struct{}
+
+func (passwordRecoveryStub) Request(context.Context, string) error { return nil }
+
+func (passwordRecoveryStub) Reset(context.Context, string, string) error { return nil }
 
 func TestRegisterRejectsInvalidTrustedProxyCIDRs(t *testing.T) {
 	renderer, err := views.New()

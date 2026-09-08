@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/ShanilKoshitha/goforge/httpx"
@@ -86,8 +87,8 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 	router.Named("health.ready", "GET", "/ready", health.Ready)
 	router.Named("auth.register", "POST", "/auth/register", limitRegister(authController.Register))
 	router.Named("auth.login", "POST", "/auth/login", limitLogin(authController.Login))
-	router.Named("auth.password.forgot", "POST", "/auth/password/forgot", limitRecoveryRequest(recoveryController.ForgotJSON))
-	router.Named("auth.password.reset", "POST", "/auth/password/reset", limitRecoveryReset(recoveryController.ResetJSON))
+	router.Named("auth.password.forgot", "POST", "/auth/password/forgot", passwordRecoveryPrivacy(limitRecoveryRequest(recoveryController.ForgotJSON)))
+	router.Named("auth.password.reset", "POST", "/auth/password/reset", passwordRecoveryPrivacy(limitRecoveryReset(recoveryController.ResetJSON)))
 	authenticated := router.Group("", requireAuth)
 	authenticated.GET("/auth/me", authController.Me)
 	authenticated.POST("/auth/logout", authController.Logout)
@@ -96,16 +97,16 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 	browser := router.Group("", web.Sessions(manager), web.CSRF())
 	browser.Named("web.auth.register.form", "GET", "/register", webAuthController.RegisterForm)
 	browser.Named("web.auth.login.form", "GET", "/login", webAuthController.LoginForm)
-	browser.Named("web.auth.password.forgot.form", "GET", "/forgot-password", recoveryController.ForgotForm)
-	browser.Named("web.auth.password.reset.form", "GET", "/reset-password", recoveryController.ResetForm)
+	browser.Named("web.auth.password.forgot.form", "GET", "/forgot-password", passwordRecoveryPrivacy(recoveryController.ForgotForm))
+	browser.Named("web.auth.password.reset.form", "GET", "/reset-password", passwordRecoveryPrivacy(recoveryController.ResetForm))
 	router.Named("web.auth.register", "POST", "/register",
 		limitRegister(web.Sessions(manager)(web.CSRF()(webAuthController.Register))))
 	router.Named("web.auth.login", "POST", "/login",
 		limitLogin(web.Sessions(manager)(web.CSRF()(webAuthController.Login))))
 	router.Named("web.auth.password.forgot", "POST", "/forgot-password",
-		limitRecoveryRequest(web.Sessions(manager)(web.CSRF()(recoveryController.Forgot))))
+		passwordRecoveryPrivacy(limitRecoveryRequest(web.Sessions(manager)(web.CSRF()(recoveryController.Forgot)))))
 	router.Named("web.auth.password.reset", "POST", "/reset-password",
-		limitRecoveryReset(web.Sessions(manager)(web.CSRF()(recoveryController.Reset))))
+		passwordRecoveryPrivacy(limitRecoveryReset(web.Sessions(manager)(web.CSRF()(recoveryController.Reset)))))
 	authenticatedBrowser := router.Group("", web.Sessions(manager), requireWebAuth, web.CSRF())
 	authenticatedBrowser.Named("web.dashboard", "GET", "/app", webAuthController.Dashboard)
 	authenticatedBrowser.Named("web.auth.logout", "POST", "/logout", webAuthController.Logout)
@@ -114,6 +115,15 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 	authenticatedBrowser.Named("web.auth.logout_all", "POST", "/settings/logout-all", webAuthController.RevokeAll)
 	registerResources(router, renderer, db, manager, requireAuth, requireWebAuth)
 	return nil
+}
+
+func passwordRecoveryPrivacy(next httpx.Handler) httpx.Handler {
+	return func(ctx *httpx.Context) error {
+		ctx.Response.Header().Set("Cache-Control", "no-store")
+		ctx.Response.Header().Set("Referrer-Policy", "no-referrer")
+		ctx.Response.Header().Set("X-Robots-Tag", "noindex")
+		return next(ctx)
+	}
 }
 
 func defaultPasswordRecovery(db *sql.DB, renderer *view.Engine, attempts *ratelimit.Limiter, settings config.Config) (controllers.PasswordRecoveryService, error) {
@@ -139,6 +149,9 @@ func defaultPasswordRecovery(db *sql.DB, renderer *view.Engine, attempts *rateli
 	return auth.NewPasswordRecovery(
 		db, password.New(), attempts, mailer, delivery,
 		settings.ApplicationURL, settings.PasswordResetTTL,
+		func(ctx context.Context, stage string) {
+			slog.WarnContext(ctx, "password recovery request could not be completed", "stage", stage)
+		},
 	)
 }
 
