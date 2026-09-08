@@ -27,7 +27,9 @@ func TestRegisterWiresBrowserMiddlewareAndViews(t *testing.T) {
 	err = routes.Register(router, renderer, &sql.DB{}, session.NewMemoryStore(), ratelimit.NewMemoryStore(20_000), config.Config{
 		Environment: "local", SessionSecret: strings.Repeat("s", 32), ShutdownTimeout: time.Second,
 		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
-	})
+		ApplicationURL: "http://localhost:8080", PasswordResetTTL: 30 * time.Minute,
+		MailFrom: "GoForge <no-reply@example.test>", MailOutboxKey: []byte(strings.Repeat("k", 32)),
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +72,9 @@ func TestRegisterRejectsInvalidTrustedProxyCIDRs(t *testing.T) {
 	err = routes.Register(httpx.NewRouter(), renderer, &sql.DB{}, session.NewMemoryStore(), ratelimit.NewMemoryStore(10), config.Config{
 		Environment: "local", SessionSecret: strings.Repeat("s", 32), TrustedProxies: "127.0.0.1",
 		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
-	})
+		ApplicationURL: "http://localhost:8080", PasswordResetTTL: 30 * time.Minute,
+		MailFrom: "GoForge <no-reply@example.test>", MailOutboxKey: []byte(strings.Repeat("k", 32)),
+	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "trusted proxy CIDR") {
 		t.Fatalf("invalid trusted proxy configuration was accepted: %v", err)
 	}

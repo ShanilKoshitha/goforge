@@ -104,9 +104,15 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		}
 	}
 	worker := files["cmd/worker/main.go"]
-	for _, want := range []string{"jobpostgres.New(db)", "jobs.NewRegistry", "job.NewWorker", "worker.Run(ctx)", "job.SlogObserver"} {
+	for _, want := range []string{"jobpostgres.New(db)", "jobs.NewRegistry", "job.NewWorker", "worker.Run(ctx)", "job.SlogObserver", "mailsmtp.New", "mailbox.New(settings.MailOutboxKey)"} {
 		if !strings.Contains(worker, want) {
 			t.Errorf("generated worker omits %q", want)
+		}
+	}
+	routes := files["routes/routes.go"]
+	for _, want := range []string{"/forgot-password", "/reset-password", "/auth/password/forgot", "/auth/password/reset", "defaultPasswordRecovery"} {
+		if !strings.Contains(routes, want) {
+			t.Errorf("generated routes omit recovery contract %q", want)
 		}
 	}
 	dispatcher := files["internal/jobs/dispatcher.go"]

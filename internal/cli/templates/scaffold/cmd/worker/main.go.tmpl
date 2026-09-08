@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,10 +12,12 @@ import (
 
 	"github.com/ShanilKoshitha/goforge/job"
 	jobpostgres "github.com/ShanilKoshitha/goforge/job/postgres"
+	mailsmtp "github.com/ShanilKoshitha/goforge/mail/smtp"
 
 	"[[.Module]]/internal/config"
 	appdatabase "[[.Module]]/internal/database"
 	"[[.Module]]/internal/jobs"
+	"[[.Module]]/internal/mailbox"
 )
 
 func main() {
@@ -44,20 +47,48 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("build job store: %w", err)
 	}
-	registry, err := jobs.NewRegistry(jobs.Dependencies{DB: db})
+	outbox, err := mailbox.New(settings.MailOutboxKey)
+	if err != nil {
+		return fmt.Errorf("build encrypted mail outbox: %w", err)
+	}
+	tlsMode := mailsmtp.TLSSTARTTLS
+	unsafePlaintext := false
+	switch settings.MailSMTPTLS {
+	case "implicit":
+		tlsMode = mailsmtp.TLSImplicit
+	case "none":
+		unsafePlaintext = true
+	}
+	sender, err := mailsmtp.New(mailsmtp.Config{
+		Address: settings.MailSMTPAddress,
+		TLSMode: tlsMode,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: settings.MailSMTPServerName,
+		},
+		Username:             settings.MailSMTPUsername,
+		Password:             settings.MailSMTPPassword,
+		DialTimeout:          settings.MailSMTPTimeout,
+		OperationTimeout:     settings.MailSMTPTimeout,
+		UnsafeAllowPlaintext: unsafePlaintext,
+	})
+	if err != nil {
+		return fmt.Errorf("build mail sender: %w", err)
+	}
+	registry, err := jobs.NewRegistry(jobs.Dependencies{DB: db, Outbox: outbox, MailSender: sender})
 	if err != nil {
 		return fmt.Errorf("build job registry: %w", err)
 	}
 	worker, err := job.NewWorker(store, registry, job.WorkerConfig{
-		Queues:            queues(settings.JobQueues),
-		Concurrency:       settings.JobConcurrency,
-		PollInterval:      settings.JobPollInterval,
-		LeaseDuration:     settings.JobLeaseDuration,
-		HeartbeatInterval: settings.JobHeartbeatInterval,
-		OperationTimeout:  settings.JobOperationTimeout,
+		Queues:              queues(settings.JobQueues),
+		Concurrency:         settings.JobConcurrency,
+		PollInterval:        settings.JobPollInterval,
+		LeaseDuration:       settings.JobLeaseDuration,
+		HeartbeatInterval:   settings.JobHeartbeatInterval,
+		OperationTimeout:    settings.JobOperationTimeout,
 		CancellationTimeout: settings.JobCancellationTimeout,
-		ShutdownTimeout:   settings.JobShutdownTimeout,
-		Observer:          job.SlogObserver(slog.Default()),
+		ShutdownTimeout:     settings.JobShutdownTimeout,
+		Observer:            job.SlogObserver(slog.Default()),
 	})
 	if err != nil {
 		return fmt.Errorf("build job worker: %w", err)

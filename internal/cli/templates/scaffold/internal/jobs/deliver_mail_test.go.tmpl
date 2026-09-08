@@ -1,0 +1,132 @@
+package jobs
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net/mail"
+	"strings"
+	"testing"
+
+	frameworkmail "github.com/ShanilKoshitha/goforge/mail"
+
+	"[[.Module]]/internal/mailbox"
+)
+
+const deliveryTestID mailbox.ID = "00112233-4455-4677-8899-aabbccddeeff"
+
+func TestDeliverMailPayloadContainsOnlyOpaqueOutboxID(t *testing.T) {
+	encoded, err := json.Marshal(DeliverMail{OutboxID: deliveryTestID})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if string(encoded) != `{"outbox_id":"00112233-4455-4677-8899-aabbccddeeff"}` {
+		t.Fatalf("payload = %s", encoded)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(fields) != 1 {
+		t.Fatalf("payload fields = %#v", fields)
+	}
+}
+
+func TestDeliverMailMissingOutboxIsIdempotent(t *testing.T) {
+	outbox := &fakeOutbox{found: false}
+	sender := &fakeSender{}
+	handler := DeliverMailHandler{Dependencies: Dependencies{DB: &sql.DB{}, Outbox: outbox, MailSender: sender}}
+
+	if err := handler.Handle(context.Background(), DeliverMail{OutboxID: deliveryTestID}); err != nil {
+		t.Fatalf("handle missing outbox: %v", err)
+	}
+	if sender.calls != 0 || outbox.deleteCalls != 0 {
+		t.Fatalf("missing outbox sent/deleted: sends=%d deletes=%d", sender.calls, outbox.deleteCalls)
+	}
+}
+
+func TestDeliverMailRetainsOutboxWhenSenderFails(t *testing.T) {
+	sensitive := errors.New("smtp failure for reader@example.test with reset-secret")
+	outbox := &fakeOutbox{message: deliveryTestMessage(t), found: true}
+	sender := &fakeSender{err: sensitive}
+	handler := DeliverMailHandler{Dependencies: Dependencies{DB: &sql.DB{}, Outbox: outbox, MailSender: sender}}
+
+	err := handler.Handle(context.Background(), DeliverMail{OutboxID: deliveryTestID})
+	if err == nil || !errors.Is(err, sensitive) {
+		t.Fatalf("handle error = %v", err)
+	}
+	if strings.Contains(err.Error(), "reader@example.test") || strings.Contains(err.Error(), "reset-secret") || strings.Contains(err.Error(), string(deliveryTestID)) {
+		t.Fatalf("rendered error disclosed sensitive data: %q", err)
+	}
+	if outbox.deleteCalls != 0 {
+		t.Fatalf("failed delivery deleted outbox %d times", outbox.deleteCalls)
+	}
+}
+
+func TestDeliverMailDeletesOnlyAfterAcceptedSend(t *testing.T) {
+	outbox := &fakeOutbox{message: deliveryTestMessage(t), found: true}
+	sender := &fakeSender{}
+	handler := DeliverMailHandler{Dependencies: Dependencies{DB: &sql.DB{}, Outbox: outbox, MailSender: sender}}
+
+	if err := handler.Handle(context.Background(), DeliverMail{OutboxID: deliveryTestID}); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if sender.calls != 1 || outbox.deleteCalls != 1 {
+		t.Fatalf("sends=%d deletes=%d", sender.calls, outbox.deleteCalls)
+	}
+}
+
+func TestNewRegistryIncludesBuiltInMailDelivery(t *testing.T) {
+	registry, err := NewRegistry(Dependencies{DB: &sql.DB{}, Outbox: &fakeOutbox{}, MailSender: &fakeSender{}})
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	for _, name := range registry.Names() {
+		if name == DeliverMailDefinition.Name() {
+			return
+		}
+	}
+	t.Fatalf("built-in delivery missing from registered names: %#v", registry.Names())
+}
+
+type fakeOutbox struct {
+	message     frameworkmail.Message
+	found       bool
+	loadErr     error
+	deleteErr   error
+	deleteCalls int
+}
+
+func (outbox *fakeOutbox) Load(context.Context, mailbox.Executor, mailbox.ID) (frameworkmail.Message, bool, error) {
+	return outbox.message, outbox.found, outbox.loadErr
+}
+
+func (outbox *fakeOutbox) Delete(context.Context, mailbox.Executor, mailbox.ID) (bool, error) {
+	outbox.deleteCalls++
+	return true, outbox.deleteErr
+}
+
+type fakeSender struct {
+	calls int
+	err   error
+}
+
+func (sender *fakeSender) Send(context.Context, frameworkmail.Message) error {
+	sender.calls++
+	return sender.err
+}
+
+func deliveryTestMessage(t *testing.T) frameworkmail.Message {
+	t.Helper()
+	message, err := frameworkmail.NewMessage(frameworkmail.MessageOptions{
+		From:    mail.Address{Name: "GoForge", Address: "no-reply@example.test"},
+		To:      []mail.Address{{Address: "reader@example.test"}},
+		Subject: "Reset your password",
+		Text:    "reset-secret",
+	})
+	if err != nil {
+		t.Fatalf("new message: %v", err)
+	}
+	return message
+}

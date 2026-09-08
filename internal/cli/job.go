@@ -50,6 +50,10 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	if err != nil {
 		return err
 	}
+	format, err := projectFormat()
+	if err != nil {
+		return err
+	}
 	files, err := jobFiles(spec)
 	if err != nil {
 		return err
@@ -63,7 +67,7 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	}
 	next := jobState{Jobs: append(append([]jobSpec(nil), state.Jobs...), spec)}
 	sort.Slice(next.Jobs, func(i, j int) bool { return next.Jobs[i].Name < next.Jobs[j].Name })
-	registry, err := generatedJobRegistry(module, next)
+	registry, err := generatedJobRegistryForFormat(module, next, format)
 	if err != nil {
 		return err
 	}
@@ -259,10 +263,15 @@ func jobFiles(spec jobSpec) ([]plannedFile, error) {
 }
 
 func generatedJobRegistry(module string, state jobState) (string, error) {
+	return generatedJobRegistryForFormat(module, state, 6)
+}
+
+func generatedJobRegistryForFormat(module string, state jobState, format int) (string, error) {
 	return renderTemplate("templates/job/registry_gen.go.tmpl", generatedJobRegistryPath, struct {
-		Module string
-		Jobs   []jobSpec
-	}{Module: module, Jobs: state.Jobs})
+		Module   string
+		Jobs     []jobSpec
+		Builtins bool
+	}{Module: module, Jobs: state.Jobs, Builtins: format >= 9})
 }
 
 func readOptionalGeneratedFile(path string) ([]byte, bool, error) {

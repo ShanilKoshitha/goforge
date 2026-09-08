@@ -29,13 +29,13 @@ The JSON equivalents are `POST /auth/password/forgot` and
 | Criterion | State | Required evidence |
 | --- | --- | --- |
 | Mail transport is explicit and production-safe | passing locally | Immutable messages and the small `mail.Sender` seam have bounded RFC 5322 encoding; the SMTP adapter enforces TLS/auth/plaintext policy, timeouts, cancellation, and disclosure-safe errors under focused race tests |
-| Mail authoring is application-owned | in progress | `forge make:mail` atomically generates ordinary Go plus compiled Forge HTML and an embedded standard-library text template; the built-in password-reset mail still needs to use the same visible path |
-| Reset issuance is enumeration-safe and bounded | missing | Browser and JSON responses are identical for known/unknown accounts; source/account throttles, normalized addresses, expiry, supersession, and database-clock behavior have focused tests |
-| Durable delivery does not persist the reset secret in plaintext | in progress | The scaffold now stores only selectors/digests and AES-256-GCM outbox ciphertext bound to row ID/version, with transaction-compatible enqueue and tamper/swap/wrong-key tests; atomic reset issuance plus outbox-ID-only job wiring remains |
-| Reset consumption is single-use and revocation-safe | missing | Expired, malformed, consumed, superseded, cross-account, and concurrent tokens share one safe failure; exactly one valid reset advances credentials and immediately invalidates every existing session |
-| Browser and JSON contracts are complete | missing | Exact decoding, CSRF, validation, status/redirect/flash behavior, contextual escaping, safe reset origins, and successful sign-in with only the replacement password pass generated tests |
-| Generation and configuration fail before partial state | in progress | Format 9, independent random outbox keys, loopback-only local Mailpit, strict APP_URL/reset/mail settings, and rollback-safe `make:mail` generation pass focused fresh-application tests; recovery routes and wiring remain |
-| Existing applications remain conventional and compatible | missing | Frozen format-8 auth/resources/jobs/views/ORM retain behavior; direct Go, SQL, SMTP/sender, template, queue, and session replacement paths remain documented and tested |
+| Mail authoring is application-owned | passing locally | `forge make:mail` and the built-in password-reset message use ordinary generated Go, compiled Forge HTML, and embedded standard-library text templates; callers directly replace the renderer, message, or sender |
+| Reset issuance is enumeration-safe and bounded | in progress | The generated service normalizes and silently account-throttles addresses, uses database-clock expiry, supersedes by user, and exposes one browser/JSON response; real PostgreSQL known/unknown and concurrency evidence remains |
+| Durable delivery does not persist the reset secret in plaintext | in progress | One generated transaction now stores the selector/digest, AES-256-GCM envelope, and outbox-ID-only typed job; the worker retains failed mail and deletes accepted mail, but real PostgreSQL rollback/disclosure evidence remains |
+| Reset consumption is single-use and revocation-safe | in progress | The generated transaction locks token plus user, constant-time verifies the digest and issuance credential generation, atomically advances credentials and consumes the row; real replay/concurrency/session evidence remains |
+| Browser and JSON contracts are complete | passing locally | Generated request/controller/view suites cover exact JSON/form decoding, validation, privacy headers, generic wrapped-sentinel failures, 202/204, PRG flashes/redirects, secret preservation, and contextual Forge escaping |
+| Generation and configuration fail before partial state | passing locally | Format 9, random outbox keys, loopback-only Mailpit, strict process-specific settings, recovery migration/routes/job wiring, and rollback-safe `make:mail` pass fresh generated tests |
+| Existing applications remain conventional and compatible | passing locally | A frozen format-6 application still compiles after `make:job`; format-aware registry generation adds built-ins only to format 9, and targeted legacy workflow gates pass |
 | A fresh PostgreSQL application works end to end | missing | An isolated application migrates, captures the delivered reset link, proves retry and disclosure policy, resets through browser and JSON paths, and verifies replay/concurrency/session revocation outside the source checkout |
 | The milestone passes twice without regression | missing | Framework race/vet/build, native Windows checks, and the complete fresh PostgreSQL workflow pass twice; independent security, architecture, and release reviews report no P0–P2 blocker |
 
@@ -67,6 +67,11 @@ The JSON equivalents are `POST /auth/password/forgot` and
   ciphertext tampering, row swaps, version changes, wrong keys, invalid IDs,
   invalid messages, and nonce reuse. The migration exposes no plaintext message
   columns and stores reset selectors plus SHA-256 digests only.
+- Fresh generated whole-application tests compile the recovery service, strict
+  browser/JSON presentation, application-owned dual-template message, atomic
+  outbox dispatch adapter, built-in delivery handler, explicit routes, and SMTP
+  worker. Focused format-6 compatibility tests confirm later job generation does
+  not inject format-9 built-ins into an older application.
 
 ## Explicit non-goals for v0.12
 

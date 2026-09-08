@@ -644,7 +644,7 @@ func TestDevelopmentSupervisorRevertsCandidateExitDuringPromotion(t *testing.T) 
 }
 
 func TestServeRejectsUnsupportedFormatsBeforeSpawning(t *testing.T) {
-	for _, manifest := range []string{"version: 3\n", "version: 9\n", "version: nope\n"} {
+	for _, manifest := range []string{"version: 3\n", "version: 10\n", "version: nope\n"} {
 		t.Run(strings.TrimSpace(manifest), func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte(manifest), 0o644); err != nil {
