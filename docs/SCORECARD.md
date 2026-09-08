@@ -28,13 +28,13 @@ The JSON equivalents are `POST /auth/password/forgot` and
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| Mail transport is explicit and production-safe | missing | A small `mail.Sender` contract and bounded SMTP adapter validate addresses/headers, cancellation, authentication, TLS policy, message sizes, and text/HTML MIME without global state |
-| Mail authoring is application-owned | missing | Password-reset mail and `forge make:mail` use compiled Forge HTML plus explicit standard-library text templates; generated Go constructs messages and may replace the renderer or sender directly |
+| Mail transport is explicit and production-safe | passing locally | Immutable messages and the small `mail.Sender` seam have bounded RFC 5322 encoding; the SMTP adapter enforces TLS/auth/plaintext policy, timeouts, cancellation, and disclosure-safe errors under focused race tests |
+| Mail authoring is application-owned | in progress | `forge make:mail` atomically generates ordinary Go plus compiled Forge HTML and an embedded standard-library text template; the built-in password-reset mail still needs to use the same visible path |
 | Reset issuance is enumeration-safe and bounded | missing | Browser and JSON responses are identical for known/unknown accounts; source/account throttles, normalized addresses, expiry, supersession, and database-clock behavior have focused tests |
 | Durable delivery does not persist the reset secret in plaintext | missing | One transaction stores only the token digest, encrypts the rendered envelope, and queues an outbox-ID-only job; failures roll back all three states and administration/logs disclose none of them |
 | Reset consumption is single-use and revocation-safe | missing | Expired, malformed, consumed, superseded, cross-account, and concurrent tokens share one safe failure; exactly one valid reset advances credentials and immediately invalidates every existing session |
 | Browser and JSON contracts are complete | missing | Exact decoding, CSRF, validation, status/redirect/flash behavior, contextual escaping, safe reset origins, and successful sign-in with only the replacement password pass generated tests |
-| Generation and configuration fail before partial state | missing | Fresh format-9 configuration, migration, routes, mail/job wiring, views, and `make:mail` are deterministic; invalid names/settings and injected generator failures do not publish partial files or managed state |
+| Generation and configuration fail before partial state | in progress | Format 9, independent random outbox keys, loopback-only local Mailpit, strict APP_URL/reset/mail settings, and rollback-safe `make:mail` generation pass focused fresh-application tests; recovery routes and wiring remain |
 | Existing applications remain conventional and compatible | missing | Frozen format-8 auth/resources/jobs/views/ORM retain behavior; direct Go, SQL, SMTP/sender, template, queue, and session replacement paths remain documented and tested |
 | A fresh PostgreSQL application works end to end | missing | An isolated application migrates, captures the delivered reset link, proves retry and disclosure policy, resets through browser and JSON paths, and verifies replay/concurrency/session revocation outside the source checkout |
 | The milestone passes twice without regression | missing | Framework race/vet/build, native Windows checks, and the complete fresh PostgreSQL workflow pass twice; independent security, architecture, and release reviews report no P0–P2 blocker |
@@ -54,6 +54,15 @@ The JSON equivalents are `POST /auth/password/forgot` and
 - Recurring schedules and relationship-aware resource generation are valuable
   next milestones. They do not close this production authentication gap and are
   deliberately deferred until the written v0.12 target passes.
+
+## Implementation evidence — 2026-09-08
+
+- `go test -race ./mail/...` and `go vet ./mail/...` pass for immutable message
+  construction plus STARTTLS, implicit TLS, and explicit loopback-only plaintext
+  SMTP delivery.
+- Focused CLI and fresh-application tests pass for strict recovery/mail
+  configuration and `forge make:mail AuditNotice`, including view compilation,
+  collision preflight, rollback, and generated Go tests.
 
 ## Explicit non-goals for v0.12
 

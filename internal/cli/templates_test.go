@@ -53,11 +53,19 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {
 		t.Fatal("PostgreSQL 18 volume must contain its versioned data directory")
 	}
+	for _, want := range []string{"axllent/mailpit:v1.31.1", `"127.0.0.1:1025:1025"`, `"127.0.0.1:8025:8025"`} {
+		if !strings.Contains(files["compose.yaml"], want) {
+			t.Errorf("generated Compose file omits safe mail catcher setting %q", want)
+		}
+	}
 	for _, setting := range []string{
 		"APP_REQUEST_TIMEOUT=15s", "APP_READ_HEADER_TIMEOUT=5s", "APP_READ_TIMEOUT=30s",
 		"APP_WRITE_TIMEOUT=30s", "APP_IDLE_TIMEOUT=2m", "APP_MAX_HEADER_BYTES=1048576",
 		"APP_ENABLE_HSTS=false", "TRUSTED_PROXIES=",
 		"SESSION_IDLE_LIFETIME=2h", "SESSION_ABSOLUTE_LIFETIME=24h",
+		"APP_URL=https://example.com", "AUTH_PASSWORD_RESET_TTL=30m",
+		"MAIL_FROM=GoForge <no-reply@example.test>", "MAIL_SMTP_TLS=implicit",
+		"MAIL_OUTBOX_KEY=replace-with-32-random-bytes-as-unpadded-base64url",
 	} {
 		if !strings.Contains(files[".env.example"], setting) {
 			t.Errorf("generated .env.example omits %q", setting)
@@ -111,8 +119,23 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if files[".env"] == second[".env"] {
-		t.Fatal("new applications must have different session secrets")
+		t.Fatal("new applications must have different generated secrets")
 	}
+	firstKey := environmentValue(files[".env"], "MAIL_OUTBOX_KEY")
+	secondKey := environmentValue(second[".env"], "MAIL_OUTBOX_KEY")
+	if firstKey == "" || secondKey == "" || firstKey == secondKey || len(firstKey) != 43 || len(secondKey) != 43 {
+		t.Fatal("new applications must have independent 256-bit mail outbox keys")
+	}
+}
+
+func environmentValue(contents, name string) string {
+	prefix := name + "="
+	for _, line := range strings.Split(contents, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	return ""
 }
 
 func TestCreatedProjectProtectsEnvironmentSecrets(t *testing.T) {

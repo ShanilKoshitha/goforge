@@ -1,0 +1,54 @@
+package mail
+
+import (
+	"bytes"
+	_ "embed"
+	"fmt"
+	"html/template"
+	netmail "net/mail"
+	texttemplate "text/template"
+
+	forgemail "github.com/ShanilKoshitha/goforge/mail"
+	"github.com/ShanilKoshitha/goforge/view"
+)
+
+//go:embed templates/[[.File]].txt.tmpl
+var [[.File]]TextSource string
+
+type [[.Name]]Data struct {
+	Message string
+}
+
+type [[.Name]] struct {
+	from     netmail.Address
+	html     *template.Template
+	text     *texttemplate.Template
+}
+
+func New[[.Name]](renderer *view.Engine, from netmail.Address) (*[[.Name]], error) {
+	if renderer == nil {
+		return nil, fmt.Errorf("[[.Name]] renderer is required")
+	}
+	text, err := texttemplate.New("[[.File]]").Option("missingkey=error").Parse([[.File]]TextSource)
+	if err != nil {
+		return nil, fmt.Errorf("parse [[.Name]] text template: %w", err)
+	}
+	return &[[.Name]]{from: from, html: renderer.Templates(), text: text}, nil
+}
+
+func (mail *[[.Name]]) Message(to netmail.Address, data [[.Name]]Data) (forgemail.Message, error) {
+	if mail == nil {
+		return forgemail.Message{}, fmt.Errorf("[[.Name]] is required")
+	}
+	var textBody, htmlBody bytes.Buffer
+	if err := mail.text.Execute(&textBody, data); err != nil {
+		return forgemail.Message{}, fmt.Errorf("render [[.Name]] text: %w", err)
+	}
+	if err := mail.html.ExecuteTemplate(&htmlBody, "mail/[[.File]]", data); err != nil {
+		return forgemail.Message{}, fmt.Errorf("render [[.Name]] HTML: %w", err)
+	}
+	return forgemail.NewMessage(forgemail.MessageOptions{
+		From: mail.from, To: []netmail.Address{to}, Subject: "[[.Title]]",
+		Text: textBody.String(), HTML: htmlBody.String(),
+	})
+}

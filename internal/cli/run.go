@@ -38,7 +38,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return nil
 	case "new":
 		return runNew(args[1:], stdout)
-	case "make", "make:controller", "make:request", "make:migration", "make:model", "make:resource", "make:component", "make:job":
+	case "make", "make:controller", "make:request", "make:migration", "make:model", "make:resource", "make:component", "make:job", "make:mail":
 		return runMake(ctx, args, stdin, stdout, stderr, processes)
 	case "serve":
 		if len(args) != 1 {
@@ -146,6 +146,7 @@ Usage:
   forge make:resource <name> [--field <name>:<type>[:required|nullable]]...
   forge make:component <name>
   forge make:job <name>
+  forge make:mail <name>
   forge version
 
 Resource field types: string, text, integer, boolean. Fields are required by

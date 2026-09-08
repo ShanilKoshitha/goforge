@@ -15,7 +15,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	var rest []string
 	if args[0] == "make" {
 		if len(args) < 2 {
-			return errors.New("usage: forge make <controller|request|migration|model|resource|component|job> <name>")
+			return errors.New("usage: forge make <controller|request|migration|model|resource|component|job|mail> <name>")
 		}
 		kind, rest = args[1], args[2:]
 	} else {
@@ -66,6 +66,8 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		return makeComponent(ctx, name, stdin, stdout, stderr, processes)
 	case "job":
 		return makeJob(name, stdout)
+	case "mail":
+		return makeMail(ctx, name, stdin, stdout, stderr, processes)
 	default:
 		return fmt.Errorf("unknown generator %q", kind)
 	}

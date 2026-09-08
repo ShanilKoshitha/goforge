@@ -26,7 +26,7 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err := Run([]string{"new", directory, "--module", "example.com/orders", "--replace", root}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "set APP_ENV=local in .env") {
+	if !strings.Contains(output.String(), "set APP_ENV=local and APP_URL=http://localhost:8080 in .env") {
 		t.Fatalf("new-project instructions omit the local HTTP environment step:\n%s", output.String())
 	}
 	for _, name := range []string{
@@ -123,6 +123,18 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	}
 	if err := Run([]string{"make:job", "SendWelcome"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold cannot generate a job: %v\n%s", err, checkOutput.String())
+	}
+	if err := Run([]string{"make:mail", "AuditNotice"}, &checkOutput, &checkOutput); err != nil {
+		t.Fatalf("fresh scaffold cannot generate mail: %v\n%s", err, checkOutput.String())
+	}
+	for _, name := range []string{
+		"internal/mail/audit_notice.go",
+		"internal/mail/templates/audit_notice.txt.tmpl",
+		"resources/views/mail/audit_notice.forge.html",
+	} {
+		if _, err := os.Stat(filepath.FromSlash(name)); err != nil {
+			t.Fatalf("generated mail artifact %s is missing: %v", name, err)
+		}
 	}
 	if err := Run([]string{"make", "job", "ArchiveAccount"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold cannot generate a job through the spaced alias: %v\n%s", err, checkOutput.String())
@@ -228,7 +240,7 @@ func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
-			if err := os.WriteFile("forge.yaml", []byte("version: 9\n"), 0o644); err != nil {
+			if err := os.WriteFile("forge.yaml", []byte("version: 10\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer

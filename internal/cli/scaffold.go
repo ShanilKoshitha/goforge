@@ -14,6 +14,7 @@ type scaffoldData struct {
 	Module        string
 	ProjectName   string
 	SessionSecret string
+	MailOutboxKey string
 }
 
 func scaffoldFiles(module, replace, projectName string) (map[string]string, error) {
@@ -21,9 +22,14 @@ func scaffoldFiles(module, replace, projectName string) (map[string]string, erro
 	if _, err := rand.Read(secret); err != nil {
 		return nil, fmt.Errorf("generate session secret: %w", err)
 	}
+	outboxKey := make([]byte, 32)
+	if _, err := rand.Read(outboxKey); err != nil {
+		return nil, fmt.Errorf("generate mail outbox key: %w", err)
+	}
 	data := scaffoldData{
 		Module: module, ProjectName: strconv.Quote(projectName),
 		SessionSecret: base64.RawURLEncoding.EncodeToString(secret),
+		MailOutboxKey: base64.RawURLEncoding.EncodeToString(outboxKey),
 	}
 	files := make(map[string]string)
 	err := fs.WalkDir(templateFiles, "templates/scaffold", func(path string, entry fs.DirEntry, err error) error {
