@@ -83,11 +83,28 @@ jobs:
         run: |
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.9.0' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.10.0' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
+          go mod verify
           "$RUNNER_TEMP/forge" test
           "$RUNNER_TEMP/forge" build
           test -x bin/app
+          APP_ENV=local APP_ADDRESS=127.0.0.1:18082 "$RUNNER_TEMP/forge" serve >"$RUNNER_TEMP/current-serve.log" 2>&1 &
+          serve_pid=$!
+          cleanup() {
+            kill -TERM "$serve_pid" 2>/dev/null || true
+            wait "$serve_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 150); do
+            if curl --fail --silent --max-time 1 http://127.0.0.1:18082/health >/dev/null; then break; fi
+            if ! kill -0 "$serve_pid" 2>/dev/null; then cat "$RUNNER_TEMP/current-serve.log"; exit 1; fi
+            sleep 0.1
+          done
+          curl --fail --silent --max-time 1 http://127.0.0.1:18082/health >/dev/null
+          kill -TERM "$serve_pid"
+          wait "$serve_pid"
+          trap - EXIT
       - name: Generated PostgreSQL applications
         run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow)$' -count=2 -v
 

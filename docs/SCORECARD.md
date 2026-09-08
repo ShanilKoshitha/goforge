@@ -50,6 +50,13 @@ Target:
   independently passed Linux/PostgreSQL in 6m27s and native Windows in 2m57s.
 - Independent product and architecture reviews approved the final transaction,
   process, compatibility, and acceptance boundaries with no P0–P2 finding.
+- Merged `main` passed [CI run 34250734126](https://github.com/ShanilKoshitha/goforge/actions/runs/34250734126),
+  then lightweight unsigned v0.10.0 fixed merge commit `f6a26e5`. The public Go
+  proxy resolved that exact origin and returned module checksum
+  `h1:HfC1lNHqsbaJGLGSY/auzY0kg+PWBUTh/5Whj/h/jWQ=`.
+- A clean-cache v0.10.1 distribution smoke generated without `--replace`,
+  resolved public v0.10.0 with its checksum, passed `go mod verify`, `forge
+  test`, and `forge build`, and published the canonical `bin/app.exe`.
 
 ## Baseline — 2026-09-06
 
