@@ -77,17 +77,25 @@ func TestDeliverMailDeletesOnlyAfterAcceptedSend(t *testing.T) {
 	}
 }
 
-func TestNewRegistryIncludesBuiltInMailDelivery(t *testing.T) {
+func TestNewRegistryIncludesBuiltInMailDeliveryAndCleanup(t *testing.T) {
 	registry, err := NewRegistry(Dependencies{DB: &sql.DB{}, Outbox: &fakeOutbox{}, MailSender: &fakeSender{}})
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
+	want := map[string]bool{
+		DeliverMailDefinition.Name(): false,
+		CleanupMailDefinition.Name(): false,
+	}
 	for _, name := range registry.Names() {
-		if name == DeliverMailDefinition.Name() {
-			return
+		if _, expected := want[name]; expected {
+			want[name] = true
 		}
 	}
-	t.Fatalf("built-in delivery missing from registered names: %#v", registry.Names())
+	for name, found := range want {
+		if !found {
+			t.Errorf("built-in %s missing from registered names: %#v", name, registry.Names())
+		}
+	}
 }
 
 type fakeOutbox struct {

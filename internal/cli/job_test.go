@@ -181,7 +181,10 @@ func TestMakeJobRejectsEveryGeneratedDeclarationCollisionBeforeWrites(t *testing
 }
 
 func TestMakeJobRejectsFormatNineBuiltinDeclarationsBeforeWrites(t *testing.T) {
-	for _, name := range []string{"Outbox", "DeliverMail", "DeliverMailDefinition", "DeliverMailHandler", "DispatchDeliverMail"} {
+	for _, name := range []string{
+		"Outbox", "DeliverMail", "DeliverMailDefinition", "DeliverMailHandler", "DispatchDeliverMail",
+		"CleanupMail", "CleanupMailDefinition", "CleanupMailHandler", "DispatchCleanupMail", "MailOutboxRetention",
+	} {
 		t.Run(name, func(t *testing.T) {
 			directory := jobProject(t, "9")
 			t.Chdir(directory)

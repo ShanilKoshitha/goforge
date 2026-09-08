@@ -1,0 +1,60 @@
+package jobs
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestCleanupMailHasBoundedExplicitRetentionAndOpaquePayload(t *testing.T) {
+	if MailOutboxRetention != 7*24*time.Hour {
+		t.Fatalf("mail outbox retention = %s", MailOutboxRetention)
+	}
+	encoded, err := json.Marshal(CleanupMail{OutboxID: deliveryTestID})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if string(encoded) != `{"outbox_id":"00112233-4455-4677-8899-aabbccddeeff"}` {
+		t.Fatalf("payload = %s", encoded)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil || len(fields) != 1 {
+		t.Fatalf("cleanup payload fields = %#v, err=%v", fields, err)
+	}
+}
+
+func TestCleanupMailDeletionIsIdempotent(t *testing.T) {
+	outbox := &fakeOutbox{}
+	handler := CleanupMailHandler{Dependencies: Dependencies{DB: &sql.DB{}, Outbox: outbox}}
+	payload := CleanupMail{OutboxID: deliveryTestID}
+
+	if err := handler.Handle(context.Background(), payload); err != nil {
+		t.Fatalf("first cleanup: %v", err)
+	}
+	if err := handler.Handle(context.Background(), payload); err != nil {
+		t.Fatalf("replayed cleanup: %v", err)
+	}
+	if outbox.deleteCalls != 2 {
+		t.Fatalf("cleanup delete calls = %d, want 2 idempotent attempts", outbox.deleteCalls)
+	}
+}
+
+func TestCleanupMailFailureIsDisclosureSafe(t *testing.T) {
+	sensitive := errors.New("delete reader@example.test reset-secret 00112233-4455-4677-8899-aabbccddeeff")
+	outbox := &fakeOutbox{deleteErr: sensitive}
+	handler := CleanupMailHandler{Dependencies: Dependencies{DB: &sql.DB{}, Outbox: outbox}}
+
+	err := handler.Handle(context.Background(), CleanupMail{OutboxID: deliveryTestID})
+	if err == nil || !errors.Is(err, sensitive) {
+		t.Fatalf("cleanup error = %v", err)
+	}
+	for _, secret := range []string{"reader@example.test", "reset-secret", string(deliveryTestID)} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("rendered cleanup error disclosed %q: %q", secret, err)
+		}
+	}
+}

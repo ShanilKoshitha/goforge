@@ -70,6 +70,10 @@ func registerBuiltins(registry *job.Registry, dependencies Dependencies) error {
 	if err := job.Register(registry, DeliverMailDefinition, handler.Handle); err != nil {
 		return deliveryFailure("register built-in mail delivery", err)
 	}
+	cleanup := CleanupMailHandler{Dependencies: dependencies}
+	if err := job.Register(registry, CleanupMailDefinition, cleanup.Handle); err != nil {
+		return deliveryFailure("register built-in mail cleanup", err)
+	}
 	return nil
 }
 

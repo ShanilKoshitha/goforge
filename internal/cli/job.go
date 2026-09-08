@@ -245,7 +245,8 @@ func validateJobBuiltinDeclarations(jobs []jobSpec, format int) error {
 	owners := make(map[string]string)
 	for _, declaration := range []string{
 		"Outbox", "Dependencies", "DeliverMail", "DeliverMailDefinition",
-		"DeliverMailHandler", "DispatchDeliverMail", "NewDispatcher", "NewRegistry",
+		"DeliverMailHandler", "DispatchDeliverMail", "CleanupMail", "CleanupMailDefinition",
+		"CleanupMailHandler", "DispatchCleanupMail", "MailOutboxRetention", "NewDispatcher", "NewRegistry",
 	} {
 		owners[strings.ToLower(declaration)] = "format 9 built-in declaration " + declaration
 	}

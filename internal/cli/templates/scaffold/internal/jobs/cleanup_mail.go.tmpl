@@ -1,0 +1,52 @@
+package jobs
+
+import (
+	"context"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge/job"
+
+	"[[.Module]]/internal/mailbox"
+)
+
+// MailOutboxRetention is the bounded lifetime for an encrypted envelope after
+// it is created. Delivery normally deletes the row immediately; this delayed
+// cleanup closes retention after terminal delivery failure or administrative
+// removal of the delivery job.
+const MailOutboxRetention = 7 * 24 * time.Hour
+
+// CleanupMail contains only the same opaque outbox locator used by delivery.
+// Recipient, message content, and reset credentials never enter queue payloads.
+type CleanupMail struct {
+	OutboxID mailbox.ID `json:"outbox_id"`
+}
+
+var CleanupMailDefinition = job.MustDefine[CleanupMail]("goforge.mail.cleanup.v1", job.Policy{
+	MaxAttempts: 5,
+	Timeout:     30 * time.Second,
+	Backoff: []time.Duration{
+		30 * time.Second,
+		2 * time.Minute,
+		10 * time.Minute,
+		30 * time.Minute,
+	},
+})
+
+// CleanupMailHandler idempotently removes an envelope after its retention
+// deadline. An already delivered or previously cleaned row is successful.
+type CleanupMailHandler struct {
+	Dependencies Dependencies
+}
+
+func (handler CleanupMailHandler) Handle(ctx context.Context, payload CleanupMail) error {
+	if _, err := handler.Dependencies.Outbox.Delete(ctx, handler.Dependencies.DB, payload.OutboxID); err != nil {
+		return deliveryFailure("delete retained message", err)
+	}
+	return nil
+}
+
+// DispatchCleanupMail always applies the application-owned retention delay.
+// Callers that need a different policy can edit or replace this ordinary helper.
+func DispatchCleanupMail(ctx context.Context, dispatcher job.Dispatcher, payload CleanupMail) (job.DispatchResult, error) {
+	return CleanupMailDefinition.Dispatch(ctx, dispatcher, payload, job.Delay(MailOutboxRetention))
+}
