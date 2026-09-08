@@ -219,8 +219,8 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 			t.Fatalf("concurrent migrate failed: %v\n%s", result.err, result.output)
 		}
 	}
-	if got := strings.Count(combined, "migrated "); got != 6 {
-		t.Fatalf("expected six migrations to be applied exactly once, got %d:\n%s", got, combined)
+	if got := strings.Count(combined, "migrated "); got != 7 {
+		t.Fatalf("expected seven migrations to be applied exactly once, got %d:\n%s", got, combined)
 	}
 	if output, err := generatedCommand(directory, environment, forgeBinary, "migrate"); err != nil || !strings.Contains(output, "No pending migrations") {
 		t.Fatalf("idempotent migrate failed: %v\n%s", err, output)

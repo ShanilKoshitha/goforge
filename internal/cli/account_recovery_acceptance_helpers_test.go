@@ -58,11 +58,12 @@ func recoveryAcceptanceBrowser(client *http.Client, method, target string, value
 
 func recoveryAcceptanceHostileHeaders(request *http.Request, source string) {
 	request.Host = "host-header.attacker.invalid"
-	request.Header.Set("Forwarded", "host=forwarded.attacker.invalid;proto=https")
 	request.Header.Set("X-Forwarded-Host", "x-forwarded.attacker.invalid")
 	request.Header.Set("X-Forwarded-Proto", "https")
 	if source != "" {
-		request.Header.Set("X-Forwarded-For", source)
+		request.Header.Set("Forwarded", "for="+source+";host=forwarded.attacker.invalid;proto=https")
+	} else {
+		request.Header.Set("Forwarded", "host=forwarded.attacker.invalid;proto=https")
 	}
 }
 

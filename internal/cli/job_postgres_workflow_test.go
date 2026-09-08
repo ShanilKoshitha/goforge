@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -222,6 +223,11 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 		"JOB_HEARTBEAT_INTERVAL": "500ms",
 		"JOB_OPERATION_TIMEOUT":  "500ms",
 		"JOB_SHUTDOWN_TIMEOUT":   "3s",
+		"MAIL_SMTP_ADDRESS":      "127.0.0.1:1",
+		"MAIL_SMTP_TLS":          "none",
+		"MAIL_SMTP_SERVER_NAME":  "localhost",
+		"MAIL_SMTP_TIMEOUT":      "1s",
+		"MAIL_OUTBOX_KEY":        base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x6b}, 32)),
 	})
 	for _, entry := range workerEnvironment {
 		if strings.HasPrefix(strings.ToUpper(entry), "SESSION_SECRET=") {
