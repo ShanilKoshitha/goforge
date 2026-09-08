@@ -85,14 +85,17 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 		"AUTH_PASSWORD_RESET_TTL": "30m",
 		"MAIL_FROM":               "GoForge Acceptance <no-reply@example.test>",
 		"MAIL_OUTBOX_KEY":         outboxKey,
+		"TRUSTED_PROXIES":         "127.0.0.1/32",
 	})
 	if output, err := generatedCommand(directory, applicationEnvironment, forgeBinary, "migrate"); err != nil {
 		t.Fatalf("migrate account recovery schema: %v\n%s", err, output)
 	} else if !strings.Contains(output, "000004_create_account_recovery") {
 		t.Fatalf("account recovery migration was not applied:\n%s", output)
 	}
-	if output, err := generatedCommand(directory, applicationEnvironment, "go", "test", "./..."); err != nil {
-		t.Fatalf("fresh account recovery application tests: %v\n%s", err, output)
+	for _, gate := range [][]string{{"test", "-race", "./..."}, {"vet", "./..."}} {
+		if output, err := generatedCommand(directory, applicationEnvironment, "go", gate...); err != nil {
+			t.Fatalf("fresh account recovery application go %s: %v\n%s", strings.Join(gate, " "), err, output)
+		}
 	}
 	if output, err := generatedCommand(directory, applicationEnvironment, "go", "build", "-o", serverBinary, "./cmd/server"); err != nil {
 		t.Fatalf("build generated recovery server: %v\n%s", err, output)
@@ -124,10 +127,19 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 	knownEmail := fmt.Sprintf("known-%d@example.test", stamp)
 	expiredEmail := fmt.Sprintf("expired-%d@example.test", stamp)
 	concurrentEmail := fmt.Sprintf("concurrent-%d@example.test", stamp)
+	browserEmail := fmt.Sprintf("browser-%d@example.test", stamp)
+	rateLimitEmail := fmt.Sprintf("rate-limit-%d@example.test", stamp)
+	resetFailureEmail := fmt.Sprintf("reset-failure-%d@example.test", stamp)
+	failureEmails := []string{
+		fmt.Sprintf("token-failure-%d@example.test", stamp),
+		fmt.Sprintf("outbox-failure-%d@example.test", stamp),
+		fmt.Sprintf("job-failure-%d@example.test", stamp),
+	}
 	const oldPassword = "a sufficiently secure original passphrase"
 	knownSession := clientWithCookies(t)
 	expiredSession := clientWithCookies(t)
 	concurrentSession := clientWithCookies(t)
+	browserSession := clientWithCookies(t)
 	for index, registration := range []struct {
 		client *http.Client
 		name   string
@@ -136,6 +148,12 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 		{knownSession, "Known User", knownEmail},
 		{expiredSession, "Expired User", expiredEmail},
 		{concurrentSession, "Concurrent User", concurrentEmail},
+		{browserSession, "Browser User", browserEmail},
+		{clientWithCookies(t), "Rate Limit User", rateLimitEmail},
+		{clientWithCookies(t), "Reset Failure User", resetFailureEmail},
+		{clientWithCookies(t), "Token Failure User", failureEmails[0]},
+		{clientWithCookies(t), "Outbox Failure User", failureEmails[1]},
+		{clientWithCookies(t), "Job Failure User", failureEmails[2]},
 	} {
 		body := fmt.Sprintf(`{"name":%q,"email":%q,"password":%q,"password_confirmation":%q}`, registration.name, registration.email, oldPassword, oldPassword)
 		response := recoveryAcceptanceMustJSON(t, registration.client, http.MethodPost, baseURL+"/auth/register", body, fmt.Sprintf("203.0.113.%d", index+1))
@@ -174,10 +192,39 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 	unknownJSONResponse := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 3 * time.Second}, http.MethodPost, baseURL+"/auth/password/forgot", forgotBody(unknownEmail), "198.51.100.15")
 	recoveryAcceptanceAssertEquivalent(t, knownJSONResponse, unknownJSONResponse,
 		"Content-Type", "Cache-Control", "Referrer-Policy", "X-Robots-Tag")
+	recoveryAcceptanceAssertTimingParity(t, knownJSONResponse, unknownJSONResponse)
 	if knownJSONResponse.Status != http.StatusAccepted || !strings.Contains(knownJSONResponse.Body, "If an account matches") {
 		t.Fatalf("JSON forgot response = %d: %s", knownJSONResponse.Status, knownJSONResponse.Body)
 	}
 	recoveryAcceptanceAssertPrivateHeaders(t, knownJSONResponse)
+
+	baselineTokens := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens`)
+	baselineOutbox := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM mail_outbox`)
+	baselineMailJobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.deliver.v1'`)
+	baselineCleanupJobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.cleanup.v1'`)
+	for index, stage := range []string{"token", "outbox", "job"} {
+		restore := recoveryAcceptanceRejectInsert(t, db, stage)
+		response := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 3 * time.Second}, http.MethodPost,
+			baseURL+"/auth/password/forgot", forgotBody(failureEmails[index]), fmt.Sprintf("198.51.100.%d", 16+index))
+		restore()
+		recoveryAcceptanceAssertEquivalent(t, knownJSONResponse, response,
+			"Content-Type", "Cache-Control", "Referrer-Policy", "X-Robots-Tag")
+		if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = (SELECT id FROM users WHERE email = $1)`, failureEmails[index]); count != 0 {
+			t.Fatalf("%s failure retained %d reset tokens", stage, count)
+		}
+		if tokens := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens`); tokens != baselineTokens {
+			t.Fatalf("%s failure changed reset token count from %d to %d", stage, baselineTokens, tokens)
+		}
+		if outbox := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM mail_outbox`); outbox != baselineOutbox {
+			t.Fatalf("%s failure changed outbox count from %d to %d", stage, baselineOutbox, outbox)
+		}
+		if jobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.deliver.v1'`); jobs != baselineMailJobs {
+			t.Fatalf("%s failure changed mail job count from %d to %d", stage, baselineMailJobs, jobs)
+		}
+		if jobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.cleanup.v1'`); jobs != baselineCleanupJobs {
+			t.Fatalf("%s failure changed cleanup job count from %d to %d", stage, baselineCleanupJobs, jobs)
+		}
+	}
 
 	var currentSelector string
 	var currentDigest []byte
@@ -215,6 +262,12 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 	if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.deliver.v1'`); count != 2 {
 		t.Fatalf("known/unknown disclosure probe queued %d mail jobs, want two", count)
 	}
+	if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.cleanup.v1'`); count != 2 {
+		t.Fatalf("known/unknown disclosure probe queued %d cleanup jobs, want two", count)
+	}
+	if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.cleanup.v1' AND available_at >= NOW() + INTERVAL '6 days'`); count != 2 {
+		t.Fatalf("known/unknown disclosure probe scheduled %d cleanup jobs with bounded delayed retention, want two", count)
+	}
 
 	var ciphertexts [][]byte
 	rows, err := db.Query(`SELECT ciphertext FROM mail_outbox ORDER BY created_at, id`)
@@ -233,7 +286,7 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	var queuedPayloads []string
-	rows, err = db.Query(`SELECT payload::text FROM goforge_jobs WHERE name = 'goforge.mail.deliver.v1' ORDER BY created_at, id`)
+	rows, err = db.Query(`SELECT payload::text FROM goforge_jobs WHERE name IN ('goforge.mail.deliver.v1', 'goforge.mail.cleanup.v1') ORDER BY created_at, id`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,6 +313,9 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 	}
 	if err := rows.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if len(queuedPayloads) != 4 {
+		t.Fatalf("delivery and cleanup queued %d opaque payloads, want four", len(queuedPayloads))
 	}
 
 	workerEnvironment := jobAcceptanceEnvironment(applicationEnvironment, map[string]string{
@@ -484,7 +540,114 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 		t.Fatalf("concurrent reset left %d token rows", count)
 	}
 
-	for _, secret := range []string{knownEmail, expiredEmail, concurrentEmail, currentToken, expiredToken, concurrentToken, invalidatedConcurrentToken, supersededToken, hybridToken} {
+	resetFailureVersion := recoveryAcceptanceCredentialVersion(t, db, resetFailureEmail)
+	resetFailureForgot := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 3 * time.Second}, http.MethodPost, baseURL+"/auth/password/forgot", forgotBody(resetFailureEmail), "203.0.113.60")
+	if resetFailureForgot.Status != http.StatusAccepted {
+		t.Fatalf("request reset-rollback token: %d: %s", resetFailureForgot.Status, resetFailureForgot.Body)
+	}
+	resetFailureMessage := recoverySMTPWait(t, smtpServer.accepted, 8*time.Second)
+	_, resetFailureToken := recoveryAcceptanceResetLink(t, resetFailureMessage, applicationURL)
+	restoreReset := recoveryAcceptanceRejectResetUpdate(t, db)
+	resetFailure := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 8 * time.Second}, http.MethodPost, baseURL+"/auth/password/reset",
+		resetBody(resetFailureToken, replacementPassword), "203.0.113.61")
+	restoreReset()
+	if resetFailure.Status != http.StatusInternalServerError || strings.Contains(resetFailure.Body, resetFailureToken) || strings.Contains(resetFailure.Body, replacementPassword) {
+		t.Fatalf("injected reset failure response = %d: %s", resetFailure.Status, resetFailure.Body)
+	}
+	recoveryAcceptanceAssertPrivateHeaders(t, resetFailure)
+	if got := recoveryAcceptanceCredentialVersion(t, db, resetFailureEmail); got != resetFailureVersion {
+		t.Fatalf("failed reset changed credential version to %d, want %d", got, resetFailureVersion)
+	}
+	if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = (SELECT id FROM users WHERE email = $1)`, resetFailureEmail); count != 1 {
+		t.Fatalf("failed reset consumed token rows=%d", count)
+	}
+	resetRetry := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 8 * time.Second}, http.MethodPost, baseURL+"/auth/password/reset",
+		resetBody(resetFailureToken, replacementPassword), "203.0.113.62")
+	if resetRetry.Status != http.StatusNoContent {
+		t.Fatalf("reset retry after rollback = %d: %s", resetRetry.Status, resetRetry.Body)
+	}
+	if got := recoveryAcceptanceCredentialVersion(t, db, resetFailureEmail); got != resetFailureVersion+1 {
+		t.Fatalf("reset retry credential version=%d, want %d", got, resetFailureVersion+1)
+	}
+	if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = (SELECT id FROM users WHERE email = $1)`, resetFailureEmail); count != 0 {
+		t.Fatalf("reset retry retained token rows=%d", count)
+	}
+
+	rateVersionBefore := recoveryAcceptanceCredentialVersion(t, db, rateLimitEmail)
+	rateForgot := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 3 * time.Second}, http.MethodPost, baseURL+"/auth/password/forgot", forgotBody(rateLimitEmail), "203.0.113.40")
+	if rateForgot.Status != http.StatusAccepted {
+		t.Fatalf("request rate-limit token: %d: %s", rateForgot.Status, rateForgot.Body)
+	}
+	rateMessage := recoverySMTPWait(t, smtpServer.accepted, 8*time.Second)
+	_, rateToken := recoveryAcceptanceResetLink(t, rateMessage, applicationURL)
+	rateSelector, rateSecret, ok := strings.Cut(rateToken, ".")
+	if !ok || rateSecret == "" {
+		t.Fatalf("rate-limit reset token is malformed: %q", rateToken)
+	}
+	replacementByte := byte('A')
+	if rateSecret[0] == replacementByte {
+		replacementByte = 'B'
+	}
+	wrongRateToken := rateSelector + "." + string(replacementByte) + rateSecret[1:]
+	for attempt := range 3 {
+		response := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 5 * time.Second}, http.MethodPost, baseURL+"/auth/password/reset",
+			resetBody(wrongRateToken, replacementPassword), fmt.Sprintf("203.0.113.%d", 41+attempt))
+		recoveryAcceptanceAssertEquivalent(t, superseded, response, "Content-Type", "Cache-Control", "Referrer-Policy", "X-Robots-Tag")
+	}
+	rateBlocked := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 5 * time.Second}, http.MethodPost, baseURL+"/auth/password/reset",
+		resetBody(rateToken, replacementPassword), "203.0.113.44")
+	recoveryAcceptanceAssertEquivalent(t, superseded, rateBlocked, "Content-Type", "Cache-Control", "Referrer-Policy", "X-Robots-Tag")
+	if got := recoveryAcceptanceCredentialVersion(t, db, rateLimitEmail); got != rateVersionBefore {
+		t.Fatalf("selector limiter allowed credential change: version=%d want=%d", got, rateVersionBefore)
+	}
+	if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = (SELECT id FROM users WHERE email = $1)`, rateLimitEmail); count != 1 {
+		t.Fatalf("selector limiter consumed valid token after exhaustion: rows=%d", count)
+	}
+
+	browserVersionBefore := recoveryAcceptanceCredentialVersion(t, db, browserEmail)
+	browserRecovery := clientWithCookiesNoRedirect(t)
+	browserForgotForm := recoveryAcceptanceMustBrowser(t, browserRecovery, http.MethodGet, baseURL+"/forgot-password", nil, "203.0.113.50")
+	if browserForgotForm.Status != http.StatusOK {
+		t.Fatalf("browser recovery form = %d: %s", browserForgotForm.Status, browserForgotForm.Body)
+	}
+	browserForgot := recoveryAcceptanceMustBrowser(t, browserRecovery, http.MethodPost, baseURL+"/forgot-password", url.Values{
+		"_token": {browserCSRF(t, browserForgotForm.Body)}, "email": {browserEmail},
+	}, "203.0.113.51")
+	if browserForgot.Status != http.StatusSeeOther || browserForgot.Header.Get("Location") != "/forgot-password" {
+		t.Fatalf("browser recovery request = %d %q: %s", browserForgot.Status, browserForgot.Header.Get("Location"), browserForgot.Body)
+	}
+	browserMessage := recoverySMTPWait(t, smtpServer.accepted, 8*time.Second)
+	_, browserToken := recoveryAcceptanceResetLink(t, browserMessage, applicationURL)
+	browserResetForm := recoveryAcceptanceMustBrowser(t, browserRecovery, http.MethodGet,
+		baseURL+"/reset-password?token="+url.QueryEscape(browserToken), nil, "203.0.113.52")
+	if browserResetForm.Status != http.StatusOK {
+		t.Fatalf("browser reset form = %d: %s", browserResetForm.Status, browserResetForm.Body)
+	}
+	const browserPassword = "a browser replacement password"
+	browserReset := recoveryAcceptanceMustBrowser(t, browserRecovery, http.MethodPost, baseURL+"/reset-password", url.Values{
+		"_token": {browserCSRF(t, browserResetForm.Body)}, "token": {browserToken},
+		"password": {browserPassword}, "password_confirmation": {browserPassword},
+	}, "203.0.113.53")
+	if browserReset.Status != http.StatusSeeOther || browserReset.Header.Get("Location") != "/login" {
+		t.Fatalf("browser reset = %d %q: %s", browserReset.Status, browserReset.Header.Get("Location"), browserReset.Body)
+	}
+	recoveryAcceptanceAssertPrivateHeaders(t, browserReset)
+	if got := recoveryAcceptanceCredentialVersion(t, db, browserEmail); got != browserVersionBefore+1 {
+		t.Fatalf("browser reset credential_version=%d, want %d", got, browserVersionBefore+1)
+	}
+	if response := recoveryAcceptanceMustJSON(t, browserSession, http.MethodGet, baseURL+"/auth/me", "", "203.0.113.54"); response.Status != http.StatusUnauthorized {
+		t.Fatalf("browser account pre-reset session survived: %d: %s", response.Status, response.Body)
+	}
+	if response := recoveryAcceptanceMustJSON(t, clientWithCookies(t), http.MethodPost, baseURL+"/auth/login", fmt.Sprintf(`{"email":%q,"password":%q}`, browserEmail, oldPassword), "203.0.113.55"); response.Status != http.StatusUnauthorized {
+		t.Fatalf("browser account old password still authenticates: %d: %s", response.Status, response.Body)
+	}
+	if response := recoveryAcceptanceMustJSON(t, clientWithCookies(t), http.MethodPost, baseURL+"/auth/login", fmt.Sprintf(`{"email":%q,"password":%q}`, browserEmail, browserPassword), "203.0.113.56"); response.Status != http.StatusOK {
+		t.Fatalf("browser account replacement password does not authenticate: %d: %s", response.Status, response.Body)
+	}
+
+	secrets := []string{knownEmail, expiredEmail, concurrentEmail, browserEmail, rateLimitEmail, resetFailureEmail, currentToken, expiredToken, concurrentToken, invalidatedConcurrentToken, supersededToken, hybridToken, browserToken, rateToken, wrongRateToken, resetFailureToken}
+	secrets = append(secrets, failureEmails...)
+	for _, secret := range secrets {
 		if strings.Contains(workerOutput.String(), secret) || strings.Contains(serverOutput.String(), secret) {
 			t.Fatalf("generated process logs exposed recovery secret %q", secret)
 		}
@@ -493,6 +656,70 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 	workerRunning = false
 	stopCommandProcess(t, server, true)
 	serverRunning = false
+}
+
+func recoveryAcceptanceRejectInsert(t *testing.T, db *sql.DB, stage string) func() {
+	t.Helper()
+	var table, condition string
+	switch stage {
+	case "token":
+		table = "password_reset_tokens"
+	case "outbox":
+		table = "mail_outbox"
+	case "job":
+		table = "goforge_jobs"
+		condition = " WHEN (NEW.name = 'goforge.mail.cleanup.v1')"
+	default:
+		t.Fatalf("unsupported recovery failure stage %q", stage)
+	}
+	function := "goforge_recovery_reject_" + stage
+	trigger := function + "_insert"
+	if _, err := db.Exec(`CREATE FUNCTION ` + function + `() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected recovery persistence failure'; END $$`); err != nil {
+		t.Fatalf("create %s failure function: %v", stage, err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER ` + trigger + ` BEFORE INSERT ON ` + table + ` FOR EACH ROW` + condition + ` EXECUTE FUNCTION ` + function + `()`); err != nil {
+		_, _ = db.Exec(`DROP FUNCTION ` + function + `()`)
+		t.Fatalf("create %s failure trigger: %v", stage, err)
+	}
+	var once sync.Once
+	restore := func() {
+		once.Do(func() {
+			if _, err := db.Exec(`DROP TRIGGER ` + trigger + ` ON ` + table); err != nil {
+				t.Errorf("drop %s failure trigger: %v", stage, err)
+			}
+			if _, err := db.Exec(`DROP FUNCTION ` + function + `()`); err != nil {
+				t.Errorf("drop %s failure function: %v", stage, err)
+			}
+		})
+	}
+	t.Cleanup(restore)
+	return restore
+}
+
+func recoveryAcceptanceRejectResetUpdate(t *testing.T, db *sql.DB) func() {
+	t.Helper()
+	const function = "goforge_recovery_reject_reset"
+	const trigger = "goforge_recovery_reject_reset_update"
+	if _, err := db.Exec(`CREATE FUNCTION ` + function + `() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected reset update failure'; END $$`); err != nil {
+		t.Fatalf("create reset failure function: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER ` + trigger + ` BEFORE UPDATE OF password_hash ON users FOR EACH ROW WHEN (OLD.password_hash IS DISTINCT FROM NEW.password_hash) EXECUTE FUNCTION ` + function + `()`); err != nil {
+		_, _ = db.Exec(`DROP FUNCTION ` + function + `()`)
+		t.Fatalf("create reset failure trigger: %v", err)
+	}
+	var once sync.Once
+	restore := func() {
+		once.Do(func() {
+			if _, err := db.Exec(`DROP TRIGGER ` + trigger + ` ON users`); err != nil {
+				t.Errorf("drop reset failure trigger: %v", err)
+			}
+			if _, err := db.Exec(`DROP FUNCTION ` + function + `()`); err != nil {
+				t.Errorf("drop reset failure function: %v", err)
+			}
+		})
+	}
+	t.Cleanup(restore)
+	return restore
 }
 
 func recoveryAcceptanceCredentialVersion(t *testing.T, db *sql.DB, email string) int64 {
