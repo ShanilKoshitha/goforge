@@ -689,3 +689,23 @@ runtime interpretation would reintroduce exactly the reflection and hidden
 discovery that GoForge excludes. A small one-shot vocabulary improves the
 default path while leaving the generated application as conventional Go and
 SQL with complete escape hatches.
+
+## D031 — v0.11 uses a runtime tag followed by a checksum-bearing CLI tag
+
+**Status:** accepted for v0.11
+
+The lightweight unsigned `v0.11.0` tag fixes the reviewed typed-resource
+runtime and generator source at merge commit `2af6000`. After that tag resolved
+through the public Go proxy, the distribution scaffold moved its framework
+requirement to v0.11.0 and embedded checksum
+`h1:PpJ4gjHJxAM8tZmQ7Ajh++Fce05+w0l9la6F4oe8Dcc=` plus the unchanged module
+file checksum. The checksum-bearing CLI patch reports v0.11.1.
+
+The distribution gate installs the released v0.11.0 CLI for frozen format-8
+compatibility, then uses the candidate v0.11.1 CLI to generate implicit legacy
+and mixed typed resources without `replace`, verify the public module, test,
+build, and serve the generated application.
+
+Reason: a scaffold must pin an immutable public module whose checksums are
+already available. The two-step release keeps every tag reproducible while the
+generated application remains independent of the framework checkout.

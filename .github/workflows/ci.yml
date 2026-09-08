@@ -40,7 +40,7 @@ jobs:
       - name: Released format-8 compatibility
         run: |
           mkdir -p "$RUNNER_TEMP/released-cli"
-          GOBIN="$RUNNER_TEMP/released-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.10.1
+          GOBIN="$RUNNER_TEMP/released-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.11.0
           "$RUNNER_TEMP/released-cli/forge" new "$RUNNER_TEMP/released-app" --module example.com/releasedapp
           cd "$RUNNER_TEMP/released-app"
           cp internal/models/zz_orm_gen.go "$RUNNER_TEMP/orm-before.go"
@@ -83,7 +83,7 @@ jobs:
         run: |
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.10.0' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.11.0' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           "$RUNNER_TEMP/forge" make:resource TypedTicket \

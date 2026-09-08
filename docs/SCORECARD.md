@@ -50,8 +50,9 @@ existing single required `name` field workflow.
 
 ## Local evidence — 2026-09-08
 
-- `go test ./...`, `go test -race ./...`, `go vet ./...`, and a Windows CLI
-  build pass; the built CLI reports `forge 0.11.0`.
+- `go test ./...`, `go test -race ./...`, `go vet ./...`, and Windows CLI
+  builds pass. The reviewed runtime CLI reports `forge 0.11.0`; the
+  checksum-bearing distribution patch reports `forge 0.11.1`.
 - Focused generation tests compile and test implicit legacy, explicit
   `name:string`, mixed scalar, text-only nullable, and nullable integer/boolean
   applications. Twelve independent CLI generator processes converge without
@@ -75,6 +76,14 @@ existing single required `name` field workflow.
   was restored, the public compatibility gate was expanded, and the release
   identity was advanced to v0.11.0. Final architecture, security, and release
   reviews found no remaining P0–P2 issue.
+- PR 6 merged as `2af6000`, and
+  [main CI run 34269752964](https://github.com/ShanilKoshitha/goforge/actions/runs/34269752964)
+  passed Linux/PostgreSQL and native Windows before the lightweight unsigned
+  `v0.11.0` tag was published on that exact merge commit. The public Go proxy
+  resolves checksum `h1:PpJ4gjHJxAM8tZmQ7Ajh++Fce05+w0l9la6F4oe8Dcc=`.
+- A clean v0.11.1 candidate distribution generated implicit legacy, explicit
+  `name:string`, and mixed typed resources without `replace` while pinning
+  public v0.11.0; `go mod verify`, generated tests, and `forge build` passed.
 
 ## Baseline — 2026-09-08
 
