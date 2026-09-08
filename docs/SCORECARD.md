@@ -1,6 +1,6 @@
 # v0.11 typed scalar resource generation scorecard
 
-Status: **in progress** — 2026-09-08
+Status: **accepted** — 2026-09-08
 
 Target:
 
@@ -33,20 +33,20 @@ existing single required `name` field workflow.
 
 ## Acceptance criteria
 
-| Criterion | State | Required evidence |
+| Criterion | State | Evidence |
 | --- | --- | --- |
 | CLI parsing is exact and useful | passing locally | Parser and CLI tests cover both command spellings, both flag forms, declaration order, bounds, malformed values, unsafe/duplicate/reserved names, types, modifiers, and no-write failure |
 | One field contract drives every layer | passing locally | Deterministic generation tests inspect the same ordered four-type contract through models, SQL, ORM input, requests, validation, repositories, controllers, views, and generated tests |
 | Generated persistence is typed and inspectable | passing locally | Generated application tests compile concrete Go/PostgreSQL types and prove nullable pointers plus an application-writable-only `Attributes` boundary |
 | JSON and form semantics are deliberate | passing locally | Generated controller suites cover missing/null/empty/zero/false, malformed and repeated input, exact JSON member names and duplicates, 400/422 classification, nullable clearing, and contextual escaping |
 | New updates are concurrency-safe by default | passing locally | Generated JSON and browser tests require positive versions, prove one winner and one 409, retain the winning record, and refresh stale browser forms with safe submitted values |
-| Authentication and ownership remain structural | covered; PostgreSQL CI pending | Generated repositories and controller tests retain authenticated owner derivation and predicates; the expanded real-PostgreSQL workflow exercises cross-owner JSON and browser isolation |
+| Authentication and ownership remain structural | passing | Generated repositories and controller tests retain authenticated owner derivation and predicates; two public real-PostgreSQL runs proved cross-owner JSON and browser isolation |
 | Generation is one failure-safe transaction | passing locally | Failure-injection tests cover collisions, invalid state, rendering/compiler failures, every cancellation/publication boundary, exclusive/managed writes, mode restoration, editor races, and stale ORM rejection |
 | Concurrent generators converge without orphaned state | passing locally | Twelve independent CLI processes and same-name contenders converge on complete source, routes, metadata, views, ORM, and migrations; compare-and-swap rollback preserves newer editor bytes |
 | Production contains no field-schema machinery | passing locally | State inspection finds no persisted field descriptions; fresh generated tests/builds use static application-owned Go, SQL, and Forge templates with direct repository, ORM, `database/sql`, router, and template seams |
-| Format-8 and public compatibility are retained | passing locally | Implicit no-field output retains TEXT, 2–200 validation, legacy rendering, and versionless updates; a no-`replace` public-v0.10.0 smoke generated legacy and typed resources, verified modules, tested, and built; CI now repeats it |
-| A fresh PostgreSQL application works end to end | covered; PostgreSQL CI pending | The generated workflow now creates an all-branch typed resource and exercises ORM/views, migration, JSON/browser CRUD, validation, CSRF, ownership, stale writes, zero/false versus NULL, build, test, serve, and direct-Go paths |
-| The milestone passes twice without regression | pending public CI | Local full and race suites, vet, build, no-`replace` smoke, and independent reviews pass after fixes; two isolated public PostgreSQL/platform runs remain required |
+| Format-8 and public compatibility are retained | passing | Implicit no-field output retains TEXT, 2–200 validation, legacy rendering, and versionless updates; both public runs generated legacy and typed resources against v0.10.0 with no `replace`, then verified, tested, built, and served the application |
+| A fresh PostgreSQL application works end to end | passing | Both public runs created an all-branch typed resource and exercised ORM/views, migration, JSON/browser CRUD, validation, CSRF, ownership, stale writes, zero/false versus NULL, build, test, serve, and direct-Go paths twice per run |
+| The milestone passes twice without regression | passing | Push run 34265651666 and pull-request run 34265714830 independently passed Linux/PostgreSQL and native Windows on commit `8a666c7`; independent final reviews report no P0–P2 finding |
 
 ## Local evidence — 2026-09-08
 
@@ -64,15 +64,17 @@ existing single required `name` field workflow.
   v0.10.0, generated both implicit legacy and mixed typed resources, passed
   `go mod verify` and `go test ./...`, and built the conventional application
   binary. The CI distribution gate now repeats this exact compatibility path.
-- The real PostgreSQL workflow is expanded to distinguish nullable zero/false
-  pointers from SQL `NULL` and to exercise the complete typed JSON/browser
-  slice. This workstation has no `GOFORGE_TEST_DATABASE_URL`, so the required
-  two isolated executions remain assigned to public Linux CI.
+- [Push CI run 34265651666](https://github.com/ShanilKoshitha/goforge/actions/runs/34265651666)
+  and [pull-request CI run 34265714830](https://github.com/ShanilKoshitha/goforge/actions/runs/34265714830)
+  independently passed Linux/PostgreSQL and native Windows. Each Linux job ran
+  the complete generated PostgreSQL application suite twice, including the
+  nullable zero/false versus SQL `NULL` proof.
 - Independent architecture, security, and release reviews identified the
   public-runtime binding gap and release identity as blockers. Strict JSON
   decoding was moved into application-owned generated source, legacy behavior
   was restored, the public compatibility gate was expanded, and the release
-  identity was advanced to v0.11.0. Final re-review is pending.
+  identity was advanced to v0.11.0. Final architecture, security, and release
+  reviews found no remaining P0–P2 issue.
 
 ## Baseline — 2026-09-08
 

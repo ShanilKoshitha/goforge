@@ -19,8 +19,8 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.11.0 is PostgreSQL-first and is being validated against its written
-milestone scorecard. It includes explicit database wiring, parallel JSON and
+GoForge v0.11.0 is PostgreSQL-first and accepted against its written milestone
+scorecard. It includes explicit database wiring, parallel JSON and
 server-rendered authentication, database-backed sessions, CSRF-protected HTML
 forms, production middleware, embedded migrations, owner-scoped JSON and HTML
 CRUD generation, a reflection-free typed ORM, a static Go-model parser,
