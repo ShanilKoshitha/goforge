@@ -28,14 +28,14 @@ func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
 	repository := NewPostgresRepository(db)
 	assertBoundedOwnerList(t, repository)
 	connection := lastRepositoryConnection()
-	connection.queryError = &pgconn.PgError{Code: "23505", ConstraintName: "[[.Plural]]_name_key"}
+	connection.queryError = &pgconn.PgError{Code: "23505", ConstraintName: "[[.Plural]]_field_key"}
 	if _, err := repository.List(context.Background(), 9); !errors.Is(err, orm.ErrUnique) {
 		t.Fatalf("PostgreSQL error was not classified at repository boundary: %v", err)
 	}
 	connection.queryError = nil
 	connection.updateFound = true
 	expectedVersion := int64(3)
-	updated, err := repository.Update(context.Background(), 9, 41, "updated", &expectedVersion)
+	updated, err := repository.Update(context.Background(), 9, 41, updatedAttributes(), &expectedVersion)
 	if err != nil || updated.Version != 4 {
 		t.Fatalf("guarded update did not return one incremented version: %+v %v", updated, err)
 	}
@@ -46,14 +46,14 @@ func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
 	}
 	connection.updateFound = false
 	connection.exists = true
-	if _, err := repository.Update(context.Background(), 9, 41, "stale", &expectedVersion); !errors.Is(err, ErrStale) || !errors.Is(err, orm.ErrStale) {
+	if _, err := repository.Update(context.Background(), 9, 41, updatedAttributes(), &expectedVersion); !errors.Is(err, ErrStale) || !errors.Is(err, orm.ErrStale) {
 		t.Fatalf("owned guarded miss is not stale: %v", err)
 	}
 	if !strings.Contains(connection.query, `"user_id" = $`) {
 		t.Fatalf("stale existence probe lost owner scope: %s", connection.query)
 	}
 	connection.exists = false
-	if _, err := repository.Update(context.Background(), 10, 41, "hidden", &expectedVersion); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrStale) {
+	if _, err := repository.Update(context.Background(), 10, 41, updatedAttributes(), &expectedVersion); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrStale) {
 		t.Fatalf("wrong-owner guarded miss leaked staleness: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func assertBoundedOwnerList(t *testing.T, repository *PostgresRepository) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].ID != 41 || items[0].UserID != 9 || items[0].Version != 3 {
+	if len(items) != 1 || items[0].ID != 41 || items[0].UserID != 9 || items[0].Version != 3 || !reflect.DeepEqual(attributesFromModel(items[0]), sampleAttributes()) {
 		t.Fatalf("mapped items = %+v", items)
 	}
 	connection := repositoryConnectionFrom(t, repository.Executor)
@@ -174,7 +174,7 @@ type repositoryRows struct {
 	if len(rows.values) == 1 {
 		return []string{"exists"}
 	}
-	return []string{"id", "user_id", "name", "created_at", "updated_at", "version"}
+	return []string{"id", "user_id", [[range .Fields]]"[[.Name]]", [[end]]"created_at", "updated_at", "version"}
 }
 func (*repositoryRows) Close() error { return nil }
 func (rows *repositoryRows) Next(values []driver.Value) error {
@@ -187,7 +187,29 @@ func (rows *repositoryRows) Next(values []driver.Value) error {
 }
 
 func repositoryModelValues(version int64) []driver.Value {
-	return []driver.Value{int64(41), int64(9), "mapped", time.Unix(1, 0), time.Unix(2, 0), version}
+	return []driver.Value{int64(41), int64(9), [[range .Fields]][[.DriverValue]], [[end]]time.Unix(1, 0), time.Unix(2, 0), version}
+}
+
+func sampleAttributes() Attributes {
+	return Attributes{
+[[range .Fields]]		[[.GoName]]: [[.SampleGoValue]],
+[[end]]	}
+}
+
+func updatedAttributes() Attributes {
+	return Attributes{
+[[range .Fields]]		[[.GoName]]: [[.UpdatedGoValue]],
+[[end]]	}
+}
+
+func attributesFromModel(item [[.Name]]) Attributes {
+	return Attributes{
+[[range .Fields]]		[[.GoName]]: item.[[.GoName]],
+[[end]]	}
+}
+
+func pointer[T any](value T) *T {
+	return &value
 }
 
 type repositoryResultValue int64

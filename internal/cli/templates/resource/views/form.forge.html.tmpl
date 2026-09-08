@@ -2,10 +2,23 @@
   @csrf
   {{if .Method}}<input type="hidden" name="_method" value="{{.Method}}">{{end}}
   {{if .Version}}<input type="hidden" name="version" value="{{.Version}}">{{end}}
-  <label>Name
-    <input name="name" value="@old("name", .Name)" required minlength="2" maxlength="200">
+[[range .Fields]][[if .String]]  <label>[[.Label]]
+    <input type="text" name="[[.Name]]" value="@old("[[.Name]]")"[[if $.SchemaDriven]] maxlength="255"[[else]] minlength="2" maxlength="200"[[end]][[if .Required]] required[[end]]>
   </label>
-  @errors("name")<p role="alert">{{.}}</p>@enderrors
-  @errors("version")<p role="alert">{{.}}</p>@enderrors
+[[else if .Text]]  <label>[[.Label]]
+    <textarea name="[[.Name]]" maxlength="65535"[[if .Required]] required[[end]]>@old("[[.Name]]")</textarea>
+  </label>
+[[else if .Integer]]  <label>[[.Label]]
+    <input type="number" name="[[.Name]]" value="@old("[[.Name]]")" step="1"[[if .Required]] required[[end]]>
+  </label>
+[[else]]  <label>[[.Label]]
+    <select name="[[.Name]]"[[if .Required]] required[[end]]>
+      <option value="">[[if .Nullable]]Not set[[else]]Choose true or false[[end]]</option>
+      <option value="false" {{if eq (.Form.Old "[[.Name]]") "false"}}selected{{end}}>False</option>
+      <option value="true" {{if eq (.Form.Old "[[.Name]]") "true"}}selected{{end}}>True</option>
+    </select>
+  </label>
+[[end]]  @errors("[[.Name]]")<p role="alert">{{.}}</p>@enderrors
+[[end]]  @errors("version")<p role="alert">{{.}}</p>@enderrors
   <button type="submit">{{.Submit}}</button>
 </form>

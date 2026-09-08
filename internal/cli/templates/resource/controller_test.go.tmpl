@@ -2,8 +2,10 @@ package [[.Package]]_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,11 +18,13 @@ import (
 )
 
 type fakeRepository struct {
-	item                resource.[[.Name]]
-	pageNumber          int
-	pageSize            int
-	paginationUserID    int64
-	paginationHasNext   bool
+	item              resource.[[.Name]]
+	createdAttributes resource.Attributes
+	updatedAttributes resource.Attributes
+	pageNumber        int
+	pageSize          int
+	paginationUserID  int64
+	paginationHasNext bool
 }
 
 func (repository *fakeRepository) List(context.Context, int64) ([]resource.[[.Name]], error) {
@@ -41,8 +45,13 @@ func (repository *fakeRepository) Paginate(_ context.Context, userID int64, page
 	}, nil
 }
 
-func (repository *fakeRepository) Create(_ context.Context, userID int64, name string) (resource.[[.Name]], error) {
-	repository.item = resource.[[.Name]]{ID: 1, UserID: userID, Name: name, CreatedAt: time.Now(), UpdatedAt: time.Now(), Version: 1}
+func (repository *fakeRepository) Create(_ context.Context, userID int64, attributes resource.Attributes) (resource.[[.Name]], error) {
+	repository.createdAttributes = attributes
+	repository.item = resource.[[.Name]]{
+		ID: 1, UserID: userID,
+[[range .Fields]]		[[.GoName]]: attributes.[[.GoName]],
+[[end]]		CreatedAt: time.Now(), UpdatedAt: time.Now(), Version: 1,
+	}
 	return repository.item, nil
 }
 
@@ -50,12 +59,14 @@ func (repository *fakeRepository) Find(context.Context, int64, int64) (resource.
 	return repository.item, nil
 }
 
-func (repository *fakeRepository) Update(_ context.Context, userID, id int64, name string, expectedVersion *int64) (resource.[[.Name]], error) {
+func (repository *fakeRepository) Update(_ context.Context, userID, id int64, attributes resource.Attributes, expectedVersion *int64) (resource.[[.Name]], error) {
 	if expectedVersion != nil && *expectedVersion != repository.item.Version {
 		return resource.[[.Name]]{}, resource.ErrStale
 	}
-	repository.item.UserID, repository.item.ID, repository.item.Name = userID, id, name
-	repository.item.Version++
+	repository.updatedAttributes = attributes
+	repository.item.UserID, repository.item.ID = userID, id
+[[range .Fields]]	repository.item.[[.GoName]] = attributes.[[.GoName]]
+[[end]]	repository.item.Version++
 	return repository.item, nil
 }
 
@@ -70,6 +81,30 @@ func (users fakeUsers) Create(context.Context, string, string, string) (auth.Use
 func (users fakeUsers) ByEmail(context.Context, string) (auth.User, error) { return users.user, nil }
 func (users fakeUsers) ByID(context.Context, int64) (auth.User, error)    { return users.user, nil }
 
+const sampleResourceJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.SampleJSONValue]][[end]]}`
+const updatedResourceJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]]}`
+const sampleResourceVersionOneJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.SampleJSONValue]][[end]],"version":1}`
+const updatedResourceVersionOneJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]],"version":1}`
+const updatedResourceInvalidVersionJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]],"version":0}`
+
+func resourceJSONWithRaw(t *testing.T, field, raw string) string {
+	t.Helper()
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(sampleResourceJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if raw == "" {
+		delete(payload, field)
+	} else {
+		payload[field] = json.RawMessage(raw)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
 func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	store := session.NewMemoryStore()
 	manager, err := session.NewManager(store, []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
@@ -83,7 +118,7 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	router.POST("/[[.Plural]]", auth.Require(manager, users)(controller.Create))
 	router.PUT("/[[.Plural]]/{id}", auth.Require(manager, users)(controller.Update))
 
-	request := httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(`{"name":"Valid name"}`))
+	request := httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(sampleResourceJSON))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
@@ -115,25 +150,113 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("null JSON root: expected 400, got %d: %s", response.Code, response.Body.String())
 	}
-	request = httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(`{"name":"ab\u0000"}`))
-	request.Header.Set("Content-Type", "application/json")
-	request.AddCookie(cookie)
-	response = httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"code":"string.control"`) || repository.item.ID != 0 {
+
+	serveJSON := func(body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+[[range $target := .Fields]]	response = serveJSON(strings.TrimSuffix(sampleResourceJSON, "}") + `,"[[$target.Name]]":[[$target.UpdatedJSONValue]]}`)
+	if response.Code != http.StatusBadRequest || repository.item.ID != 0 {
+		t.Fatalf("duplicate JSON key [[$target.Name]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+	response = serveJSON(strings.TrimSuffix(sampleResourceJSON, "}") + `,"[[$target.GoName]]":[[$target.UpdatedJSONValue]]}`)
+	if response.Code != http.StatusBadRequest || repository.item.ID != 0 {
+		t.Fatalf("noncanonical JSON key [[$target.GoName]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+[[end]]	for _, protected := range []string{
+		strings.TrimSuffix(sampleResourceJSON, "}") + `,"id":1}`,
+		strings.TrimSuffix(sampleResourceJSON, "}") + `,"user_id":9}`,
+		strings.TrimSuffix(sampleResourceJSON, "}") + `,"created_at":"now"}`,
+		strings.TrimSuffix(sampleResourceJSON, "}") + `,"updated_at":"now"}`,
+		strings.TrimSuffix(sampleResourceJSON, "}") + `,"owner":{}}`,
+	} {
+		response = serveJSON(protected)
+		if response.Code != http.StatusBadRequest || repository.item.ID != 0 {
+			t.Fatalf("protected JSON key reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+		}
+	}
+
+	response = serveJSON(strings.TrimSuffix(sampleResourceJSON, "}") + `,"version":1}`)
+	if response.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 || !strings.Contains(response.Body.String(), "must not be provided") {
+		t.Fatalf("create version was not rejected: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+[[range $target := .Fields]]	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", [[printf "%q" $target.InvalidJSONValue]]))
+	if response.Code != http.StatusBadRequest || repository.item.ID != 0 {
+		t.Fatalf("wrong JSON type for [[$target.Name]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+[[end]][[range $target := .Fields]][[if $target.Required]]	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", ""))
+	if response.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 {
+		t.Fatalf("missing required [[$target.Name]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", `null`))
+	if response.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 {
+		t.Fatalf("null required [[$target.Name]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+[[if or $target.String $target.Text]]	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", `""`))
+	if response.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 {
+		t.Fatalf("empty required [[$target.Name]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+[[end]][[end]][[end]][[with .FirstTextualField]]	response = serveJSON(resourceJSONWithRaw(t, "[[.Name]]", `"ab\u0000"`))
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"code":"[[if .String]]string.control[[else]]text.control[[end]]"`) || repository.item.ID != 0 {
 		t.Fatalf("control-text JSON reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
 	}
 
-	request = httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(`{"name":"x"}`))
-	request.Header.Set("Content-Type", "application/json")
-	request.AddCookie(cookie)
-	response = httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422, got %d: %s", response.Code, response.Body.String())
+[[end]][[range $target := .Fields]][[if $target.Nullable]]	*repository = fakeRepository{}
+	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", ""))
+	if response.Code != http.StatusCreated || repository.createdAttributes.[[$target.GoName]] != nil {
+		t.Fatalf("missing nullable [[$target.Name]] did not clear to nil: %d attributes=%#v: %s", response.Code, repository.createdAttributes, response.Body.String())
 	}
 
-	request = httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(`{"name":"Valid name"}`))
+	*repository = fakeRepository{}
+	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", `null`))
+	if response.Code != http.StatusCreated || repository.createdAttributes.[[$target.GoName]] != nil {
+		t.Fatalf("null nullable [[$target.Name]] did not clear to nil: %d attributes=%#v: %s", response.Code, repository.createdAttributes, response.Body.String())
+	}
+
+[[if or $target.String $target.Text]]	*repository = fakeRepository{}
+	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", `""`))
+	if response.Code != http.StatusCreated || repository.createdAttributes.[[$target.GoName]] != nil {
+		t.Fatalf("empty nullable [[$target.Name]] did not clear to nil: %d attributes=%#v: %s", response.Code, repository.createdAttributes, response.Body.String())
+	}
+
+[[else if $target.Integer]]	*repository = fakeRepository{}
+	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", `0`))
+	if response.Code != http.StatusCreated || repository.createdAttributes.[[$target.GoName]] == nil || *repository.createdAttributes.[[$target.GoName]] != 0 {
+		t.Fatalf("nullable zero [[$target.Name]] was not preserved: %d attributes=%#v: %s", response.Code, repository.createdAttributes, response.Body.String())
+	}
+
+[[else if $target.Boolean]]	*repository = fakeRepository{}
+	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", `false`))
+	if response.Code != http.StatusCreated || repository.createdAttributes.[[$target.GoName]] == nil || *repository.createdAttributes.[[$target.GoName]] {
+		t.Fatalf("nullable false [[$target.Name]] was not preserved: %d attributes=%#v: %s", response.Code, repository.createdAttributes, response.Body.String())
+	}
+
+[[end]][[end]][[end]][[range $target := .Fields]][[if and $target.Required $target.Integer]]	*repository = fakeRepository{}
+	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", `0`))
+	if response.Code != http.StatusCreated || repository.createdAttributes.[[$target.GoName]] != 0 {
+		t.Fatalf("required zero [[$target.Name]] was not preserved: %d attributes=%#v: %s", response.Code, repository.createdAttributes, response.Body.String())
+	}
+
+[[else if and $target.Required $target.Boolean]]	*repository = fakeRepository{}
+	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", `false`))
+	if response.Code != http.StatusCreated || repository.createdAttributes.[[$target.GoName]] {
+		t.Fatalf("required false [[$target.Name]] was not preserved: %d attributes=%#v: %s", response.Code, repository.createdAttributes, response.Body.String())
+	}
+
+[[end]][[end]]	*repository = fakeRepository{}
+	request = httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(sampleResourceJSON))
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)
 	response = httptest.NewRecorder()
@@ -141,35 +264,51 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	if response.Code != http.StatusCreated || repository.item.UserID != 9 {
 		t.Fatalf("expected owner-scoped create, got %d and user %d", response.Code, repository.item.UserID)
 	}
-
-	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(`{"name":"Legacy update"}`))
-	request.Header.Set("Content-Type", "application/json")
-	request.AddCookie(cookie)
-	response = httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || repository.item.Name != "Legacy update" || repository.item.Version != 2 {
-		t.Fatalf("versionless update compatibility: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	if !reflect.DeepEqual(repository.createdAttributes, controllerTestSampleAttributes()) {
+		t.Fatalf("create attributes = %#v, want %#v", repository.createdAttributes, controllerTestSampleAttributes())
 	}
 
-	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(`{"name":"Guarded update","version":2}`))
+[[if .SchemaDriven]]	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(strings.TrimSuffix(updatedResourceVersionOneJSON, "}")+`,"version":1}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || repository.item.Name != "Guarded update" || repository.item.Version != 3 {
-		t.Fatalf("guarded update: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	if response.Code != http.StatusBadRequest || repository.item.Version != 1 {
+		t.Fatalf("duplicate update version reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
 	}
 
-	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(`{"name":"Stale overwrite","version":2}`))
+	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(updatedResourceJSON))
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusConflict || repository.item.Name != "Guarded update" || repository.item.Version != 3 {
+	if response.Code != http.StatusUnprocessableEntity || repository.item.Version != 1 {
+		t.Fatalf("typed update without version: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(updatedResourceVersionOneJSON))
+[[else]]	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(updatedResourceJSON))
+[[end]]	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || repository.item.Version != 2 {
+		t.Fatalf("valid update: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+	if !reflect.DeepEqual(repository.updatedAttributes, controllerTestUpdatedAttributes()) {
+		t.Fatalf("update attributes = %#v, want %#v", repository.updatedAttributes, controllerTestUpdatedAttributes())
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(sampleResourceVersionOneJSON))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || repository.item.Version != 2 || !reflect.DeepEqual(repository.updatedAttributes, controllerTestUpdatedAttributes()) {
 		t.Fatalf("stale update changed state: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
 	}
 
-	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(`{"name":"Invalid version","version":0}`))
+	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(updatedResourceInvalidVersionJSON))
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)
 	response = httptest.NewRecorder()
@@ -177,4 +316,20 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid version: %d: %s", response.Code, response.Body.String())
 	}
+}
+
+func controllerTestSampleAttributes() resource.Attributes {
+	return resource.Attributes{
+[[range .Fields]]		[[.GoName]]: [[.SampleGoValue]],
+[[end]]	}
+}
+
+func controllerTestUpdatedAttributes() resource.Attributes {
+	return resource.Attributes{
+[[range .Fields]]		[[.GoName]]: [[.UpdatedGoValue]],
+[[end]]	}
+}
+
+func pointer[T any](value T) *T {
+	return &value
 }

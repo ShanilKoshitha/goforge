@@ -1,7 +1,8 @@
 CREATE TABLE [[.Plural]] (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
+[[range .Fields]]    "[[.Name]]" [[.SQLType]][[if .Required]] NOT NULL[[end]],
+[[end]]
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     version BIGINT NOT NULL DEFAULT 1

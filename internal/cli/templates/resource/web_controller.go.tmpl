@@ -21,7 +21,7 @@ type IndexPage struct {
 	Title       string
 	Form        view.Form
 	Notice      string
-	Items       [][[.Name]]
+	Items       []ItemView
 	Page        int
 	PerPage     int
 	PreviousURL string
@@ -32,8 +32,13 @@ type ShowPage struct {
 	Title  string
 	Form   view.Form
 	Notice string
-	Item   [[.Name]]
+	Item   ItemView
 }
+
+type ItemView struct {
+	ID int64
+[[range .Fields]]	[[.GoName]] string
+[[end]]}
 
 type FormPage struct {
 	Title     string
@@ -41,7 +46,7 @@ type FormPage struct {
 	Action    string
 	Method    string
 	Submit    string
-	Name      string
+	Values    map[string]string
 	Version   *int64
 	Errors    validation.Errors
 }
@@ -72,8 +77,12 @@ func (controller *WebController) Index(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
+	items := make([]ItemView, len(page.Items))
+	for index, item := range page.Items {
+		items[index] = presentItem(item)
+	}
 	return web.Render(ctx, controller.views, http.StatusOK, "pages/[[.Plural]]/index", IndexPage{
-		Title: "[[.Name]]s", Form: view.Form{CSRFToken: token}, Notice: notice, Items: page.Items,
+		Title: "[[.Name]]s", Form: view.Form{CSRFToken: token}, Notice: notice, Items: items,
 		Page: page.Number, PerPage: page.PerPage,
 		PreviousURL: paginationURL(page.Number-1, page.PerPage, page.HasPrevious),
 		NextURL: paginationURL(page.Number+1, page.PerPage, page.HasNext),
@@ -98,12 +107,12 @@ func (controller *WebController) Create(ctx *httpx.Context) error {
 	if err := request.DecodeForm(ctx); err != nil {
 		return err
 	}
-	if problems := request.Validate(); !problems.Empty() {
+	if problems := request.ValidateCreate(); !problems.Empty() {
 		return controller.renderForm(ctx, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
-			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Name: request.Name, Errors: problems.Messages(),
+			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(), Errors: problems.Messages(),
 		})
 	}
-	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Name)
+	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Attributes)
 	if err != nil {
 		return err
 	}
@@ -134,7 +143,7 @@ func (controller *WebController) Show(ctx *httpx.Context) error {
 		return err
 	}
 	return web.Render(ctx, controller.views, http.StatusOK, "pages/[[.Plural]]/show", ShowPage{
-		Title: item.Name, Form: view.Form{CSRFToken: token}, Notice: notice, Item: item,
+		Title: [[if .SchemaDriven]]"[[.Name]] #" + strconv.FormatInt(item.ID, 10)[[else]]item.Name[[end]], Form: view.Form{CSRFToken: token}, Notice: notice, Item: presentItem(item),
 	})
 }
 
@@ -156,7 +165,7 @@ func (controller *WebController) Edit(ctx *httpx.Context) error {
 	}
 	return controller.renderForm(ctx, http.StatusOK, "pages/[[.Plural]]/edit", FormPage{
 		Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
-		Submit: "Save [[.Name]]", Name: item.Name, Version: &item.Version,
+		Submit: "Save [[.Name]]", Values: modelFormValues(item), Version: &item.Version,
 	})
 }
 
@@ -173,16 +182,16 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 	if err := request.DecodeForm(ctx); err != nil {
 		return err
 	}
-	if problems := request.Validate(); !problems.Empty() {
+	if problems := request.ValidateUpdate(); !problems.Empty() {
 		return controller.renderForm(ctx, http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
 			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
-			Submit: "Save [[.Name]]", Name: request.Name, Version: request.Version, Errors: problems.Messages(),
+			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: request.Version, Errors: problems.Messages(),
 		})
 	}
 	if request.Version == nil {
 		return httpx.NewHTTPError(http.StatusBadRequest, "version is required for browser updates")
 	}
-	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Name, request.Version)
+	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Attributes, request.Version)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}
@@ -196,7 +205,7 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 		}
 		return controller.renderForm(ctx, http.StatusConflict, "pages/[[.Plural]]/edit", FormPage{
 			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
-			Submit: "Save [[.Name]]", Name: request.Name, Version: &fresh.Version,
+			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: &fresh.Version,
 			Errors: validation.Errors{"version": {"was changed by another request; review and try again"}},
 		})
 	}
@@ -239,10 +248,34 @@ func (controller *WebController) renderForm(ctx *httpx.Context, status int, name
 		page.Errors = make(validation.Errors)
 	}
 	page.Form.ValidationErrors = page.Errors
-	if !page.Errors.Empty() {
-		page.Form.OldValues = map[string]string{"name": page.Name}
+	page.Form.OldValues = make(map[string]string, len(page.Values))
+	for name, value := range page.Values {
+		page.Form.OldValues[name] = value
 	}
 	return web.Render(ctx, controller.views, status, name, page)
+}
+
+func modelFormValues(item [[.Name]]) map[string]string {
+	presented := presentItem(item)
+	return map[string]string{
+[[range .Fields]]		"[[.Name]]": presented.[[.GoName]],
+[[end]]	}
+}
+
+func presentItem(item [[.Name]]) ItemView {
+	return ItemView{
+		ID: item.ID,
+[[range .Fields]][[if or .String .Text]]		[[.GoName]]: [[if .Nullable]]formatOptional(item.[[.GoName]], func(value string) string { return value })[[else]]item.[[.GoName]][[end]],
+[[else if .Integer]]		[[.GoName]]: [[if .Nullable]]formatOptional(item.[[.GoName]], func(value int64) string { return strconv.FormatInt(value, 10) })[[else]]strconv.FormatInt(item.[[.GoName]], 10)[[end]],
+[[else]]		[[.GoName]]: [[if .Nullable]]formatOptional(item.[[.GoName]], strconv.FormatBool)[[else]]strconv.FormatBool(item.[[.GoName]])[[end]],
+[[end]][[end]]	}
+}
+
+func formatOptional[T any](value *T, format func(T) string) string {
+	if value == nil {
+		return ""
+	}
+	return format(*value)
 }
 
 func webUser(ctx *httpx.Context) (auth.User, error) {
