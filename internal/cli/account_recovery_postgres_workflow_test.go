@@ -130,6 +130,7 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 	browserEmail := fmt.Sprintf("browser-%d@example.test", stamp)
 	rateLimitEmail := fmt.Sprintf("rate-limit-%d@example.test", stamp)
 	resetFailureEmail := fmt.Sprintf("reset-failure-%d@example.test", stamp)
+	slowFailureEmail := fmt.Sprintf("slow-failure-%d@example.test", stamp)
 	failureEmails := []string{
 		fmt.Sprintf("token-failure-%d@example.test", stamp),
 		fmt.Sprintf("outbox-failure-%d@example.test", stamp),
@@ -151,6 +152,7 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 		{browserSession, "Browser User", browserEmail},
 		{clientWithCookies(t), "Rate Limit User", rateLimitEmail},
 		{clientWithCookies(t), "Reset Failure User", resetFailureEmail},
+		{clientWithCookies(t), "Slow Failure User", slowFailureEmail},
 		{clientWithCookies(t), "Token Failure User", failureEmails[0]},
 		{clientWithCookies(t), "Outbox Failure User", failureEmails[1]},
 		{clientWithCookies(t), "Job Failure User", failureEmails[2]},
@@ -224,6 +226,25 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 		if jobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.cleanup.v1'`); jobs != baselineCleanupJobs {
 			t.Fatalf("%s failure changed cleanup job count from %d to %d", stage, baselineCleanupJobs, jobs)
 		}
+	}
+	restoreSlowFailure := recoveryAcceptanceDelayTokenInsert(t, db)
+	slowFailure := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 3 * time.Second}, http.MethodPost,
+		baseURL+"/auth/password/forgot", forgotBody(slowFailureEmail), "198.51.100.19")
+	restoreSlowFailure()
+	recoveryAcceptanceAssertEquivalent(t, unknownJSONResponse, slowFailure,
+		"Content-Type", "Cache-Control", "Referrer-Policy", "X-Robots-Tag")
+	recoveryAcceptanceAssertTimingParity(t, unknownJSONResponse, slowFailure)
+	if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = (SELECT id FROM users WHERE email = $1)`, slowFailureEmail); count != 0 {
+		t.Fatalf("slow account-dependent failure retained %d reset tokens", count)
+	}
+	if tokens := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens`); tokens != baselineTokens {
+		t.Fatalf("slow account-dependent failure changed reset token count from %d to %d", baselineTokens, tokens)
+	}
+	if outbox := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM mail_outbox`); outbox != baselineOutbox {
+		t.Fatalf("slow account-dependent failure changed outbox count from %d to %d", baselineOutbox, outbox)
+	}
+	if jobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs`); jobs != baselineMailJobs+baselineCleanupJobs {
+		t.Fatalf("slow account-dependent failure changed queued job count to %d", jobs)
 	}
 
 	var currentSelector string
@@ -645,7 +666,7 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 		t.Fatalf("browser account replacement password does not authenticate: %d: %s", response.Status, response.Body)
 	}
 
-	secrets := []string{knownEmail, expiredEmail, concurrentEmail, browserEmail, rateLimitEmail, resetFailureEmail, currentToken, expiredToken, concurrentToken, invalidatedConcurrentToken, supersededToken, hybridToken, browserToken, rateToken, wrongRateToken, resetFailureToken}
+	secrets := []string{knownEmail, expiredEmail, concurrentEmail, browserEmail, rateLimitEmail, resetFailureEmail, slowFailureEmail, currentToken, expiredToken, concurrentToken, invalidatedConcurrentToken, supersededToken, hybridToken, browserToken, rateToken, wrongRateToken, resetFailureToken}
 	secrets = append(secrets, failureEmails...)
 	for _, secret := range secrets {
 		if strings.Contains(workerOutput.String(), secret) || strings.Contains(serverOutput.String(), secret) {
@@ -715,6 +736,32 @@ func recoveryAcceptanceRejectResetUpdate(t *testing.T, db *sql.DB) func() {
 			}
 			if _, err := db.Exec(`DROP FUNCTION ` + function + `()`); err != nil {
 				t.Errorf("drop reset failure function: %v", err)
+			}
+		})
+	}
+	t.Cleanup(restore)
+	return restore
+}
+
+func recoveryAcceptanceDelayTokenInsert(t *testing.T, db *sql.DB) func() {
+	t.Helper()
+	const function = "goforge_recovery_delay_token"
+	const trigger = "goforge_recovery_delay_token_insert"
+	if _, err := db.Exec(`CREATE FUNCTION ` + function + `() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$`); err != nil {
+		t.Fatalf("create slow token function: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER ` + trigger + ` BEFORE INSERT ON password_reset_tokens FOR EACH ROW EXECUTE FUNCTION ` + function + `()`); err != nil {
+		_, _ = db.Exec(`DROP FUNCTION ` + function + `()`)
+		t.Fatalf("create slow token trigger: %v", err)
+	}
+	var once sync.Once
+	restore := func() {
+		once.Do(func() {
+			if _, err := db.Exec(`DROP TRIGGER ` + trigger + ` ON password_reset_tokens`); err != nil {
+				t.Errorf("drop slow token trigger: %v", err)
+			}
+			if _, err := db.Exec(`DROP FUNCTION ` + function + `()`); err != nil {
+				t.Errorf("drop slow token function: %v", err)
 			}
 		})
 	}

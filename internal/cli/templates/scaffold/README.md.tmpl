@@ -70,7 +70,10 @@ to deliver them. Links always use the validated `APP_URL`, never request Host or
 forwarding headers. Only a selector and SHA-256 digest are stored for the
 single-use token. Recipient, subject, text, HTML, and the complete link live in
 AES-256-GCM outbox ciphertext, while the durable job payload contains only the
-opaque outbox ID. `MAIL_OUTBOX_KEY` must be an independent 32-byte unpadded
+opaque outbox ID. Account-dependent issuance work has a 400ms atomic budget
+beneath the generic 650–850ms response envelope; edit the ordinary
+`internal/auth.PasswordRecovery` service if the application's latency policy
+differs. `MAIL_OUTBOX_KEY` must be an independent 32-byte unpadded
 base64url secret; rotating it makes pending messages unreadable, so drain or
 deliberately discard them first. Production SMTP requires `starttls` or
 `implicit` TLS. `none` is accepted only for unauthenticated loopback SMTP in

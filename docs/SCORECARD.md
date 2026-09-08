@@ -30,7 +30,7 @@ The JSON equivalents are `POST /auth/password/forgot` and
 | --- | --- | --- |
 | Mail transport is explicit and production-safe | passing locally | Immutable messages and the small `mail.Sender` seam have bounded RFC 5322 encoding; the SMTP adapter enforces TLS/auth/plaintext policy, timeouts, cancellation, and disclosure-safe errors under focused race tests |
 | Mail authoring is application-owned | passing locally | `forge make:mail` and the built-in password-reset message use ordinary generated Go, compiled Forge HTML, and embedded standard-library text templates; callers directly replace the renderer, message, or sender |
-| Reset issuance is enumeration-safe and bounded | prepared for CI | The generated service silently account-throttles normalized addresses, equalizes healthy and account-dependent failure responses with bounded jitter, uses database-clock expiry, and supersedes by user; the PostgreSQL gate measures known/unknown parity and rollback but cannot run on this host |
+| Reset issuance is enumeration-safe and bounded | prepared for CI | The generated service silently account-throttles normalized addresses, caps account-dependent work at 400ms beneath a 650–850ms response envelope, emits only a nonblocking fixed-stage failure signal, uses database-clock expiry, and supersedes by user; the PostgreSQL gate measures healthy and deliberately delayed failure parity but cannot run on this host |
 | Durable delivery does not persist the reset secret in plaintext | prepared for CI | One generated transaction stores the selector/digest, AES-256-GCM envelope, outbox-ID-only delivery job, and outbox-ID-only seven-day cleanup job; the PostgreSQL gate injects rollback at token, outbox, and final job writes and proves SMTP retry/disclosure behavior |
 | Reset consumption is single-use and revocation-safe | prepared for CI | A cheap selector/digest/generation preflight rejects invalid links before password hashing, then the generated transaction locks and revalidates token plus user, advances credentials, and consumes once; the PostgreSQL gate covers rollback/retry, replay, selector throttling across sources, concurrency, and session revocation |
 | Browser and JSON contracts are complete | passing locally | Generated request/controller/view suites cover exact JSON/form decoding, validation, privacy headers, generic wrapped-sentinel failures, 202/204, PRG flashes/redirects, secret preservation, and contextual Forge escaping |
@@ -74,7 +74,8 @@ The JSON equivalents are `POST /auth/password/forgot` and
   not inject format-9 built-ins into an older application.
 - A dedicated real-PostgreSQL acceptance journey now compiles and vets. It is
   wired into public CI for two passes. It now runs generated race and vet gates;
-  measures known/unknown response timing; injects token, outbox, cleanup-job,
+  measures known/unknown response timing, including a two-second database delay
+  cancelled by the 400ms internal budget; injects token, outbox, cleanup-job,
   and reset-update failures; and covers hostile Host headers, SMTP 451 retry,
   bounded encrypted retention, opaque payloads, supersession, malformed,
   cross-account, expired, replayed and selector-throttled links, browser and

@@ -724,6 +724,17 @@ token and advances the user's credential version with the password replacement
 in one transaction, so replay and concurrent submissions have at most one
 winner and every existing session becomes invalid immediately.
 
+Issuance deliberately has two time boundaries: all account-dependent database,
+rendering, outbox, and dispatch work receives a 400ms child context, while the
+public response is padded with cryptographic jitter to 650–850ms. A timeout or
+internal failure rolls back and remains silent at this boundary. This prevents
+a slow lock or persistence failure from turning the endpoint into an account
+existence oracle; applications can replace this ordinary service when their
+latency budget or observability model differs. A fixed-stage observer retains
+an operational signal without receiving the address, token, message, or cause.
+The service dispatches at most one observer callback concurrently and never
+waits for it, so a slow or panicking handler cannot alter the public envelope.
+
 Mail is an explicit framework boundary rather than controller-owned SMTP.
 The public `mail.Sender` contract and SMTP adapter accept fully rendered text
 and HTML messages with bounded connection and operation lifetimes. Fresh
