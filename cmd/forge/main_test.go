@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -60,6 +61,57 @@ func TestRunCLIPrintsFrameworkErrorOnce(t *testing.T) {
 	}
 	if got, want := stderr.String(), "error: forge.yaml not found\n"; got != want {
 		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestRunCLIHandlesCallerCancellationQuietly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stderr bytes.Buffer
+	code := runCLI(ctx, []string{"serve"}, nil, io.Discard, &stderr,
+		func(context.Context, []string, io.Reader, io.Writer, io.Writer) error {
+			return context.Canceled
+		})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want graceful cancellation", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("cancellation diagnostic = %q", stderr.String())
+	}
+}
+
+func TestRunCLIReportsCleanupFailureJoinedWithCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stderr bytes.Buffer
+	cleanupErr := errors.New("process tree remained alive")
+	code := runCLI(ctx, []string{"serve"}, nil, io.Discard, &stderr,
+		func(context.Context, []string, io.Reader, io.Writer, io.Writer) error {
+			return errors.Join(context.Canceled, cleanupErr)
+		})
+	if code != 1 {
+		t.Fatalf("exit code = %d, want cleanup failure", code)
+	}
+	if !strings.Contains(stderr.String(), cleanupErr.Error()) {
+		t.Fatalf("cleanup diagnostic = %q", stderr.String())
+	}
+}
+
+func TestRunCLIReportsCleanupFailureJoinedWithChildExit(t *testing.T) {
+	exitError := processExitError(t, 29)
+	cleanupErr := errors.New("failed to remove development binary")
+	var stderr bytes.Buffer
+
+	code := runCLI(context.Background(), nil, nil, io.Discard, &stderr,
+		func(context.Context, []string, io.Reader, io.Writer, io.Writer) error {
+			return errors.Join(exitError, cleanupErr)
+		})
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want framework cleanup failure", code)
+	}
+	if !strings.Contains(stderr.String(), cleanupErr.Error()) {
+		t.Fatalf("cleanup diagnostic = %q", stderr.String())
 	}
 }
 

@@ -1,3 +1,78 @@
+# v0.10 last-good development server scorecard
+
+Status: **accepted** — 2026-09-06
+
+Target:
+
+> From a generated format-4 through format-8 application, run `forge serve`
+> once and keep a stable development server while Go, Forge view, environment,
+> module, and embedded SQL inputs change. Every stable edit recompiles views
+> with the project's own semantics and builds an ordinary server binary. A
+> broken edit leaves the last-good server and generated view artifact intact;
+> correcting it recovers without restarting the CLI. Cancellation removes the
+> complete child process tree and every development artifact. “Last-good” is a
+> compile-and-liveness guarantee; `/ready` remains the dynamic PostgreSQL and
+> exact-migration-state signal.
+
+## Acceptance criteria
+
+| Criterion | State | Evidence |
+| --- | --- | --- |
+| The default closes the edit-to-render gap | passing locally | Supervisor tests and the frozen format-4 journey prove compile, build, start, watch, reload, and the documented direct `go run ./cmd/server` escape hatch |
+| Watch coverage is complete and loop-free | passing locally | Content-snapshot tests cover writes, creates, deletes, renames, new nested directories, every declared input, exclusions, transient read recovery, and generated-output exclusion; one observer owns polling and generation |
+| Bursts converge on the newest source | passing locally | Race tests cover edits during builds, A→B→A content round trips, generation handoff before waiter registration, pre/post-promotion checks, stale discard, proxy revert, and serialized builds |
+| Invalid views preserve the last-good state | passing locally | Application-owned compilers run against an isolated source tree; compiler and transaction tests retain exact bytes and mode on failure, while promotion holds the project generator lock through commit or rollback |
+| Invalid Go preserves the last-good server | passing locally | Candidate views reach `go build` through a Go overlay without touching the canonical artifact; failures preserve the active process and recover after the next stable edit |
+| Process replacement and exit semantics are bounded | passing locally | Managed process trees, joined cleanup failures, candidate exits during proxy startup/promotion, exact PID/address listener ownership, cancellation, proxy limits, and port cleanup have native Windows race coverage |
+| Template compatibility is retained | passing locally | The frozen format-4 watched journey passes twice; format-specific compiler tests retain application-owned format 5–8 function maps and format/ORM gates are revalidated for every candidate |
+| Production remains conventional | passing locally | Candidate binaries use an OS temporary directory; inspection and scaffold tests show no watcher, compiler, reload endpoint, or injected browser script in application/runtime source |
+| Fresh application journey passes twice | passing | Public push and pull-request runs each generated PostgreSQL applications twice and proved valid view/Go edits, invalid-edit preservation and recovery, atomic-save/new-directory detection, readiness, response changes, cancellation cleanup, and port reuse |
+| Independent compatibility and platform review passes | passing | Framework race/vet/build, frozen and public released-project checks, Linux PostgreSQL acceptance, and native Windows watcher/process tests passed in both public runs; independent review found no P0–P2 blocker |
+
+## Local evidence — 2026-09-06
+
+- `go test -race ./...`, `go vet ./...`, and `go build ./cmd/forge` pass on
+  Windows; the CLI reports `forge 0.10.0`.
+- The supervisor, observer, listener-owner, proxy, and cleanup suites pass ten
+  consecutive race-enabled runs. Exact Windows PID/address ownership rejects a
+  same-port wrong-address match.
+- Off-tree view staging, overlay builds, promotion-lock ownership, identical
+  concurrent publications, and transient rollback retry pass ten consecutive
+  race-enabled runs without exposing an unpromoted generated artifact.
+- The frozen format-4 build/serve/check/last-good journey passes twice with a
+  real watched server and complete cancellation cleanup.
+- A CGO-free Linux CLI test binary compiles successfully. The fresh PostgreSQL
+  development journey remains unavailable on this workstation because it has
+  no `GOFORGE_TEST_DATABASE_URL`; the public evidence below closes that gate.
+- [Push CI run 34065415454](https://github.com/ShanilKoshitha/goforge/actions/runs/34065415454)
+  passed Linux/PostgreSQL in 6m36s and native Windows in 3m18s.
+- [Pull-request CI run 34065753884](https://github.com/ShanilKoshitha/goforge/actions/runs/34065753884)
+  independently passed Linux/PostgreSQL in 6m27s and native Windows in 2m57s.
+- Independent product and architecture reviews approved the final transaction,
+  process, compatibility, and acceptance boundaries with no P0–P2 finding.
+
+## Baseline — 2026-09-06
+
+- The accepted v0.9.1 CLI compiles application-owned views once and then blocks
+  in `go run ./cmd/server`; every source edit requires a manual stop and rerun.
+- View compilation already has deterministic, last-good publication and mapped
+  diagnostics. Process delegation already owns Unix process groups and Windows
+  kill-on-close Job Objects, but exposes only a blocking one-shot runner.
+- The generated server, view compiler, ORM, readiness route, and direct Go
+  commands are already explicit. This milestone needs no template grammar,
+  generated application contract, production runtime, or project-format change.
+
+## Explicit non-goals for v0.10
+
+- Browser LiveReload script injection, SSE/WebSocket reload endpoints, CSS/JS
+  hot replacement, hydration, frontend asset compilation, npm, or Tailwind.
+- Starting Compose/PostgreSQL, applying migrations, changing `.env`, generating
+  ORM source, starting workers, or supervising multiple application processes.
+- A new Forge view directive, runtime template interpretation, production file
+  watching, route discovery, dependency injection, or framework-owned app state.
+- Test watching, `forge doctor`, remote development, TLS termination, deployment,
+  or changing the strict `forge test` and `forge build` contracts.
+
 # v0.9 cohesive test and build loop scorecard
 
 Status: **accepted** — 2026-09-06

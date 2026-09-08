@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.9.1 is PostgreSQL-first and accepted against its written milestone
+GoForge v0.10.0 is PostgreSQL-first and tracked against its written milestone
 scorecard. It includes explicit database wiring, parallel JSON and
 server-rendered authentication, database-backed sessions, CSRF-protected HTML
 forms, production middleware, embedded migrations, owner-scoped JSON and HTML
@@ -44,14 +44,17 @@ application-owned compare-and-swap SQL, and stale concurrent requests cannot
 restore an old password or overwrite a winning rotated browser session.
 The v0.9 developer-loop milestone is accepted. It adds opinionated,
 non-mutating `forge test` and `forge build` gates while retaining the underlying
-Go commands as complete escape hatches.
+Go commands as complete escape hatches. The v0.10 development server closes the
+compiled-view edit loop: `forge serve` watches application inputs, builds and
+checks candidate liveness off-port, and promotes only a live replacement
+while preserving the last-good server through invalid edits.
 
 ## Install and try it
 
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.9.1
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.10.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -142,10 +145,24 @@ go run ./cmd/server
 ```
 
 Use direct Go commands for custom packages, flags, tags, targets, output paths,
-or worker and console builds. The wrappers never start services, apply
-migrations, or modify `.env`. Watch/reload, browser HMR, frontend assets,
-multi-process development, and environment diagnosis are not part of this
-milestone.
+or worker and console builds. `forge serve` is the watched development default;
+it compiles application-owned views, stages ordinary server binaries outside the
+repository, health-checks them on private loopback addresses, and switches its
+stable public proxy only after success. Invalid view or Go source leaves the
+last-good server reachable and recovers on the next correction. Refresh the
+browser after a successful reload; the proxy does not inject scripts or rewrite
+responses. Promotion proves `/health` liveness, not `/ready` database or
+migration readiness; run `forge migrate` explicitly after SQL changes.
+
+PID-verified candidate promotion is batteries-included on Linux, Windows, and
+macOS. AIX, DragonFly BSD, FreeBSD, illumos, iOS, NetBSD, OpenBSD, and Solaris
+use the system `lsof` command for the same check. Where that utility is absent,
+use the exact one-shot escape hatch `go run ./cmd/server`.
+
+The wrappers never start services, apply migrations, generate a stale ORM,
+modify `.env`, or start workers. Browser LiveReload/HMR, frontend assets,
+multi-process development, and environment diagnosis remain separate
+milestones.
 
 ## Framework packages
 

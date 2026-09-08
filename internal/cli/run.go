@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.9.1"
+const Version = "0.10.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -44,10 +44,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if len(args) != 1 {
 			return errors.New("usage: forge serve")
 		}
-		if err := prepareProjectViews(ctx, stdin, stdout, stderr, processes); err != nil {
-			return err
-		}
-		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/server")
+		return runProjectServe(ctx, stdin, stdout, stderr, processes)
 	case "test":
 		if len(args) != 1 {
 			return errors.New("usage: forge test")
@@ -62,9 +59,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if len(args) > 2 || len(args) == 2 && args[1] != "--check" {
 			return errors.New("usage: forge views:compile [--check]")
 		}
-		return runProjectViewCompiler(ctx, stdin, stdout, stderr, processes, len(args) == 2)
+		return runLockedProjectViewCompiler(ctx, stdin, stdout, stderr, processes, len(args) == 2)
 	case "orm:generate":
-		return runORMGenerate(args[1:], stdout)
+		return runORMGenerate(ctx, args[1:], stdout)
 	case "migrate":
 		if len(args) != 1 {
 			return errors.New("usage: forge migrate")
