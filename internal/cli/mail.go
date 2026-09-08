@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"io"
 	"os"
@@ -25,6 +26,9 @@ func makeMail(ctx context.Context, name string, stdin io.Reader, stdout, stderr 
 	}
 	fileName, err := snake(typeName)
 	if err != nil {
+		return err
+	}
+	if err := validateMailDeclarations(typeName); err != nil {
 		return err
 	}
 	module, err := projectModule()
@@ -95,6 +99,60 @@ func makeMail(ctx context.Context, name string, stdin io.Reader, stdout, stderr 
 		fmt.Fprintf(stdout, "created %s\n", filepath.ToSlash(file.path))
 	}
 	return nil
+}
+
+func validateMailDeclarations(typeName string) error {
+	generated := []string{typeName, typeName + "Data", "New" + typeName, "Test" + typeName + "BuildsTextAndHTML"}
+	wanted := make(map[string]string, len(generated))
+	for _, declaration := range generated {
+		wanted[strings.ToLower(declaration)] = declaration
+	}
+	directory := filepath.Join("internal", "mail")
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect mail package: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		path := filepath.Join(directory, entry.Name())
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return fmt.Errorf("inspect mail declarations in %s: %w", filepath.ToSlash(path), err)
+		}
+		for _, declaration := range topLevelDeclarations(file) {
+			if generatedName, exists := wanted[strings.ToLower(declaration)]; exists {
+				return fmt.Errorf("mail %s declaration %s conflicts with %s in %s", typeName, generatedName, declaration, filepath.ToSlash(path))
+			}
+		}
+	}
+	return nil
+}
+
+func topLevelDeclarations(file *ast.File) []string {
+	var declarations []string
+	for _, declaration := range file.Decls {
+		switch typed := declaration.(type) {
+		case *ast.FuncDecl:
+			declarations = append(declarations, typed.Name.Name)
+		case *ast.GenDecl:
+			for _, specification := range typed.Specs {
+				switch spec := specification.(type) {
+				case *ast.TypeSpec:
+					declarations = append(declarations, spec.Name.Name)
+				case *ast.ValueSpec:
+					for _, name := range spec.Names {
+						declarations = append(declarations, name.Name)
+					}
+				}
+			}
+		}
+	}
+	return declarations
 }
 
 func splitIdentifierWords(value string) []string {

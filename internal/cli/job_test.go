@@ -180,6 +180,30 @@ func TestMakeJobRejectsEveryGeneratedDeclarationCollisionBeforeWrites(t *testing
 	}
 }
 
+func TestMakeJobRejectsFormatNineBuiltinDeclarationsBeforeWrites(t *testing.T) {
+	for _, name := range []string{"Outbox", "DeliverMail", "DeliverMailDefinition", "DeliverMailHandler", "DispatchDeliverMail"} {
+		t.Run(name, func(t *testing.T) {
+			directory := jobProject(t, "9")
+			t.Chdir(directory)
+			registryBefore, _ := os.ReadFile(filepath.FromSlash(generatedJobRegistryPath))
+			stateBefore, _ := os.ReadFile(filepath.FromSlash(jobStatePath))
+			err := makeJob(name, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), "built-in declaration") {
+				t.Fatalf("built-in collision %q error = %v", name, err)
+			}
+			registryAfter, _ := os.ReadFile(filepath.FromSlash(generatedJobRegistryPath))
+			stateAfter, _ := os.ReadFile(filepath.FromSlash(jobStatePath))
+			if !bytes.Equal(registryBefore, registryAfter) || !bytes.Equal(stateBefore, stateAfter) {
+				t.Fatal("built-in collision changed managed state")
+			}
+			fileName, _ := snake(name)
+			if _, statErr := os.Stat(filepath.Join("internal", "jobs", fileName+".go")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("built-in collision wrote handler: %v", statErr)
+			}
+		})
+	}
+}
+
 func TestMakeJobRejectsCorruptMetadataWithoutWrites(t *testing.T) {
 	directory := jobProject(t, "6")
 	t.Chdir(directory)

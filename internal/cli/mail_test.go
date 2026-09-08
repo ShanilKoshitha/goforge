@@ -95,6 +95,29 @@ func TestMakeMailRequiresFormatNine(t *testing.T) {
 	}
 }
 
+func TestMakeMailRejectsPackageDeclarationCollisionBeforeWrites(t *testing.T) {
+	directory := mailProject(t, 9)
+	t.Chdir(directory)
+	if err := os.MkdirAll(filepath.FromSlash("internal/mail"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.FromSlash("internal/mail/builtin.go"), []byte("package mail\n\nfunc NewAuditNotice() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := makeMail(context.Background(), "AuditNotice", nil, io.Discard, io.Discard, &recordedProcess{})
+	if err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("declaration collision error = %v", err)
+	}
+	for _, path := range []string{
+		"internal/mail/audit_notice.go", "internal/mail/audit_notice_test.go",
+		"internal/mail/templates/audit_notice.txt.tmpl", "resources/views/mail/audit_notice.forge.html",
+	} {
+		if _, statErr := os.Stat(filepath.FromSlash(path)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("declaration collision wrote %s: %v", path, statErr)
+		}
+	}
+}
+
 func mailProject(t *testing.T, version int) string {
 	t.Helper()
 	directory := t.TempDir()

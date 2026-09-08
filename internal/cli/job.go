@@ -54,6 +54,9 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	if err != nil {
 		return err
 	}
+	if err := validateJobBuiltinDeclarations(append(append([]jobSpec(nil), state.Jobs...), spec), format); err != nil {
+		return err
+	}
 	files, err := jobFiles(spec)
 	if err != nil {
 		return err
@@ -230,6 +233,27 @@ func validateJobDeclarations(jobs []jobSpec) error {
 				return fmt.Errorf("job %s declaration %s conflicts with %s", spec.Name, declaration, owner)
 			}
 			owners[key] = fmt.Sprintf("job %s", spec.Name)
+		}
+	}
+	return nil
+}
+
+func validateJobBuiltinDeclarations(jobs []jobSpec, format int) error {
+	if format < 9 {
+		return nil
+	}
+	owners := make(map[string]string)
+	for _, declaration := range []string{
+		"Outbox", "Dependencies", "DeliverMail", "DeliverMailDefinition",
+		"DeliverMailHandler", "DispatchDeliverMail", "NewDispatcher", "NewRegistry",
+	} {
+		owners[strings.ToLower(declaration)] = "format 9 built-in declaration " + declaration
+	}
+	for _, spec := range jobs {
+		for _, declaration := range jobDeclarations(spec) {
+			if owner, exists := owners[strings.ToLower(declaration)]; exists {
+				return fmt.Errorf("job %s declaration %s conflicts with %s", spec.Name, declaration, owner)
+			}
 		}
 	}
 	return nil
