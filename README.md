@@ -65,7 +65,7 @@ cd myapp
 docker compose up -d
 forge make:resource Issue
 forge migrate
-# For plain-HTTP development, first set APP_ENV=local in .env.
+# For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
 forge serve
 ```
 
@@ -80,13 +80,14 @@ forge make:resource Issue
 forge migrate
 forge test
 forge build
-# For plain-HTTP development, first set APP_ENV=local in .env.
+# For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
 forge serve
 ```
 
 Generated projects retain `APP_ENV=production` in `.env`, which keeps session
-cookies HTTPS-only. Change it to `APP_ENV=local` only for local plain-HTTP
-development, before running `forge serve`. Never use `APP_ENV=local` in a
+cookies HTTPS-only. Change it to `APP_ENV=local` and set
+`APP_URL=http://localhost:8080` only for local plain-HTTP development, before
+running `forge serve` or the worker. Never use `APP_ENV=local` in a
 deployed process because it disables secure cookies.
 
 Visit `http://localhost:8080/register` for the browser workflow or
@@ -123,6 +124,7 @@ forge make:controller <name>
 forge make:request <name>
 forge make:migration <name>
 forge make:job <name>
+forge make:mail <name>
 forge queue:work
 forge queue:failed
 forge queue:retry <id|--all>
@@ -154,7 +156,7 @@ runtime schema. Updates replace the complete writable resource: a missing,
 `0` and boolean `false` remain present values.
 
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-8 projects. Both non-mutating preflights check the
+format-4 through format-9 projects. Both non-mutating preflights check the
 generated ORM first and compiled views second. Testing then runs exactly `go
 test ./...`. Building stages a trimmed `./cmd/server` executable and publishes
 it atomically as `bin/app` on Unix or `bin/app.exe` on Windows, so a failed build

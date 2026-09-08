@@ -63,6 +63,26 @@ production worker with `go build -trimpath -o bin/worker ./cmd/worker`.
 after that deadline the worker stops heartbeating and exits so another worker
 can reclaim the fenced lease.
 
+Password recovery is ready at `/forgot-password` and
+`POST /auth/password/forgot`; reset links finish at `/reset-password` or
+`POST /auth/password/reset`. Start `go run ./cmd/worker` (or `forge queue:work`)
+to deliver them. Links always use the validated `APP_URL`, never request Host or
+forwarding headers. Only a selector and SHA-256 digest are stored for the
+single-use token. Recipient, subject, text, HTML, and the complete link live in
+AES-256-GCM outbox ciphertext, while the durable job payload contains only the
+opaque outbox ID. `MAIL_OUTBOX_KEY` must be an independent 32-byte unpadded
+base64url secret; rotating it makes pending messages unreadable, so drain or
+deliberately discard them first. Production SMTP requires `starttls` or
+`implicit` TLS. `none` is accepted only for unauthenticated loopback SMTP in
+`APP_ENV=local`. SMTP delivery is at least once: a connection failure around
+the provider acceptance boundary can duplicate a message, but reset links
+remain single-use.
+
+Create an application-owned dual-template message with
+`forge make:mail AuditNotice`. The generated Go under `internal/mail`, Forge
+HTML under `resources/views/mail`, and standard-library text template are the
+complete implementation and can be edited or replaced directly.
+
 Views live in `resources/views` and compile to the inspectable
 `resources/views/views_gen.go` artifact consumed in production. Generate an
 anonymous component with `forge make:component Notice`, then edit its declared

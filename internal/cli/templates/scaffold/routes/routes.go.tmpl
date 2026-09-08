@@ -59,7 +59,8 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 	}
 	limitRegister := ratelimit.Middleware(sourceAttempts, sourceKey("register"))
 	limitLogin := ratelimit.Middleware(sourceAttempts, sourceKey("login"))
-	limitRecovery := ratelimit.Middleware(recoverySourceAttempts, sourceKey("password-recovery"))
+	limitRecoveryRequest := ratelimit.Middleware(recoverySourceAttempts, sourceKey("password-recovery-request"))
+	limitRecoveryReset := ratelimit.Middleware(recoverySourceAttempts, sourceKey("password-recovery-reset"))
 
 	users := auth.NewPostgresUserRepository(db)
 	authController := auth.NewController(users, manager, password.New(), accountAttempts, registrations...)
@@ -85,8 +86,8 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 	router.Named("health.ready", "GET", "/ready", health.Ready)
 	router.Named("auth.register", "POST", "/auth/register", limitRegister(authController.Register))
 	router.Named("auth.login", "POST", "/auth/login", limitLogin(authController.Login))
-	router.Named("auth.password.forgot", "POST", "/auth/password/forgot", limitRecovery(recoveryController.ForgotJSON))
-	router.Named("auth.password.reset", "POST", "/auth/password/reset", limitRecovery(recoveryController.ResetJSON))
+	router.Named("auth.password.forgot", "POST", "/auth/password/forgot", limitRecoveryRequest(recoveryController.ForgotJSON))
+	router.Named("auth.password.reset", "POST", "/auth/password/reset", limitRecoveryReset(recoveryController.ResetJSON))
 	authenticated := router.Group("", requireAuth)
 	authenticated.GET("/auth/me", authController.Me)
 	authenticated.POST("/auth/logout", authController.Logout)
@@ -102,9 +103,9 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 	router.Named("web.auth.login", "POST", "/login",
 		limitLogin(web.Sessions(manager)(web.CSRF()(webAuthController.Login))))
 	router.Named("web.auth.password.forgot", "POST", "/forgot-password",
-		limitRecovery(web.Sessions(manager)(web.CSRF()(recoveryController.Forgot))))
+		limitRecoveryRequest(web.Sessions(manager)(web.CSRF()(recoveryController.Forgot))))
 	router.Named("web.auth.password.reset", "POST", "/reset-password",
-		limitRecovery(web.Sessions(manager)(web.CSRF()(recoveryController.Reset))))
+		limitRecoveryReset(web.Sessions(manager)(web.CSRF()(recoveryController.Reset))))
 	authenticatedBrowser := router.Group("", web.Sessions(manager), requireWebAuth, web.CSRF())
 	authenticatedBrowser.Named("web.dashboard", "GET", "/app", webAuthController.Dashboard)
 	authenticatedBrowser.Named("web.auth.logout", "POST", "/logout", webAuthController.Logout)

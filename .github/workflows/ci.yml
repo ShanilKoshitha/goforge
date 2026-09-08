@@ -79,12 +79,13 @@ jobs:
           cmp "$RUNNER_TEMP/released-go.mod" go.mod
           cmp "$RUNNER_TEMP/released-go.sum" go.sum
           cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
-      - name: Current distribution scaffold
+      - name: Current checkout scaffold
         run: |
-          "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
+          "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp --replace "$GITHUB_WORKSPACE"
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.11.0' go.mod
-          test -z "$(grep '^replace ' go.mod || true)"
+          grep -q '^replace github.com/ShanilKoshitha/goforge => ' go.mod
+          grep -q '^version: 9$' forge.yaml
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           "$RUNNER_TEMP/forge" make:resource TypedTicket \
             --field title:string \
@@ -93,6 +94,7 @@ jobs:
             --field estimate:integer:nullable \
             --field active:boolean \
             --field featured:boolean:nullable
+          "$RUNNER_TEMP/forge" make:mail AuditNotice
           go mod verify
           "$RUNNER_TEMP/forge" test
           "$RUNNER_TEMP/forge" build
@@ -114,7 +116,7 @@ jobs:
           wait "$serve_pid"
           trap - EXIT
       - name: Generated PostgreSQL applications
-        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow)$' -count=2 -v
+        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow)$' -count=2 -v
 
   windows:
     runs-on: windows-latest

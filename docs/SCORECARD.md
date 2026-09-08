@@ -72,6 +72,13 @@ The JSON equivalents are `POST /auth/password/forgot` and
   outbox dispatch adapter, built-in delivery handler, explicit routes, and SMTP
   worker. Focused format-6 compatibility tests confirm later job generation does
   not inject format-9 built-ins into an older application.
+- A dedicated real-PostgreSQL acceptance journey now compiles and vets. It is
+  wired into public CI for two passes and covers known/unknown parity, hostile
+  Host headers, SMTP 451 retention and retry, encrypted storage, opaque job
+  payloads, supersession, malformed/cross-account/expired/replayed links,
+  credential-generation invalidation, old/new sign-in, session revocation, and
+  concurrent one-winner consumption. Local execution remains pending because
+  this machine has neither `GOFORGE_TEST_DATABASE_URL` nor a Docker engine.
 
 ## Explicit non-goals for v0.12
 
