@@ -1,3 +1,73 @@
+# v0.12 delivery-backed account recovery scorecard
+
+Status: **in progress** — 2026-09-08
+
+Target:
+
+> From a fresh application, request a password reset through either the browser
+> or JSON API, deliver a text-and-HTML message through an explicit durable mail
+> path, consume the short-lived link once, and invalidate every prior session.
+> Public responses must not disclose account or token state, durable storage and
+> logs must not expose the reset secret, and all mail, token, persistence,
+> rendering, job, and transport boundaries must remain ordinary replaceable Go.
+
+The intended browser journey is:
+
+```text
+GET  /forgot-password
+POST /forgot-password
+GET  /reset-password?token=<selector.secret>
+POST /reset-password
+POST /login
+```
+
+The JSON equivalents are `POST /auth/password/forgot` and
+`POST /auth/password/reset`.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Mail transport is explicit and production-safe | missing | A small `mail.Sender` contract and bounded SMTP adapter validate addresses/headers, cancellation, authentication, TLS policy, message sizes, and text/HTML MIME without global state |
+| Mail authoring is application-owned | missing | Password-reset mail and `forge make:mail` use compiled Forge HTML plus explicit standard-library text templates; generated Go constructs messages and may replace the renderer or sender directly |
+| Reset issuance is enumeration-safe and bounded | missing | Browser and JSON responses are identical for known/unknown accounts; source/account throttles, normalized addresses, expiry, supersession, and database-clock behavior have focused tests |
+| Durable delivery does not persist the reset secret in plaintext | missing | One transaction stores only the token digest, encrypts the rendered envelope, and queues an outbox-ID-only job; failures roll back all three states and administration/logs disclose none of them |
+| Reset consumption is single-use and revocation-safe | missing | Expired, malformed, consumed, superseded, cross-account, and concurrent tokens share one safe failure; exactly one valid reset advances credentials and immediately invalidates every existing session |
+| Browser and JSON contracts are complete | missing | Exact decoding, CSRF, validation, status/redirect/flash behavior, contextual escaping, safe reset origins, and successful sign-in with only the replacement password pass generated tests |
+| Generation and configuration fail before partial state | missing | Fresh format-9 configuration, migration, routes, mail/job wiring, views, and `make:mail` are deterministic; invalid names/settings and injected generator failures do not publish partial files or managed state |
+| Existing applications remain conventional and compatible | missing | Frozen format-8 auth/resources/jobs/views/ORM retain behavior; direct Go, SQL, SMTP/sender, template, queue, and session replacement paths remain documented and tested |
+| A fresh PostgreSQL application works end to end | missing | An isolated application migrates, captures the delivered reset link, proves retry and disclosure policy, resets through browser and JSON paths, and verifies replay/concurrency/session revocation outside the source checkout |
+| The milestone passes twice without regression | missing | Framework race/vet/build, native Windows checks, and the complete fresh PostgreSQL workflow pass twice; independent security, architecture, and release reviews report no P0–P2 blocker |
+
+## Runnable baseline — 2026-09-08
+
+- Released `main` at `v0.11.1` passes `go test ./...`, `go vet ./...`, and a
+  native Windows CLI build. Public CI already exercises every generated
+  PostgreSQL workflow twice.
+- Fresh applications have registration, login, password change, account-wide
+  credential-version session revocation, source/account throttles, durable typed
+  jobs, application-owned Forge views, and explicit transaction helpers.
+- No `mail` package, SMTP settings, mail templates or generator, reset-token
+  schema, forgotten/reset routes, durable encrypted outbox, or reset acceptance
+  journey exists. Registration through password change is therefore strong, but
+  a user who forgets the credential cannot recover the account.
+- Recurring schedules and relationship-aware resource generation are valuable
+  next milestones. They do not close this production authentication gap and are
+  deliberately deferred until the written v0.12 target passes.
+
+## Explicit non-goals for v0.12
+
+- Email verification, passwordless or magic-link login, invitations, MFA,
+  WebAuthn/passkeys, OAuth/social login, API tokens, or device administration.
+- SMS, push, webhooks, marketing/bulk delivery, campaigns, provider analytics,
+  inbound mail, attachments, DKIM signing, or a web mail/queue dashboard.
+- Exactly-once SMTP delivery. Queue and transport effects remain at least once;
+  reset-token consumption is the single-use security boundary.
+- A proprietary mail expression language, runtime template discovery, package
+  scanning, dependency injection, or reflection-based message registration.
+- Recurring job schedules, relationship-aware resources, frontend asset
+  bundling/HMR, or a multi-process `forge dev` command.
+
 # v0.11 typed scalar resource generation scorecard
 
 Status: **accepted** — 2026-09-08

@@ -79,7 +79,7 @@ func runORMGenerate(ctx context.Context, args []string, stdout io.Writer) (err e
 	default:
 		return errors.New("usage: forge orm:generate [--check]")
 	}
-	if err := requireProjectFormatRange(4, 8); err != nil {
+	if err := requireProjectFormatRange(4, 9); err != nil {
 		return err
 	}
 	if check {

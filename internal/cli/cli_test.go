@@ -71,8 +71,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "version: 8") {
-		t.Fatalf("fresh scaffold is not format 8:\n%s", manifest)
+	if !strings.Contains(string(manifest), "version: 9") {
+		t.Fatalf("fresh scaffold is not format 9:\n%s", manifest)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {

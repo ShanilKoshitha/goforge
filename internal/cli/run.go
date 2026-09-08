@@ -84,7 +84,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := requireProjectRoot(); err != nil {
 			return err
 		}
-		if err := requireProjectFormatRange(6, 8); err != nil {
+		if err := requireProjectFormatRange(6, 9); err != nil {
 			return err
 		}
 		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", args[0], args[1])
@@ -95,7 +95,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := requireProjectRoot(); err != nil {
 			return err
 		}
-		if err := requireProjectFormatRange(6, 8); err != nil {
+		if err := requireProjectFormatRange(6, 9); err != nil {
 			return err
 		}
 		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", "queue:forget", args[1])
@@ -114,7 +114,7 @@ func requireQueueProject(args []string, usage string) error {
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	return requireProjectFormatRange(6, 8)
+	return requireProjectFormatRange(6, 9)
 }
 
 func printHelp(w io.Writer) {

@@ -709,3 +709,55 @@ build, and serve the generated application.
 Reason: a scaffold must pin an immutable public module whose checksums are
 already available. The two-step release keeps every tag reproducible while the
 generated application remains independent of the framework checkout.
+
+## D032 — Account recovery uses hashed tokens and an encrypted mail outbox
+
+**Status:** accepted for v0.12 implementation
+
+Fresh format-9 applications add a complete forgotten-password workflow for the
+browser and JSON API. A reset request always returns the same public result,
+whether or not the normalized address belongs to an account. Known accounts
+receive a high-entropy, short-lived `selector.secret` token. PostgreSQL stores
+the selector and a SHA-256 digest of the secret, never the presented token.
+Issuing a newer token invalidates the account's prior token. Reset consumes the
+token and advances the user's credential version with the password replacement
+in one transaction, so replay and concurrent submissions have at most one
+winner and every existing session becomes invalid immediately.
+
+Mail is an explicit framework boundary rather than controller-owned SMTP.
+The public `mail.Sender` contract and SMTP adapter accept fully rendered text
+and HTML messages with bounded connection and operation lifetimes. Fresh
+applications own sender construction, password-reset mail data and rendering,
+and a generated `forge make:mail` starting point. HTML uses the same compiled
+Forge view artifact as browser pages; plain text remains an explicit standard
+`text/template` embedded by the application. Constructors and direct
+`html/template`, `text/template`, or a replacement sender remain complete
+escape hatches.
+
+Reset delivery is durable without placing the raw reset URL in the job table.
+The issuance transaction encrypts the rendered envelope with an
+application-configured 256-bit outbox key, inserts the outbox row, and dispatches
+an application-owned mail job whose payload contains only the outbox ID. The
+worker decrypts, sends, and removes the envelope. Queue delivery and SMTP remain
+at least once: a crash after SMTP acceptance can produce a duplicate message,
+but the shared reset token is single-use. Logs, errors, queue administration,
+and database columns must not disclose credentials, reset tokens, message
+bodies, or recipient addresses.
+
+The application URL and SMTP security policy are validated before serving or
+working. TLS is required outside explicit local development; plaintext local
+SMTP is a conspicuous opt-in used with the generated loopback-only mail catcher.
+Source- and account-scoped throttles bound issuance and reset attempts. Invalid,
+expired, consumed, superseded, and cross-account tokens share one disclosure-
+safe response contract.
+
+This milestone does not add email verification, magic links, MFA, OAuth, SMS or
+push notifications, marketing/bulk mail, a mail dashboard, or a general event
+bus. Recurring scheduling and required belongs-to resource generation remain
+the next documented candidates after this account-lifecycle gap is accepted.
+
+Reason: generated authentication already covers registration, login, password
+change, and immediate session revocation, but a production application cannot
+recover a forgotten credential. This workflow composes existing configuration,
+validation, views, jobs, transactions, PostgreSQL, and security boundaries while
+keeping every policy and integration in ordinary application-owned Go and SQL.
