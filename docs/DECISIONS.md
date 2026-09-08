@@ -624,3 +624,22 @@ Reason: the template language already has Blade/Twig-class composition and
 diagnostics, but compiled templates are not pleasant if each edit needs a manual
 restart. Moving that loop into the CLI improves the default without placing file
 discovery, source compilation, or reload machinery in the application binary.
+
+## D029 — v0.10 uses a runtime tag followed by a checksum-bearing CLI tag
+
+**Status:** accepted for v0.10
+
+The lightweight unsigned `v0.10.0` tag fixes the reviewed development-loop
+runtime and source at merge commit `f6a26e5`. Only after that tag resolved
+through the public Go proxy and checksum database did the distribution scaffold
+move its framework requirement to v0.10.0. The CLI patch release reports
+v0.10.1 and embeds both public checksums in generated `go.sum` files.
+
+The v0.10.1 distribution gate builds the CLI, generates without `--replace`,
+requires the public v0.10.0 runtime, and runs the generated test, build, and
+development-server workflows. The existing released-format compatibility
+smoke remains alongside it.
+
+Reason: a generated application must resolve reproducibly without depending on
+the framework checkout. Separating the runtime tag from the checksum-bearing
+CLI patch preserves that contract while keeping both release commits immutable.

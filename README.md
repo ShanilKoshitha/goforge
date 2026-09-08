@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.10.0 is PostgreSQL-first and tracked against its written milestone
+GoForge v0.10.1 is PostgreSQL-first and accepted against its written milestone
 scorecard. It includes explicit database wiring, parallel JSON and
 server-rendered authentication, database-backed sessions, CSRF-protected HTML
 forms, production middleware, embedded migrations, owner-scoped JSON and HTML
@@ -54,7 +54,7 @@ while preserving the last-good server through invalid edits.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.10.0
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.10.1
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
