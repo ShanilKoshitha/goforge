@@ -84,6 +84,12 @@ existing single required `name` field workflow.
 - A clean v0.11.1 candidate distribution generated implicit legacy, explicit
   `name:string`, and mixed typed resources without `replace` while pinning
   public v0.11.0; `go mod verify`, generated tests, and `forge build` passed.
+- Merged-main CI run 34272845400 passed the complete Linux/PostgreSQL gate but
+  exposed a Windows-only ordering race in the development-supervisor test: the
+  test could inject its reload before initial serving readiness. The test now
+  waits for that readiness boundary; the paired startup/reload scenarios pass
+  1,000 repetitions, 100 race-enabled repetitions, and the complete native
+  Windows CLI suite twice.
 
 ## Baseline — 2026-09-08
 

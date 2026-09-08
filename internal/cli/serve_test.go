@@ -202,6 +202,7 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 	if count := <-builds; count != 1 {
 		t.Fatalf("initial build = %d", count)
 	}
+	waitForText(t, &stdout, "serving http://127.0.0.1:8080 (watching for changes)")
 
 	source.change(testSnapshot(2))
 	if count := <-builds; count != 2 {
@@ -799,7 +800,7 @@ func TestDevelopmentSupervisorReportsCleanupFailureOnCancellation(t *testing.T) 
 
 func waitForText(t *testing.T, buffer interface{ String() string }, expected string) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for !strings.Contains(buffer.String(), expected) {
 		if time.Now().After(deadline) {
 			t.Fatalf("output never contained %q: %q", expected, buffer.String())
