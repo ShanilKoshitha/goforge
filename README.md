@@ -108,7 +108,11 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI
+## CLI (current source)
+
+The command surface below describes the development branch. The released
+v0.11.1 CLI does not yet include account recovery or `make:mail`; use the
+checkout workflow above when evaluating those v0.12 candidates.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]

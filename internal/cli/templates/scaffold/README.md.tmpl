@@ -77,6 +77,11 @@ deliberately discard them first. Production SMTP requires `starttls` or
 `APP_ENV=local`. SMTP delivery is at least once: a connection failure around
 the provider acceptance boundary can duplicate a message, but reset links
 remain single-use.
+Every envelope also receives an application-owned delayed cleanup job. Accepted
+delivery removes it immediately; otherwise encrypted data is retained for at
+most the explicit seven-day `internal/jobs.MailOutboxRetention` window. Edit
+that ordinary Go policy when the application requires a different retention
+period.
 
 Create an application-owned dual-template message with
 `forge make:mail AuditNotice`. The generated Go under `internal/mail`, Forge

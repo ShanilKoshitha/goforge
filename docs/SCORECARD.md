@@ -30,13 +30,13 @@ The JSON equivalents are `POST /auth/password/forgot` and
 | --- | --- | --- |
 | Mail transport is explicit and production-safe | passing locally | Immutable messages and the small `mail.Sender` seam have bounded RFC 5322 encoding; the SMTP adapter enforces TLS/auth/plaintext policy, timeouts, cancellation, and disclosure-safe errors under focused race tests |
 | Mail authoring is application-owned | passing locally | `forge make:mail` and the built-in password-reset message use ordinary generated Go, compiled Forge HTML, and embedded standard-library text templates; callers directly replace the renderer, message, or sender |
-| Reset issuance is enumeration-safe and bounded | in progress | The generated service normalizes and silently account-throttles addresses, uses database-clock expiry, supersedes by user, and exposes one browser/JSON response; real PostgreSQL known/unknown and concurrency evidence remains |
-| Durable delivery does not persist the reset secret in plaintext | in progress | One generated transaction now stores the selector/digest, AES-256-GCM envelope, and outbox-ID-only typed job; the worker retains failed mail and deletes accepted mail, but real PostgreSQL rollback/disclosure evidence remains |
-| Reset consumption is single-use and revocation-safe | in progress | The generated transaction locks token plus user, constant-time verifies the digest and issuance credential generation, atomically advances credentials and consumes the row; real replay/concurrency/session evidence remains |
+| Reset issuance is enumeration-safe and bounded | prepared for CI | The generated service silently account-throttles normalized addresses, equalizes healthy and account-dependent failure responses with bounded jitter, uses database-clock expiry, and supersedes by user; the PostgreSQL gate measures known/unknown parity and rollback but cannot run on this host |
+| Durable delivery does not persist the reset secret in plaintext | prepared for CI | One generated transaction stores the selector/digest, AES-256-GCM envelope, outbox-ID-only delivery job, and outbox-ID-only seven-day cleanup job; the PostgreSQL gate injects rollback at token, outbox, and final job writes and proves SMTP retry/disclosure behavior |
+| Reset consumption is single-use and revocation-safe | prepared for CI | A cheap selector/digest/generation preflight rejects invalid links before password hashing, then the generated transaction locks and revalidates token plus user, advances credentials, and consumes once; the PostgreSQL gate covers rollback/retry, replay, selector throttling across sources, concurrency, and session revocation |
 | Browser and JSON contracts are complete | passing locally | Generated request/controller/view suites cover exact JSON/form decoding, validation, privacy headers, generic wrapped-sentinel failures, 202/204, PRG flashes/redirects, secret preservation, and contextual Forge escaping |
 | Generation and configuration fail before partial state | passing locally | Format 9, random outbox keys, loopback-only Mailpit, strict process-specific settings, recovery migration/routes/job wiring, and rollback-safe `make:mail` pass fresh generated tests |
 | Existing applications remain conventional and compatible | passing locally | A frozen format-6 application still compiles after `make:job`; format-aware registry generation adds built-ins only to format 9, and targeted legacy workflow gates pass |
-| A fresh PostgreSQL application works end to end | missing | An isolated application migrates, captures the delivered reset link, proves retry and disclosure policy, resets through browser and JSON paths, and verifies replay/concurrency/session revocation outside the source checkout |
+| A fresh PostgreSQL application works end to end | prepared for CI | The isolated format-9 journey now generates, races, vets, builds server/worker, migrates, captures SMTP, injects transaction faults, and exercises browser plus JSON recovery; local execution is unavailable because this host has no test database or Docker engine |
 | The milestone passes twice without regression | missing | Framework race/vet/build, native Windows checks, and the complete fresh PostgreSQL workflow pass twice; independent security, architecture, and release reviews report no P0–P2 blocker |
 
 ## Runnable baseline — 2026-09-08
@@ -73,12 +73,18 @@ The JSON equivalents are `POST /auth/password/forgot` and
   worker. Focused format-6 compatibility tests confirm later job generation does
   not inject format-9 built-ins into an older application.
 - A dedicated real-PostgreSQL acceptance journey now compiles and vets. It is
-  wired into public CI for two passes and covers known/unknown parity, hostile
-  Host headers, SMTP 451 retention and retry, encrypted storage, opaque job
-  payloads, supersession, malformed/cross-account/expired/replayed links,
-  credential-generation invalidation, old/new sign-in, session revocation, and
+  wired into public CI for two passes. It now runs generated race and vet gates;
+  measures known/unknown response timing; injects token, outbox, cleanup-job,
+  and reset-update failures; and covers hostile Host headers, SMTP 451 retry,
+  bounded encrypted retention, opaque payloads, supersession, malformed,
+  cross-account, expired, replayed and selector-throttled links, browser and
+  JSON completion, credential invalidation, sign-in, session revocation, and
   concurrent one-winner consumption. Local execution remains pending because
   this machine has neither `GOFORGE_TEST_DATABASE_URL` nor a Docker engine.
+- After the final hardening changes, `go test ./... -count=1`,
+  `go test -race ./... -count=1`, `go vet ./...`, and a native Windows CLI
+  build pass. The CLI deliberately still reports v0.11.1 until the staged
+  v0.12 runtime and checksum-bearing distribution release are created.
 
 ## Explicit non-goals for v0.12
 

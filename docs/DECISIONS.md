@@ -747,9 +747,17 @@ bodies, or recipient addresses.
 The application URL and SMTP security policy are validated before serving or
 working. TLS is required outside explicit local development; plaintext local
 SMTP is a conspicuous opt-in used with the generated loopback-only mail catcher.
-Source- and account-scoped throttles bound issuance and reset attempts. Invalid,
-expired, consumed, superseded, and cross-account tokens share one disclosure-
-safe response contract.
+Source- and account-scoped throttles bound issuance, while independent source-
+and selector-scoped throttles bound reset attempts. Invalid, expired, consumed,
+superseded, throttled, and cross-account tokens share one disclosure-safe
+response contract.
+
+Each issuance transaction also schedules an application-owned cleanup job with
+the same opaque outbox ID and an explicit seven-day delay. Successful delivery
+removes the envelope immediately; terminal delivery failure or administrative
+removal cannot retain its encrypted contents indefinitely. The retention
+constant, job definition, handler, and dispatch helper are all generated Go and
+remain directly replaceable.
 
 This milestone does not add email verification, magic links, MFA, OAuth, SMS or
 push notifications, marketing/bulk mail, a mail dashboard, or a general event
