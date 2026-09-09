@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type resourceState struct {
@@ -181,16 +182,8 @@ func makeResourceWithRelationshipDependencies(ctx context.Context, name string, 
 			cause = errors.Join(cause, rollbackResourcePublication(statePath, publishedState, oldState))
 		}
 		for _, directory := range createdDirectories {
-			entries, err := os.ReadDir(directory)
-			if errors.Is(err, os.ErrNotExist) || err == nil && len(entries) > 0 {
-				continue
-			}
-			if err != nil {
-				cause = errors.Join(cause, fmt.Errorf("inspect generated directory %s: %w", directory, err))
-				continue
-			}
-			if err := os.Remove(directory); err != nil && !errors.Is(err, os.ErrNotExist) {
-				cause = errors.Join(cause, fmt.Errorf("remove generated directory %s: %w", directory, err))
+			if err := removeEmptyGeneratedDirectory(directory); err != nil {
+				cause = errors.Join(cause, err)
 			}
 		}
 		return cause
@@ -272,6 +265,36 @@ func makeResourceWithRelationshipDependencies(ctx context.Context, name string, 
 	fmt.Fprintln(stdout, "updated routes/resources_gen.go")
 	fmt.Fprintln(stdout, "updated resources/views/views_gen.go")
 	fmt.Fprintln(stdout, "updated internal/models/zz_orm_gen.go")
+	return nil
+}
+
+const resourceDirectoryCleanupAttempts = 8
+
+func removeEmptyGeneratedDirectory(path string) error {
+	return removeEmptyGeneratedDirectoryWith(path, resourceDirectoryCleanupAttempts, os.Remove, time.Sleep)
+}
+
+func removeEmptyGeneratedDirectoryWith(path string, attempts int, remove func(string) error, pause func(time.Duration)) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		entries, err := os.ReadDir(path)
+		if errors.Is(err, os.ErrNotExist) || err == nil && len(entries) > 0 {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect generated directory %s: %w", path, err)
+		}
+		err = remove(path)
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if attempt == attempts-1 {
+			return fmt.Errorf("remove generated directory %s after %d attempts: %w", path, attempts, err)
+		}
+		pause(time.Duration(attempt+1) * 10 * time.Millisecond)
+	}
 	return nil
 }
 
