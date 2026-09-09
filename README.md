@@ -129,7 +129,7 @@ forge migrate
 forge views:compile
 forge orm:generate [--check]
 forge make:model <name>
-forge make:resource <name> [--field <name>:<type>[:required|nullable]]...
+forge make:resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...
 forge make:controller <name>
 forge make:request <name>
 forge make:migration <name>
@@ -165,8 +165,23 @@ runtime schema. Updates replace the complete writable resource: a missing,
 `null`, or empty nullable value clears that column to SQL `NULL`, while numeric
 `0` and boolean `false` remain present values.
 
+Fresh format-10 applications can generate a required owner-scoped relationship
+to an existing resource:
+
+```sh
+forge make:resource Category --field name:string
+forge make:resource Issue \
+  --field title:string \
+  --belongs-to category:Category
+```
+
+The relationship description is also one-shot input. Generated Go owns the
+protected foreign key, association value, validation, eager loading, browser
+choices, and presentation; generated SQL owns the composite owner/target
+constraint. No relationship registry or runtime schema is added.
+
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-9 projects. Both non-mutating preflights check the
+format-4 through format-10 projects. Both non-mutating preflights check the
 generated ORM first and compiled views second. Testing then runs exactly `go
 test ./...`. Building stages a trimmed `./cmd/server` executable and publishes
 it atomically as `bin/app` on Unix or `bin/app.exe` on Windows, so a failed build

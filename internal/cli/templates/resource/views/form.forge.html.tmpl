@@ -19,6 +19,13 @@
     </select>
   </label>
 [[end]]  @errors("[[.Name]]")<p role="alert">{{.}}</p>@enderrors
+[[end]][[range .Relationships]]  <label>[[.Label]]
+    <select name="[[.ForeignKey]]" required>
+      <option value="">Choose [[.TargetSpec.Name]]</option>
+      {{range .[[.GoName]]Choices}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{else}}<option value="" disabled>No [[.TargetSpec.Name]] choices available</option>{{end}}
+    </select>
+  </label>
+  @errors("[[.ForeignKey]]")<p role="alert">{{.}}</p>@enderrors
 [[end]]  @errors("version")<p role="alert">{{.}}</p>@enderrors
   <button type="submit">{{.Submit}}</button>
 </form>

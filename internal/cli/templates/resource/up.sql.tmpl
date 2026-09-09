@@ -1,11 +1,18 @@
 CREATE TABLE [[.Plural]] (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+[[range .Relationships]]    "[[.ForeignKey]]" BIGINT NOT NULL,
+[[end]]
 [[range .Fields]]    "[[.Name]]" [[.SQLType]][[if .Required]] NOT NULL[[end]],
 [[end]]
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    version BIGINT NOT NULL DEFAULT 1
+    version BIGINT NOT NULL DEFAULT 1[[if .OwnerCandidateKey]],
+    CONSTRAINT [[.OwnerKeyName]] UNIQUE (user_id, id)[[end]][[range .Relationships]],
+    CONSTRAINT [[.ConstraintName]] FOREIGN KEY (user_id, "[[.ForeignKey]]")
+        REFERENCES [[.TargetSpec.Plural]] (user_id, id) ON DELETE NO ACTION[[end]]
 );
 
 CREATE INDEX [[.Plural]]_user_id_idx ON [[.Plural]] (user_id);
+[[range .Relationships]]CREATE INDEX [[.IndexName]] ON [[$.Plural]] ("[[.ForeignKey]]");
+[[end]]

@@ -52,8 +52,8 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(manifest, []byte("version: 9")) {
-		t.Fatalf("fresh application is not format 9:\n%s", manifest)
+	if !bytes.Contains(manifest, []byte("version: 10")) {
+		t.Fatalf("fresh application is not format 10:\n%s", manifest)
 	}
 	for _, name := range []string{"RecordEffect", "PoisonMessage"} {
 		if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "make:job", name); err != nil {

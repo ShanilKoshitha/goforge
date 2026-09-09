@@ -325,7 +325,7 @@ func TestForgeWorkflowsRejectArgumentsRootsAndUnsupportedFormatsBeforeWork(t *te
 		want    string
 	}{
 		{version: "3", want: "format"},
-		{version: "10", want: "format"},
+		{version: "11", want: "format"},
 		{version: "nope", want: "invalid version"},
 	} {
 		t.Run("format "+test.version, func(t *testing.T) {

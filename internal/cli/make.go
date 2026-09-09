@@ -23,10 +23,11 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	}
 	name := ""
 	var resourceFields []resourceField
+	var resourceRelationships []resourceBelongsTo
 	resourceSchemaDriven := false
 	if kind == "resource" {
 		var err error
-		name, resourceFields, resourceSchemaDriven, err = parseMakeResourceArguments(rest)
+		name, resourceFields, resourceRelationships, resourceSchemaDriven, err = parseMakeResourceArguments(rest)
 		if err != nil {
 			return err
 		}
@@ -39,7 +40,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	if err := requireProjectFormatRange(1, 9); err != nil {
+	if err := requireProjectFormatRange(1, 10); err != nil {
 		return err
 	}
 	lock, err := acquireGeneratorLock(ctx)
@@ -61,7 +62,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	case "model":
 		return makeModel(name, stdout)
 	case "resource":
-		return makeResourceWithProcessFields(ctx, name, resourceFields, resourceSchemaDriven, stdin, stdout, stderr, processes)
+		return makeResourceWithProcessRelationships(ctx, name, resourceFields, resourceRelationships, resourceSchemaDriven, stdin, stdout, stderr, processes)
 	case "component":
 		return makeComponent(ctx, name, stdin, stdout, stderr, processes)
 	case "job":
@@ -82,7 +83,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 }
 
 func makeComponent(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
-	if err := requireProjectFormatRange(5, 9); err != nil {
+	if err := requireProjectFormatRange(5, 10); err != nil {
 		return err
 	}
 	componentName, err := snake(name)

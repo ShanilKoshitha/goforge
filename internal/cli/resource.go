@@ -31,7 +31,7 @@ type plannedFile struct {
 type resourceManagedPublisher func(string, developmentFileState, []byte) error
 
 func makeResource(name string, stdout io.Writer) error {
-	if err := requireProjectFormatRange(8, 9); err != nil {
+	if err := requireProjectFormatRange(8, 10); err != nil {
 		return err
 	}
 	return makeResourceWithDependencies(context.Background(), name, defaultResourceFields(), false, nil, stdout, stdout, execProcessRunner{}, publishResourceManagedFile)
@@ -49,13 +49,26 @@ func makeResourceWithProcess(ctx context.Context, name string, stdin io.Reader, 
 }
 
 func makeResourceWithProcessFields(ctx context.Context, name string, fields []resourceField, schemaDriven bool, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
-	if err := requireProjectFormatRange(8, 9); err != nil {
+	return makeResourceWithProcessRelationships(ctx, name, fields, nil, schemaDriven, stdin, stdout, stderr, processes)
+}
+
+func makeResourceWithProcessRelationships(ctx context.Context, name string, fields []resourceField, relationships []resourceBelongsTo, schemaDriven bool, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
+	if err := requireProjectFormatRange(8, 10); err != nil {
 		return err
 	}
-	return makeResourceWithDependencies(ctx, name, fields, schemaDriven, stdin, stdout, stderr, processes, publishResourceManagedFile)
+	if len(relationships) > 0 {
+		if err := requireProjectFormat(10); err != nil {
+			return fmt.Errorf("belongs-to resource generation requires project format 10: %w", err)
+		}
+	}
+	return makeResourceWithRelationshipDependencies(ctx, name, fields, relationships, schemaDriven, stdin, stdout, stderr, processes, publishResourceManagedFile)
 }
 
 func makeResourceWithDependencies(ctx context.Context, name string, fields []resourceField, schemaDriven bool, stdin io.Reader, stdout, stderr io.Writer, processes processRunner, publishManaged resourceManagedPublisher) error {
+	return makeResourceWithRelationshipDependencies(ctx, name, fields, nil, schemaDriven, stdin, stdout, stderr, processes, publishManaged)
+}
+
+func makeResourceWithRelationshipDependencies(ctx context.Context, name string, fields []resourceField, requestedRelationships []resourceBelongsTo, schemaDriven bool, stdin io.Reader, stdout, stderr io.Writer, processes processRunner, publishManaged resourceManagedPublisher) error {
 	state, err := loadResourceState()
 	if err != nil {
 		return err
@@ -64,14 +77,19 @@ func makeResourceWithDependencies(ctx context.Context, name string, fields []res
 	if err != nil {
 		return err
 	}
+	relationships, err := resolveResourceRelationships(spec, state, requestedRelationships)
+	if err != nil {
+		return err
+	}
 	module, err := projectModule()
 	if err != nil {
 		return err
 	}
 	definition := resourceDefinition{
-		resourceSpec: spec,
-		Fields:       append([]resourceField(nil), fields...),
-		SchemaDriven: schemaDriven,
+		resourceSpec:  spec,
+		Fields:        append([]resourceField(nil), fields...),
+		Relationships: append([]resourceRelationship(nil), relationships...),
+		SchemaDriven:  schemaDriven,
 	}
 	files, err := resourceFiles(module, definition)
 	if err != nil {
@@ -243,6 +261,9 @@ func makeResourceWithDependencies(ctx context.Context, name string, fields []res
 	}
 	if currentORM != generatedORM {
 		return rollback(errors.New("application models changed during resource generation; retry the command"))
+	}
+	if err := recheckResourceRelationshipDependencies(relationships); err != nil {
+		return rollback(err)
 	}
 
 	for _, file := range files {

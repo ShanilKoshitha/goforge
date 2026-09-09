@@ -81,6 +81,13 @@ Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 `/issues`; handlers do not silently switch behavior based on content negotiation.
 
+Fresh format-10 JSON resource indexes are bounded and paginated. `GET /issues`
+defaults to `page=1&per_page=20`; each parameter must appear at most once and be
+a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
+The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,
+"has_previous": false, "has_next": false}}`. Formats 8 and 9 retain their
+original complete-list JSON contract.
+
 GoForge compiles layouts, sections, includes, static components, strict props
 and slots, control directives, page-local stacks, and explicit form helpers into
 the inspectable `resources/views/views_gen.go` artifact. Source mappings retain

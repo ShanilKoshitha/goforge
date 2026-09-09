@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,9 +20,26 @@ type resourceTemplateData struct {
 	Module            string
 	QueryAccessor     string
 	Fields            []resourceTemplateField
+	Relationships     []resourceTemplateRelationship
 	SchemaDriven      bool
+	OwnerCandidateKey bool
+	OwnerKeyName      string
 	HasTextualFields  bool
 	FirstTextualField *resourceTemplateField
+}
+
+// resourceTemplateRelationship exposes only resolved, deterministic names to
+// templates. The command-line relationship description remains one-shot input.
+type resourceTemplateRelationship struct {
+	Name                string
+	GoName              string
+	Label               string
+	ForeignKey          string
+	ForeignKeyGoName    string
+	TargetSpec          resourceSpec
+	TargetQueryAccessor string
+	IndexName           string
+	ConstraintName      string
 }
 
 type resourceTemplateField struct {
@@ -51,11 +69,22 @@ func resourceFiles(module string, definition resourceDefinition) ([]plannedFile,
 	if err != nil {
 		return nil, err
 	}
+	format, err := projectFormat()
+	if err != nil {
+		return nil, err
+	}
 	data := resourceTemplateData{
-		resourceSpec:  spec,
-		Module:        module,
-		QueryAccessor: queryAccessor,
-		SchemaDriven:  definition.SchemaDriven,
+		resourceSpec:      spec,
+		Module:            module,
+		QueryAccessor:     queryAccessor,
+		SchemaDriven:      definition.SchemaDriven,
+		OwnerCandidateKey: format >= 10,
+	}
+	if data.OwnerCandidateKey {
+		data.OwnerKeyName = spec.Plural + "_owner_id_key"
+		if !safeIdentifier(data.OwnerKeyName) || len(data.OwnerKeyName) > maximumResourceIdentifier {
+			return nil, fmt.Errorf("resource %s produces owner candidate-key name %q longer than PostgreSQL's %d-byte identifier limit", spec.Name, data.OwnerKeyName, maximumResourceIdentifier)
+		}
 	}
 	for _, field := range definition.Fields {
 		projected := projectResourceTemplateField(field)
@@ -67,6 +96,19 @@ func resourceFiles(module string, definition resourceDefinition) ([]plannedFile,
 				data.FirstTextualField = &copy
 			}
 		}
+	}
+	for _, relationship := range definition.Relationships {
+		data.Relationships = append(data.Relationships, resourceTemplateRelationship{
+			Name:                relationship.Name,
+			GoName:              relationship.GoName,
+			Label:               relationship.Label,
+			ForeignKey:          relationship.ForeignKey,
+			ForeignKeyGoName:    relationship.ForeignKeyGoName,
+			TargetSpec:          relationship.TargetSpec,
+			TargetQueryAccessor: relationship.TargetQueryAccessor,
+			IndexName:           relationship.IndexName,
+			ConstraintName:      relationship.ConstraintName,
+		})
 	}
 	var files []plannedFile
 	modelDestination := filepath.Join("internal", "models", spec.Package+".go")

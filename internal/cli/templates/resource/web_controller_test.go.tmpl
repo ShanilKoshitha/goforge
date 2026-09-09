@@ -17,7 +17,8 @@ import (
 	"github.com/ShanilKoshitha/goforge/web"
 
 	"[[.Module]]/internal/auth"
-	resource "[[.Module]]/internal/resources/[[.Package]]"
+[[if .Relationships]]	"[[.Module]]/internal/models"
+[[end]]	resource "[[.Module]]/internal/resources/[[.Package]]"
 	views "[[.Module]]/resources/views"
 )
 
@@ -78,6 +79,9 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 [[range .Fields]]	if !strings.Contains(newPage.Body.String(), `name="[[.Name]]"`) {
 		t.Fatalf("new page has no [[.Name]] control: %s", newPage.Body.String())
 	}
+[[end]][[range .Relationships]]	if !strings.Contains(newPage.Body.String(), `name="[[.ForeignKey]]"`) || !strings.Contains(newPage.Body.String(), `[[.TargetSpec.Name]] #7`) {
+		t.Fatalf("new page has no bounded [[.Label]] choices: %s", newPage.Body.String())
+	}
 [[end]]	token := browserCSRFToken(t, newPage.Body.String())
 	cookie = responseCookie(newPage, cookie)
 
@@ -94,6 +98,7 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	}
 [[end]]	for _, field := range []string{
 [[range .Fields]]		"[[.Name]]",
+[[end]][[range .Relationships]]		"[[.ForeignKey]]",
 [[end]]	} {
 		repeatedValues := sampleResourceFormValues()
 		repeatedValues.Set("_token", token)
@@ -106,7 +111,8 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 
 	for _, field := range []string{
 [[range .Fields]][[if .Required]]		"[[.Name]]",
-[[end]][[end]]	} {
+[[end]][[end]][[range .Relationships]]		"[[.ForeignKey]]",
+[[end]]	} {
 		missingValues := sampleResourceFormValues()
 		missingValues.Set("_token", token)
 		missingValues.Del(field)
@@ -165,8 +171,23 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	repository.item = resource.[[$.Name]]{}
 	repository.createdAttributes = resource.Attributes{}
 
-[[end]][[end]][[end]]
-	createValues := sampleResourceFormValues()
+[[end]][[end]][[end]][[if .Relationships]]	for _, unavailableID := range []string{"404", "405"} {
+		unavailableValues := sampleResourceFormValues()
+		unavailableValues.Set("_token", token)
+[[range .Relationships]]		unavailableValues.Set("[[.ForeignKey]]", unavailableID)
+		repository.createError = &resource.InvalidAssociationError{Field: "[[.ForeignKey]]"}
+[[end]]		unavailable := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", unavailableValues, cookie)
+		if unavailable.Code != http.StatusUnprocessableEntity ||
+			!strings.Contains(unavailable.Body.String(), "is not available") ||
+			!strings.Contains(unavailable.Body.String(), `value="`+unavailableID+`" selected`) ||
+			!strings.Contains(unavailable.Body.String(), "Unavailable selection") {
+			t.Fatalf("unavailable association %s was disclosed or not retained: %d: %s", unavailableID, unavailable.Code, unavailable.Body.String())
+		}
+		cookie = responseCookie(unavailable, cookie)
+		token = browserCSRFToken(t, unavailable.Body.String())
+	}
+	repository.createError = nil
+[[end]]	createValues := sampleResourceFormValues()
 	createValues.Set("_token", token)
 	created := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", createValues, cookie)
 	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != "/app/[[.Plural]]/1" || repository.item.UserID != 9 {
@@ -175,7 +196,11 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	if !reflect.DeepEqual(repository.createdAttributes, sampleWebAttributes()) {
 		t.Fatalf("create attributes = %+v, want %+v", repository.createdAttributes, sampleWebAttributes())
 	}
-	cookie = responseCookie(created, cookie)
+[[if .Relationships]]	if !reflect.DeepEqual(repository.createdAssociations, sampleWebAssociations()) {
+		t.Fatalf("create associations = %+v, want %+v", repository.createdAssociations, sampleWebAssociations())
+	}
+[[range .Relationships]]	repository.item.[[.GoName]] = &models.[[.TargetSpec.Name]]{ID: repository.item.[[.ForeignKeyGoName]], UserID: 9}
+[[end]][[end]]	cookie = responseCookie(created, cookie)
 	index := browserRequest(router, http.MethodGet, "/app/[[.Plural]]", nil, cookie)
 	if index.Code != http.StatusOK {
 		t.Fatalf("index: %d: %s", index.Code, index.Body.String())
@@ -239,7 +264,23 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	version := browserVersion(t, edit.Body.String())
 	cookie = responseCookie(edit, cookie)
 
-[[if .SchemaDriven]]	versionlessValues := updatedResourceFormValues()
+[[if .Relationships]]	invalidUpdateValues := updatedResourceFormValues()
+	invalidUpdateValues.Set("_token", token)
+	invalidUpdateValues.Set("_method", http.MethodPut)
+	invalidUpdateValues.Set("version", version)
+[[range .Relationships]]	invalidUpdateValues.Set("[[.ForeignKey]]", "404")
+	repository.updateError = &resource.InvalidAssociationError{Field: "[[.ForeignKey]]"}
+[[end]]	invalidUpdate := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", invalidUpdateValues, cookie)
+	if invalidUpdate.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(invalidUpdate.Body.String(), "is not available") ||
+		!strings.Contains(invalidUpdate.Body.String(), `value="404" selected`) ||
+		!strings.Contains(invalidUpdate.Body.String(), "Unavailable selection") {
+		t.Fatalf("invalid update association was disclosed or not retained: %d: %s", invalidUpdate.Code, invalidUpdate.Body.String())
+	}
+	repository.updateError = nil
+	token = browserCSRFToken(t, invalidUpdate.Body.String())
+	cookie = responseCookie(invalidUpdate, cookie)
+[[end]][[if .SchemaDriven]]	versionlessValues := updatedResourceFormValues()
 	versionlessValues.Set("_token", token)
 	versionlessValues.Set("_method", http.MethodPut)
 	versionless := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", versionlessValues, cookie)
@@ -297,7 +338,18 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	show = browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1", nil, cookie)
 	token = browserCSRFToken(t, show.Body.String())
 	cookie = responseCookie(show, cookie)
-	deleted := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", url.Values{
+[[if .OwnerCandidateKey]]	repository.deleteError = resource.ErrInUse
+	blockedDelete := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", url.Values{
+		"_token": {token}, "_method": {http.MethodDelete},
+	}, cookie)
+	if blockedDelete.Code != http.StatusConflict {
+		t.Fatalf("delete in-use [[.Package]]: %d: %s", blockedDelete.Code, blockedDelete.Body.String())
+	}
+	repository.deleteError = nil
+	show = browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1", nil, cookie)
+	token = browserCSRFToken(t, show.Body.String())
+	cookie = responseCookie(show, cookie)
+[[end]]	deleted := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", url.Values{
 		"_token": {token}, "_method": {http.MethodDelete},
 	}, cookie)
 	if deleted.Code != http.StatusSeeOther || deleted.Header().Get("Location") != "/app/[[.Plural]]" {
@@ -308,12 +360,14 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 func sampleResourceFormValues() url.Values {
 	values := make(url.Values, [[len .Fields]])
 [[range .Fields]]	values.Set("[[.Name]]", [[printf "%q" .SampleFormValue]])
+[[end]][[range .Relationships]]	values.Set("[[.ForeignKey]]", "7")
 [[end]]	return values
 }
 
 func updatedResourceFormValues() url.Values {
 	values := make(url.Values, [[len .Fields]])
 [[range .Fields]]	values.Set("[[.Name]]", [[printf "%q" .UpdatedFormValue]])
+[[end]][[range .Relationships]]	values.Set("[[.ForeignKey]]", "7")
 [[end]]	return values
 }
 
@@ -329,6 +383,14 @@ func updatedWebAttributes() resource.Attributes {
 [[end]]	}
 }
 
+[[if .Relationships]]func sampleWebAssociations() resource.AssociationIDs {
+	return resource.AssociationIDs{
+[[range .Relationships]]		[[.ForeignKeyGoName]]: 7,
+[[end]]	}
+}
+
+[[end]]
+
 func webAttributesFromModel(item resource.[[.Name]]) resource.Attributes {
 	return resource.Attributes{
 [[range .Fields]]		[[.GoName]]: item.[[.GoName]],
@@ -339,6 +401,9 @@ func assertResourcePresentation(t *testing.T, body string, values url.Values) {
 	t.Helper()
 [[range .Fields]]	if value := values.Get("[[.Name]]"); !strings.Contains(body, html.EscapeString(value)) {
 		t.Errorf("presentation does not contain escaped [[.Name]] %q: %s", value, body)
+	}
+[[end]][[range .Relationships]]	if !strings.Contains(body, "[[.TargetSpec.Name]] #"+values.Get("[[.ForeignKey]]")) {
+		t.Errorf("presentation does not contain [[.Label]] label: %s", body)
 	}
 [[end]]}
 
@@ -351,6 +416,13 @@ func assertResourceFormValues(t *testing.T, body string, values url.Values) {
 [[else]]	marker := `name="[[.Name]]" value="` + value + `"`
 [[end]]		if !strings.Contains(body, marker) {
 			t.Errorf("form does not retain [[.Name]] %q using marker %q: %s", value, marker, body)
+		}
+	}
+[[end]][[range .Relationships]]	{
+		value := html.EscapeString(values.Get("[[.ForeignKey]]"))
+		marker := `value="` + value + `" selected`
+		if !strings.Contains(body, marker) {
+			t.Errorf("form does not retain [[.ForeignKey]] %q using marker %q: %s", value, marker, body)
 		}
 	}
 [[end]]}

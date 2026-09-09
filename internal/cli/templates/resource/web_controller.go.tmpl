@@ -38,9 +38,16 @@ type ShowPage struct {
 type ItemView struct {
 	ID int64
 [[range .Fields]]	[[.GoName]] string
+[[end]][[range .Relationships]]	[[.GoName]] string
 [[end]]}
 
-type FormPage struct {
+[[if .Relationships]]type AssociationChoiceView struct {
+	Value    string
+	Label    string
+	Selected bool
+}
+
+[[end]]type FormPage struct {
 	Title     string
 	Form      view.Form
 	Action    string
@@ -49,6 +56,8 @@ type FormPage struct {
 	Values    map[string]string
 	Version   *int64
 	Errors    validation.Errors
+[[range .Relationships]]	[[.GoName]]Choices []AssociationChoiceView
+[[end]]
 }
 
 type WebController struct {
@@ -90,10 +99,11 @@ func (controller *WebController) Index(ctx *httpx.Context) error {
 }
 
 func (controller *WebController) New(ctx *httpx.Context) error {
-	if _, err := webUser(ctx); err != nil {
+	user, err := webUser(ctx)
+	if err != nil {
 		return err
 	}
-	return controller.renderForm(ctx, http.StatusOK, "pages/[[.Plural]]/new", FormPage{
+	return controller.renderForm(ctx, user.ID, http.StatusOK, "pages/[[.Plural]]/new", FormPage{
 		Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]",
 	})
 }
@@ -108,12 +118,18 @@ func (controller *WebController) Create(ctx *httpx.Context) error {
 		return err
 	}
 	if problems := request.ValidateCreate(); !problems.Empty() {
-		return controller.renderForm(ctx, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
+		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
 			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(), Errors: problems.Messages(),
 		})
 	}
-	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Attributes)
-	if err != nil {
+	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Attributes[[if .Relationships]], request.Associations[[end]])
+[[if .Relationships]]	if field, invalid := invalidAssociationField(err); invalid {
+		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
+			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(),
+			Errors: validation.Errors{field: {"is not available"}},
+		})
+	}
+[[end]]	if err != nil {
 		return err
 	}
 	if err := flashNotice(ctx, "[[.Name]] created."); err != nil {
@@ -163,7 +179,7 @@ func (controller *WebController) Edit(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	return controller.renderForm(ctx, http.StatusOK, "pages/[[.Plural]]/edit", FormPage{
+	return controller.renderForm(ctx, user.ID, http.StatusOK, "pages/[[.Plural]]/edit", FormPage{
 		Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
 		Submit: "Save [[.Name]]", Values: modelFormValues(item), Version: &item.Version,
 	})
@@ -183,7 +199,7 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 		return err
 	}
 	if problems := request.ValidateUpdate(); !problems.Empty() {
-		return controller.renderForm(ctx, http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
+		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
 			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
 			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: request.Version, Errors: problems.Messages(),
 		})
@@ -191,7 +207,7 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 	if request.Version == nil {
 		return httpx.NewHTTPError(http.StatusBadRequest, "version is required for browser updates")
 	}
-	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Attributes, request.Version)
+	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Attributes[[if .Relationships]], request.Associations[[end]], request.Version)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}
@@ -203,13 +219,20 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 		if findErr != nil {
 			return findErr
 		}
-		return controller.renderForm(ctx, http.StatusConflict, "pages/[[.Plural]]/edit", FormPage{
+		return controller.renderForm(ctx, user.ID, http.StatusConflict, "pages/[[.Plural]]/edit", FormPage{
 			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
 			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: &fresh.Version,
 			Errors: validation.Errors{"version": {"was changed by another request; review and try again"}},
 		})
 	}
-	if err != nil {
+[[if .Relationships]]	if field, invalid := invalidAssociationField(err); invalid {
+		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
+			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
+			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: request.Version,
+			Errors: validation.Errors{field: {"is not available"}},
+		})
+	}
+[[end]]	if err != nil {
 		return err
 	}
 	if err := flashNotice(ctx, "[[.Name]] updated."); err != nil {
@@ -229,7 +252,9 @@ func (controller *WebController) Delete(ctx *httpx.Context) error {
 	}
 	if err := controller.repository.Delete(ctx.Request.Context(), user.ID, id); errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
-	} else if err != nil {
+	}[[if .OwnerCandidateKey]] else if errors.Is(err, ErrInUse) {
+		return httpx.NewHTTPError(http.StatusConflict, "[[.Package]] is still in use")
+	}[[end]] else if err != nil {
 		return err
 	}
 	if err := flashNotice(ctx, "[[.Name]] deleted."); err != nil {
@@ -238,7 +263,7 @@ func (controller *WebController) Delete(ctx *httpx.Context) error {
 	return web.Redirect(ctx, webBasePath)
 }
 
-func (controller *WebController) renderForm(ctx *httpx.Context, status int, name string, page FormPage) error {
+func (controller *WebController) renderForm(ctx *httpx.Context, userID int64, status int, name string, page FormPage) error {
 	token, err := web.CSRFToken(ctx)
 	if err != nil {
 		return err
@@ -252,13 +277,22 @@ func (controller *WebController) renderForm(ctx *httpx.Context, status int, name
 	for name, value := range page.Values {
 		page.Form.OldValues[name] = value
 	}
-	return web.Render(ctx, controller.views, status, name, page)
+[[range .Relationships]]	[[.Name]]Choices, err := controller.repository.[[.GoName]]Choices(ctx.Request.Context(), userID)
+	if errors.Is(err, ErrAssociationChoicesOverflow) {
+		return httpx.NewHTTPError(http.StatusConflict, "too many [[.TargetSpec.Name]] choices to display safely")
+	}
+	if err != nil {
+		return err
+	}
+	page.[[.GoName]]Choices = presentAssociationChoices([[.Name]]Choices, page.Values["[[.ForeignKey]]"])
+[[end]]	return web.Render(ctx, controller.views, status, name, page)
 }
 
 func modelFormValues(item [[.Name]]) map[string]string {
 	presented := presentItem(item)
 	return map[string]string{
 [[range .Fields]]		"[[.Name]]": presented.[[.GoName]],
+[[end]][[range .Relationships]]		"[[.ForeignKey]]": strconv.FormatInt(item.[[.ForeignKeyGoName]], 10),
 [[end]]	}
 }
 
@@ -268,10 +302,48 @@ func presentItem(item [[.Name]]) ItemView {
 [[range .Fields]][[if or .String .Text]]		[[.GoName]]: [[if .Nullable]]formatOptional(item.[[.GoName]], func(value string) string { return value })[[else]]item.[[.GoName]][[end]],
 [[else if .Integer]]		[[.GoName]]: [[if .Nullable]]formatOptional(item.[[.GoName]], func(value int64) string { return strconv.FormatInt(value, 10) })[[else]]strconv.FormatInt(item.[[.GoName]], 10)[[end]],
 [[else]]		[[.GoName]]: [[if .Nullable]]formatOptional(item.[[.GoName]], strconv.FormatBool)[[else]]strconv.FormatBool(item.[[.GoName]])[[end]],
-[[end]][[end]]	}
+[[end]][[end]][[range .Relationships]]		[[.GoName]]: presentAssociationLabel("[[.TargetSpec.Name]]", item.[[.ForeignKeyGoName]], func() int64 {
+			if item.[[.GoName]] == nil {
+				return 0
+			}
+			return item.[[.GoName]].ID
+		}()),
+[[end]]	}
 }
 
-func formatOptional[T any](value *T, format func(T) string) string {
+[[if .Relationships]]func presentAssociationLabel(name string, id, loadedID int64) string {
+	if id < 1 || loadedID != id {
+		return "Unavailable " + name
+	}
+	return name + " #" + strconv.FormatInt(id, 10)
+}
+
+func presentAssociationChoices(choices []AssociationChoice, selected string) []AssociationChoiceView {
+	presented := make([]AssociationChoiceView, 0, len(choices)+1)
+	selectedFound := selected == ""
+	for _, choice := range choices {
+		value := strconv.FormatInt(choice.ID, 10)
+		isSelected := value == selected
+		selectedFound = selectedFound || isSelected
+		presented = append(presented, AssociationChoiceView{Value: value, Label: choice.Label, Selected: isSelected})
+	}
+	if !selectedFound {
+		presented = append(presented, AssociationChoiceView{
+			Value: selected, Label: "Unavailable selection", Selected: true,
+		})
+	}
+	return presented
+}
+
+func invalidAssociationField(err error) (string, bool) {
+	var invalid *InvalidAssociationError
+	if !errors.As(err, &invalid) || invalid == nil {
+		return "", false
+	}
+	return validAssociationInputField(invalid.Field)
+}
+
+[[end]]func formatOptional[T any](value *T, format func(T) string) string {
 	if value == nil {
 		return ""
 	}

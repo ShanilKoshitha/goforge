@@ -14,17 +14,45 @@ import (
 var (
 	ErrNotFound = errors.New("[[.Package]] not found")
 	ErrStale    = orm.ErrStale
+[[if .OwnerCandidateKey]]	ErrInUse = errors.New("[[.Package]] is in use")
+[[end]][[if .Relationships]]	ErrAssociationChoicesOverflow = errors.New("association choices exceed the supported limit")
+[[end]]
 )
+[[if .Relationships]]
+
+const maximumAssociationChoices = 100
+
+// InvalidAssociationError deliberately carries only the public input field.
+// Missing and foreign-owner targets are therefore indistinguishable.
+type InvalidAssociationError struct{ Field string }
+
+func (err *InvalidAssociationError) Error() string {
+	if err == nil {
+		return "invalid association"
+	}
+	return "invalid association " + err.Field
+}
+
+// AssociationChoice is the bounded, owner-scoped browser representation of a
+// relationship target. Applications can replace its deliberately stable ID
+// label in ordinary controller or repository code.
+type AssociationChoice struct {
+	ID    int64
+	Label string
+}
+[[end]]
 
 // Repository remains the application-facing escape hatch. Alternative SQL,
 // service, cache, or test implementations need not depend on the ORM.
 type Repository interface {
 	List(ctx context.Context, userID int64) ([][[.Name]], error)
 	Paginate(ctx context.Context, userID int64, page, perPage int) ([[.Name]]Page, error)
-	Create(ctx context.Context, userID int64, attributes Attributes) ([[.Name]], error)
+	Create(ctx context.Context, userID int64, attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]]) ([[.Name]], error)
 	Find(ctx context.Context, userID, id int64) ([[.Name]], error)
-	Update(ctx context.Context, userID, id int64, attributes Attributes, expectedVersion *int64) ([[.Name]], error)
+	Update(ctx context.Context, userID, id int64, attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]], expectedVersion *int64) ([[.Name]], error)
 	Delete(ctx context.Context, userID, id int64) error
+[[range .Relationships]]	[[.GoName]]Choices(ctx context.Context, userID int64) ([]AssociationChoice, error)
+[[end]]
 }
 
 const (
@@ -74,7 +102,11 @@ func (repository *PostgresRepository) List(ctx context.Context, userID int64) ([
 		if err != nil {
 			return nil, fmt.Errorf("list [[.Plural]]: %w", postgres.Classify(err))
 		}
-		items = append(items, batch...)
+[[if .Relationships]]		batch, err = repository.loadRelationships(ctx, userID, batch)
+		if err != nil {
+			return nil, err
+		}
+[[end]]		items = append(items, batch...)
 		if len(batch) < maximumPageSize {
 			return items, nil
 		}
@@ -101,7 +133,11 @@ func (repository *PostgresRepository) Paginate(ctx context.Context, userID int64
 	if hasNext {
 		items = items[:perPage]
 	}
-	return [[.Name]]Page{
+[[if .Relationships]]	items, err = repository.loadRelationships(ctx, userID, items)
+	if err != nil {
+		return [[.Name]]Page{}, err
+	}
+[[end]]	return [[.Name]]Page{
 		Items: items, Number: page, PerPage: perPage,
 		HasPrevious: page > 1, HasNext: hasNext,
 	}, nil
@@ -121,15 +157,22 @@ func normalizePagination(page, perPage int) (int, int) {
 	return page, perPage
 }
 
-func (repository *PostgresRepository) Create(ctx context.Context, userID int64, attributes Attributes) ([[.Name]], error) {
-	item, err := repository.query().Create(
+func (repository *PostgresRepository) Create(ctx context.Context, userID int64, attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]]) ([[.Name]], error) {
+[[if .Relationships]]	if err := repository.validateAssociations(ctx, userID, associations); err != nil {
+		return [[.Name]]{}, err
+	}
+[[end]]	item, err := repository.query().Create(
 		models.[[.Name]]CreateInput{
 [[range .Fields]]			[[.GoName]]: [[if .Nullable]]nullableField(attributes.[[.GoName]])[[else]]attributes.[[.GoName]][[end]],
 [[end]]		},
 		models.[[.Name]]Columns.UserID.Set(userID),
-	).One(ctx, repository.Executor)
+[[range .Relationships]]		models.[[$.Name]]Columns.[[.ForeignKeyGoName]].Set(associations.[[.ForeignKeyGoName]]),
+[[end]]	).One(ctx, repository.Executor)
 	if err != nil {
-		return [[.Name]]{}, fmt.Errorf("create [[.Package]]: %w", postgres.Classify(err))
+[[if .Relationships]]		if associationErr := invalidAssociationWriteError(err); associationErr != nil {
+			return [[.Name]]{}, associationErr
+		}
+[[end]]		return [[.Name]]{}, fmt.Errorf("create [[.Package]]: %w", postgres.Classify(err))
 	}
 	return item, nil
 }
@@ -139,29 +182,45 @@ func (repository *PostgresRepository) Find(ctx context.Context, userID, id int64
 		models.[[.Name]]Columns.ID.Eq(id),
 		models.[[.Name]]Columns.UserID.Eq(userID),
 	).First(ctx, repository.Executor)
-	return repositoryResult(item, err)
+[[if .Relationships]]	item, err = repositoryResult(item, err)
+	if err != nil {
+		return [[.Name]]{}, err
+	}
+	items, err := repository.loadRelationships(ctx, userID, [][[.Name]]{item})
+	if err != nil {
+		return [[.Name]]{}, err
+	}
+	return items[0], nil
+[[else]]	return repositoryResult(item, err)
+[[end]]
 }
 
-func (repository *PostgresRepository) Update(ctx context.Context, userID, id int64, attributes Attributes, expectedVersion *int64) ([[.Name]], error) {
+func (repository *PostgresRepository) Update(ctx context.Context, userID, id int64, attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]], expectedVersion *int64) ([[.Name]], error) {
 	if expectedVersion != nil && *expectedVersion < 1 {
 		return [[.Name]]{}, fmt.Errorf("update [[.Package]]: expected version must be at least 1")
 	}
-	changes := models.[[.Name]]Changes{
+[[if .Relationships]]	if err := repository.validateAssociations(ctx, userID, associations); err != nil {
+		return [[.Name]]{}, err
+	}
+[[end]]	changes := models.[[.Name]]Changes{
 [[range .Fields]]		[[.GoName]]: [[if .Nullable]]nullableField(attributes.[[.GoName]])[[else]]orm.Value(attributes.[[.GoName]])[[end]],
 [[end]]	}
 	updatedAt := orm.SetCurrentTime(models.[[.Name]]Columns.UpdatedAt)
 	var update orm.UpdateBuilder[models.[[.Name]]]
 	if expectedVersion == nil {
-		update = repository.query().Update(changes, updatedAt, orm.Increment(models.[[.Name]]Columns.Version, int64(1)))
+		update = repository.query().Update(changes, updatedAt, orm.Increment(models.[[.Name]]Columns.Version, int64(1))[[range .Relationships]], models.[[$.Name]]Columns.[[.ForeignKeyGoName]].Set(associations.[[.ForeignKeyGoName]])[[end]])
 	} else {
-		update = repository.query().Update(changes, updatedAt).
+		update = repository.query().Update(changes, updatedAt[[range .Relationships]], models.[[$.Name]]Columns.[[.ForeignKeyGoName]].Set(associations.[[.ForeignKeyGoName]])[[end]]).
 			OptimisticVersion(orm.ExpectVersion(models.[[.Name]]Columns.Version, *expectedVersion))
 	}
 	item, err := update.Where(
 		models.[[.Name]]Columns.ID.Eq(id),
 		models.[[.Name]]Columns.UserID.Eq(userID),
 	).One(ctx, repository.Executor)
-	err = postgres.Classify(err)
+[[if .Relationships]]	if associationErr := invalidAssociationWriteError(err); associationErr != nil {
+		return [[.Name]]{}, associationErr
+	}
+[[end]]	err = postgres.Classify(err)
 	if expectedVersion != nil && errors.Is(err, orm.ErrNotFound) {
 		exists, existsErr := repository.query().Select().Where(
 			models.[[.Name]]Columns.ID.Eq(id),
@@ -183,13 +242,95 @@ func (repository *PostgresRepository) Delete(ctx context.Context, userID, id int
 		models.[[.Name]]Columns.UserID.Eq(userID),
 	).Exec(ctx, repository.Executor)
 	if err != nil {
-		return fmt.Errorf("delete [[.Package]]: %w", postgres.Classify(err))
+[[if .OwnerCandidateKey]]		err = postgres.Classify(err)
+		if errors.Is(err, orm.ErrForeignKey) {
+			return fmt.Errorf("delete [[.Package]]: %w", ErrInUse)
+		}
+		return fmt.Errorf("delete [[.Package]]: %w", err)
+[[else]]		return fmt.Errorf("delete [[.Package]]: %w", postgres.Classify(err))
+[[end]]
 	}
 	if rows == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
+[[if .Relationships]]
+
+func (repository *PostgresRepository) validateAssociations(ctx context.Context, userID int64, associations AssociationIDs) error {
+[[range .Relationships]]	{
+		exists, err := models.NewStore(repository.Executor).[[.TargetQueryAccessor]]().Select().Where(
+			models.[[.TargetSpec.Name]]Columns.ID.Eq(associations.[[.ForeignKeyGoName]]),
+			models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID),
+		).Exists(ctx, repository.Executor)
+		if err != nil {
+			return fmt.Errorf("validate [[.ForeignKey]] association: %w", postgres.Classify(err))
+		}
+		if !exists {
+			return &InvalidAssociationError{Field: "[[.ForeignKey]]"}
+		}
+	}
+[[end]]	return nil
+}
+
+func invalidAssociationWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	classified := postgres.Classify(err)
+	var constraint *orm.ConstraintError
+	if !errors.As(classified, &constraint) || constraint.Kind != orm.ConstraintForeignKey {
+		return nil
+	}
+	switch constraint.Constraint {
+[[range .Relationships]]	case "[[.ConstraintName]]":
+		return &InvalidAssociationError{Field: "[[.ForeignKey]]"}
+[[end]]	default:
+		return nil
+	}
+}
+
+func (repository *PostgresRepository) loadRelationships(ctx context.Context, userID int64, items [][[.Name]]) ([][[.Name]], error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	var err error
+[[range .Relationships]]	items, err = repository.query().Load[[.GoName]](ctx, items,
+		models.NewStore(repository.Executor).[[.TargetQueryAccessor]]().Select().Where(
+			models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load [[.ForeignKey]] association: %w", postgres.Classify(err))
+	}
+	for _, item := range items {
+		if item.[[.GoName]] == nil {
+			return nil, fmt.Errorf("load [[.ForeignKey]] association: required association is unavailable")
+		}
+	}
+[[end]]	return items, nil
+}
+
+[[range .Relationships]]func (repository *PostgresRepository) [[.GoName]]Choices(ctx context.Context, userID int64) ([]AssociationChoice, error) {
+	items, err := models.NewStore(repository.Executor).[[.TargetQueryAccessor]]().Select().
+		Where(models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID)).
+		OrderBy(models.[[.TargetSpec.Name]]Columns.ID.Asc()).
+		Limit(maximumAssociationChoices + 1).
+		All(ctx, repository.Executor)
+	if err != nil {
+		return nil, fmt.Errorf("list [[.ForeignKey]] association choices: %w", postgres.Classify(err))
+	}
+	if len(items) > maximumAssociationChoices {
+		return nil, fmt.Errorf("list [[.ForeignKey]] association choices: %w", ErrAssociationChoicesOverflow)
+	}
+	choices := make([]AssociationChoice, len(items))
+	for index, item := range items {
+		choices[index] = AssociationChoice{ID: item.ID, Label: fmt.Sprintf("[[.TargetSpec.Name]] #%d", item.ID)}
+	}
+	return choices, nil
+}
+
+[[end]][[end]]
 
 func nullableField[T any](value *T) orm.Field[*T] {
 	if value == nil {

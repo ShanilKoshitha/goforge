@@ -21,9 +21,11 @@ import (
 // policy. Controllers do not maintain parallel JSON and browser rules.
 type WriteRequest struct {
 	Attributes Attributes
-	Version    *int64
+	[[if .Relationships]]Associations AssociationIDs
+	[[end]]Version *int64
 
 [[range .Fields]]	[[.Name]]Input validation.Input[[`[`]][[.BaseGoType]]]
+[[end]][[range .Relationships]]	[[.ForeignKey]]Input validation.Input[int64]
 [[end]]	versionInput validation.Input[int64]
 	formValues  map[string]string
 }
@@ -31,6 +33,7 @@ type WriteRequest struct {
 func (request *WriteRequest) DecodeJSON(ctx *httpx.Context) error {
 	body, err := decodeExactJSONObject(ctx,
 [[range .Fields]]		"[[.Name]]",
+[[end]][[range .Relationships]]		"[[.ForeignKey]]",
 [[end]]		"version",
 	)
 	if err != nil {
@@ -45,7 +48,13 @@ func (request *WriteRequest) DecodeJSON(ctx *httpx.Context) error {
 	request.[[.Name]]Input = [[.Name]]Input
 [[if .Nullable]]	request.Attributes.[[.GoName]] = inputPointer([[.Name]]Input)
 [[else]]	request.Attributes.[[.GoName]] = [[.Name]]Value
-[[end]][[end]]	_, versionInput, err := decodeJSONInt64("version", body["version"])
+[[end]][[end]][[range .Relationships]]	[[.ForeignKey]]Value, [[.ForeignKey]]Input, err := decodeJSONInt64("[[.ForeignKey]]", body["[[.ForeignKey]]"])
+	if err != nil {
+		return err
+	}
+	request.[[.ForeignKey]]Input = [[.ForeignKey]]Input
+	request.Associations.[[.ForeignKeyGoName]] = [[.ForeignKey]]Value
+[[end]]	_, versionInput, err := decodeJSONInt64("version", body["version"])
 	if err != nil {
 		return err
 	}
@@ -149,7 +158,16 @@ func (request *WriteRequest) DecodeForm(ctx *httpx.Context) error {
 	}
 [[if .Nullable]]	request.Attributes.[[.GoName]] = inputPointer([[.Name]]Input)
 [[else]]	request.Attributes.[[.GoName]] = [[.Name]]Value
-[[end]][[end]]	_, versionInput, versionRaw, err := decodeFormInt64(form, "version")
+[[end]][[end]][[range .Relationships]]	[[.ForeignKey]]Value, [[.ForeignKey]]Input, [[.ForeignKey]]Raw, err := decodeFormInt64(form, "[[.ForeignKey]]")
+	if err != nil {
+		return err
+	}
+	request.[[.ForeignKey]]Input = [[.ForeignKey]]Input
+	request.Associations.[[.ForeignKeyGoName]] = [[.ForeignKey]]Value
+	if form.Has("[[.ForeignKey]]") {
+		request.formValues["[[.ForeignKey]]"] = [[.ForeignKey]]Raw
+	}
+[[end]]	_, versionInput, versionRaw, err := decodeFormInt64(form, "version")
 	if err != nil {
 		return err
 	}
@@ -182,7 +200,9 @@ func (request WriteRequest) validate(requireVersion bool) validation.Report {
 [[if .Required]]			validation.Required[string](),
 [[end]]			validation.StringLength(1, 65535), safeMultilineText()),
 [[else if .Required]]		validation.Apply("[[.Name]]", request.[[.Name]]Input, validation.Required[[`[`]][[.BaseGoType]]]()),
-[[end]][[end]]		validation.Apply("version", request.versionInput,
+[[end]][[end]][[range .Relationships]]		validation.Apply("[[.ForeignKey]]", request.[[.ForeignKey]]Input,
+			validation.Required[int64](), validation.NumberRange[int64](1, int64(^uint64(0)>>1))),
+[[end]]		validation.Apply("version", request.versionInput,
 			validation.When(requireVersion || request.versionInput.Provided(),
 				validation.Required[int64](), validation.NumberRange[int64](1, int64(^uint64(0)>>1)))),
 	)

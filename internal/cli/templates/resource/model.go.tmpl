@@ -12,3 +12,20 @@ type [[.Name]] = models.[[.Name]]
 type Attributes struct {
 [[range .Fields]]	[[.GoName]] [[.GoType]]
 [[end]]}
+[[if .Relationships]]
+
+// AssociationIDs is the complete set of relationship keys accepted by writes.
+// Keeping these keys separate prevents generic attribute mass assignment.
+type AssociationIDs struct {
+[[range .Relationships]]	[[.ForeignKeyGoName]] int64
+[[end]]}
+
+func validAssociationInputField(field string) (string, bool) {
+	switch field {
+[[range .Relationships]]	case "[[.ForeignKey]]":
+		return field, true
+[[end]]	default:
+		return "", false
+	}
+}
+[[end]]

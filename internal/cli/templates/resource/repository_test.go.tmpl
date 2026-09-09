@@ -34,8 +34,9 @@ func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
 	}
 	connection.queryError = nil
 	connection.updateFound = true
-	expectedVersion := int64(3)
-	updated, err := repository.Update(context.Background(), 9, 41, updatedAttributes(), &expectedVersion)
+[[if .Relationships]]	connection.associationExists = true
+[[end]]	expectedVersion := int64(3)
+	updated, err := repository.Update(context.Background(), 9, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion)
 	if err != nil || updated.Version != 4 {
 		t.Fatalf("guarded update did not return one incremented version: %+v %v", updated, err)
 	}
@@ -46,14 +47,14 @@ func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
 	}
 	connection.updateFound = false
 	connection.exists = true
-	if _, err := repository.Update(context.Background(), 9, 41, updatedAttributes(), &expectedVersion); !errors.Is(err, ErrStale) || !errors.Is(err, orm.ErrStale) {
+	if _, err := repository.Update(context.Background(), 9, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion); !errors.Is(err, ErrStale) || !errors.Is(err, orm.ErrStale) {
 		t.Fatalf("owned guarded miss is not stale: %v", err)
 	}
 	if !strings.Contains(connection.query, `"user_id" = $`) {
 		t.Fatalf("stale existence probe lost owner scope: %s", connection.query)
 	}
 	connection.exists = false
-	if _, err := repository.Update(context.Background(), 10, 41, updatedAttributes(), &expectedVersion); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrStale) {
+	if _, err := repository.Update(context.Background(), 10, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrStale) {
 		t.Fatalf("wrong-owner guarded miss leaked staleness: %v", err)
 	}
 
@@ -67,22 +68,137 @@ func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+[[if .Relationships]]
+
+func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := NewPostgresRepository(db)
+	connection := repositoryConnectionFrom(t, db)
+
+	connection.associationExists = false
+	connection.resetStatements()
+	_, err = repository.Create(context.Background(), 9, sampleAttributes(), sampleAssociations())
+	var invalid *InvalidAssociationError
+	if !errors.As(err, &invalid) || invalid.Field == "" {
+		t.Fatalf("unavailable association error = %#v, %v", invalid, err)
+	}
+	if len(connection.queries) != 1 || !strings.HasPrefix(connection.queries[0], "SELECT EXISTS") || strings.Contains(err.Error(), "71") {
+		t.Fatalf("unavailable association leaked or reached its write: queries=%#v err=%v", connection.queries, err)
+	}
+
+	connection.associationExists = true
+	connection.resetStatements()
+	if _, err := repository.Create(context.Background(), 9, sampleAttributes(), sampleAssociations()); err != nil {
+		t.Fatal(err)
+	}
+	if len(connection.queries) != 1+[[len .Relationships]] || !strings.HasPrefix(connection.queries[len(connection.queries)-1], "INSERT ") {
+		t.Fatalf("create relationship query budget = %#v", connection.queries)
+	}
+[[range .Relationships]]	if !strings.Contains(connection.queries[len(connection.queries)-1], `"[[.ForeignKey]]"`) {
+		t.Fatalf("create omitted explicit [[.ForeignKey]] assignment: %s", connection.queries[len(connection.queries)-1])
+	}
+[[end]]
+	connection.resetStatements()
+	items, err := repository.List(context.Background(), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || len(connection.queries) != 1+[[len .Relationships]] {
+		t.Fatalf("eager-load query budget or result = %d %#v", len(items), connection.queries)
+	}
+[[range .Relationships]]	if items[0].[[.GoName]] == nil || items[0].[[.GoName]].ID != 71 {
+		t.Fatalf("[[.GoName]] was not eagerly loaded: %#v", items[0].[[.GoName]])
+	}
+[[end]]
+	connection.resetStatements()
+	page, err := repository.Paginate(context.Background(), 9, 1, 10)
+	if err != nil || len(page.Items) != 1 || len(connection.queries) != 1+[[len .Relationships]] {
+		t.Fatalf("paginate eager-load query budget or result = %#v, %v, %#v", page, err, connection.queries)
+	}
+[[range .Relationships]]	if page.Items[0].[[.GoName]] == nil || page.Items[0].[[.GoName]].ID != 71 {
+		t.Fatalf("paginated [[.GoName]] was not eagerly loaded: %#v", page.Items[0].[[.GoName]])
+	}
+[[end]]	connection.resetStatements()
+	item, err := repository.Find(context.Background(), 9, 41)
+	if err != nil || len(connection.queries) != 1+[[len .Relationships]] {
+		t.Fatalf("find eager-load query budget or result = %#v, %v, %#v", item, err, connection.queries)
+	}
+[[range .Relationships]]	if item.[[.GoName]] == nil || item.[[.GoName]].ID != 71 {
+		t.Fatalf("found [[.GoName]] was not eagerly loaded: %#v", item.[[.GoName]])
+	}
+[[end]]
+[[range .Relationships]]	{
+		connection.targetRowCount = 1
+		connection.resetStatements()
+		choices, err := repository.[[.GoName]]Choices(context.Background(), 9)
+		if err != nil || len(choices) != 1 || choices[0].ID != 71 || choices[0].Label != "[[.TargetSpec.Name]] #71" {
+			t.Fatalf("[[.GoName]] choices = %#v, %v", choices, err)
+		}
+		if len(connection.queries) != 1 || !strings.Contains(connection.queries[0], `"[[.TargetSpec.Plural]]"."user_id" = $1`) ||
+			!strings.Contains(connection.queries[0], "ORDER BY") || !strings.Contains(connection.queries[0], "LIMIT $2") {
+			t.Fatalf("[[.GoName]] choices are not bounded and owner-scoped: %#v", connection.queries)
+		}
+		connection.targetRowCount = maximumAssociationChoices + 1
+		if _, err := repository.[[.GoName]]Choices(context.Background(), 9); !errors.Is(err, ErrAssociationChoicesOverflow) {
+			t.Fatalf("[[.GoName]] choice overflow = %v", err)
+		}
+	}
+[[end]]}
+
+func TestPostgresRepositoryClassifiesRelationshipConstraintRaces(t *testing.T) {
+[[range .Relationships]]	t.Run("[[.Name]]", func(t *testing.T) {
+		err := &pgconn.PgError{Code: "23503", ConstraintName: "[[.ConstraintName]]"}
+	invalid := invalidAssociationWriteError(err)
+	var typed *InvalidAssociationError
+	if !errors.As(invalid, &typed) || typed.Field != "[[.ForeignKey]]" {
+		t.Fatalf("[[.ForeignKey]] constraint race = %#v, %v", typed, invalid)
+	}
+	})
+[[end]]}
+[[end]][[if .OwnerCandidateKey]]
+
+func TestPostgresRepositoryMapsForeignKeyDeleteToInUse(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := NewPostgresRepository(db)
+	connection := repositoryConnectionFrom(t, db)
+	connection.execError = &pgconn.PgError{Code: "23503", ConstraintName: "dependent_owner_fkey"}
+	if err := repository.Delete(context.Background(), 9, 41); !errors.Is(err, ErrInUse) || errors.Is(err, orm.ErrForeignKey) {
+		t.Fatalf("foreign-key delete = %v", err)
+	}
+}
+[[end]]
 
 func assertBoundedOwnerList(t *testing.T, repository *PostgresRepository) {
 	t.Helper()
-	items, err := repository.List(context.Background(), 9)
+	connection := repositoryConnectionFrom(t, repository.Executor)
+[[if .Relationships]]	connection.resetStatements()
+[[end]]	items, err := repository.List(context.Background(), 9)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(items) != 1 || items[0].ID != 41 || items[0].UserID != 9 || items[0].Version != 3 || !reflect.DeepEqual(attributesFromModel(items[0]), sampleAttributes()) {
 		t.Fatalf("mapped items = %+v", items)
 	}
-	connection := repositoryConnectionFrom(t, repository.Executor)
-	if !strings.Contains(connection.query, `WHERE "[[.Plural]]"."user_id" = $1`) || !strings.Contains(connection.query, "LIMIT $2") {
-		t.Fatalf("list is not bounded and owner-scoped: %s", connection.query)
+	query, args := connection.query, connection.args
+[[if .Relationships]]	query, args = connection.queries[0], connection.queryArgs[0]
+[[range .Relationships]]	if items[0].[[.GoName]] == nil {
+		t.Fatalf("list did not eagerly load [[.GoName]]")
 	}
-	if !reflect.DeepEqual(connection.args, []driver.NamedValue{{Ordinal: 1, Value: int64(9)}, {Ordinal: 2, Value: int64(maximumPageSize)}}) {
-		t.Fatalf("list args = %#v", connection.args)
+[[end]][[end]]	if !strings.Contains(query, `WHERE "[[.Plural]]"."user_id" = $1`) || !strings.Contains(query, "LIMIT $2") {
+		t.Fatalf("list is not bounded and owner-scoped: %s", query)
+	}
+	if !reflect.DeepEqual(args, []driver.NamedValue{{Ordinal: 1, Value: int64(9)}, {Ordinal: 2, Value: int64(maximumPageSize)}}) {
+		t.Fatalf("list args = %#v", args)
 	}
 }
 
@@ -127,11 +243,24 @@ func (repositoryDriver) Open(string) (driver.Conn, error) {
 }
 
 type repositoryConnection struct {
-	query      string
-	args       []driver.NamedValue
-	queryError error
+	query       string
+	args        []driver.NamedValue
+	queries     []string
+	queryArgs   [][]driver.NamedValue
+	queryError  error
+	execError   error
 	updateFound bool
 	exists      bool
+[[if .Relationships]]	associationExists bool
+	targetRowCount   int
+[[end]]
+}
+
+func (connection *repositoryConnection) resetStatements() {
+	connection.query = ""
+	connection.args = nil
+	connection.queries = nil
+	connection.queryArgs = nil
 }
 
 func (*repositoryConnection) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
@@ -140,6 +269,8 @@ func (*repositoryConnection) Begin() (driver.Tx, error)           { return repos
 func (connection *repositoryConnection) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	connection.query = query
 	connection.args = append([]driver.NamedValue(nil), args...)
+	connection.queries = append(connection.queries, query)
+	connection.queryArgs = append(connection.queryArgs, append([]driver.NamedValue(nil), args...))
 	if connection.queryError != nil {
 		return nil, connection.queryError
 	}
@@ -147,16 +278,30 @@ func (connection *repositoryConnection) QueryContext(_ context.Context, query st
 		if !connection.updateFound {
 			return &repositoryRows{sent: true}, nil
 		}
-		return &repositoryRows{values: repositoryModelValues(4)}, nil
+		return &repositoryRows{values: repositoryModelValues(4), remaining: 1}, nil
 	}
 	if strings.HasPrefix(query, "SELECT EXISTS") {
-		return &repositoryRows{values: []driver.Value{connection.exists}}, nil
+[[if .Relationships]][[range .Relationships]]		if strings.Contains(query, `FROM "[[.TargetSpec.Plural]]"`) {
+			return &repositoryRows{values: []driver.Value{connection.associationExists}, remaining: 1}, nil
+		}
+[[end]][[end]]		return &repositoryRows{values: []driver.Value{connection.exists}, remaining: 1}, nil
 	}
-	return &repositoryRows{values: repositoryModelValues(3)}, nil
+[[if .Relationships]][[range .Relationships]]	if strings.Contains(query, `FROM "[[.TargetSpec.Plural]]"`) {
+		columns := repositorySelectedColumns(query)
+		count := connection.targetRowCount
+		if count == 0 {
+			count = 1
+		}
+		return &repositoryRows{columns: columns, values: repositoryTargetValues(columns), remaining: count}, nil
+	}
+[[end]][[end]]	return &repositoryRows{values: repositoryModelValues(3), remaining: 1}, nil
 }
 func (connection *repositoryConnection) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	connection.query = query
 	connection.args = append([]driver.NamedValue(nil), args...)
+	if connection.execError != nil {
+		return nil, connection.execError
+	}
 	return repositoryResultValue(1), nil
 }
 
@@ -166,29 +311,75 @@ func (repositoryTransaction) Commit() error   { return nil }
 func (repositoryTransaction) Rollback() error { return nil }
 
 type repositoryRows struct {
-	sent   bool
-	values []driver.Value
+	sent      bool
+	columns   []string
+	values    []driver.Value
+	remaining int
 }
 
-	func (rows *repositoryRows) Columns() []string {
+func (rows *repositoryRows) Columns() []string {
+	if len(rows.columns) > 0 {
+		return rows.columns
+	}
 	if len(rows.values) == 1 {
 		return []string{"exists"}
 	}
-	return []string{"id", "user_id", [[range .Fields]]"[[.Name]]", [[end]]"created_at", "updated_at", "version"}
+	return []string{"id", "user_id", [[range .Relationships]]"[[.ForeignKey]]", [[end]][[range .Fields]]"[[.Name]]", [[end]]"created_at", "updated_at", "version"}
 }
 func (*repositoryRows) Close() error { return nil }
 func (rows *repositoryRows) Next(values []driver.Value) error {
-	if rows.sent {
+	if rows.sent || rows.remaining == 0 {
 		return io.EOF
 	}
-	rows.sent = true
+	rows.remaining--
+	rows.sent = rows.remaining == 0
 	copy(values, rows.values)
 	return nil
 }
 
 func repositoryModelValues(version int64) []driver.Value {
-	return []driver.Value{int64(41), int64(9), [[range .Fields]][[.DriverValue]], [[end]]time.Unix(1, 0), time.Unix(2, 0), version}
+	return []driver.Value{int64(41), int64(9), [[range .Relationships]]int64(71), [[end]][[range .Fields]][[.DriverValue]], [[end]]time.Unix(1, 0), time.Unix(2, 0), version}
 }
+[[if .Relationships]]
+
+func repositorySelectedColumns(query string) []string {
+	selection, _, found := strings.Cut(query, " FROM ")
+	if !found {
+		return nil
+	}
+	selection = strings.TrimPrefix(selection, "SELECT ")
+	parts := strings.Split(selection, ", ")
+	columns := make([]string, len(parts))
+	for index, part := range parts {
+		if separator := strings.LastIndexByte(part, '.'); separator >= 0 {
+			part = part[separator+1:]
+		}
+		columns[index] = strings.Trim(part, `"`)
+	}
+	return columns
+}
+
+func repositoryTargetValues(columns []string) []driver.Value {
+	values := make([]driver.Value, len(columns))
+	for index, column := range columns {
+		switch column {
+		case "id":
+			values[index] = int64(71)
+		case "user_id":
+			values[index] = int64(9)
+		case "created_at", "updated_at":
+			values[index] = time.Unix(1, 0)
+		case "version":
+			values[index] = int64(1)
+		default:
+			// The bounded resource vocabulary accepts integer 1 for integer,
+			// boolean, string, and nullable scan destinations in database/sql.
+			values[index] = int64(1)
+		}
+	}
+	return values
+}
+[[end]]
 
 func sampleAttributes() Attributes {
 	return Attributes{
@@ -201,6 +392,14 @@ func updatedAttributes() Attributes {
 [[range .Fields]]		[[.GoName]]: [[.UpdatedGoValue]],
 [[end]]	}
 }
+[[if .Relationships]]
+
+func sampleAssociations() AssociationIDs {
+	return AssociationIDs{
+[[range .Relationships]]		[[.ForeignKeyGoName]]: 71,
+[[end]]	}
+}
+[[end]]
 
 func attributesFromModel(item [[.Name]]) Attributes {
 	return Attributes{
