@@ -1,6 +1,6 @@
 # v0.13 required belongs-to resource generation scorecard
 
-Status: **in progress** — 2026-09-09
+Status: **accepted** — 2026-09-09
 
 Target:
 
@@ -33,16 +33,37 @@ their current model source, not persisted field metadata, is authoritative.
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| CLI parsing and preflight are exact | pending | Both flag forms, declaration order, bounds, unsafe or duplicate names, scalar/FK/Go collisions, missing or self targets, and incompatible edited target models fail before any write |
-| One ephemeral contract drives every generated layer | pending | The relationship reaches the application model, migration, generated ORM, separate association IDs, JSON/form request, repository, controllers, Forge views, and generated tests without being stored as runtime schema |
-| Persistence is explicit and conservative | pending | Format-10 resources expose an owner/ID candidate key; child SQL uses a required indexed `BIGINT` and composite `(user_id, target_id)` foreign key with non-cascading `NO ACTION`; the model exposes the protected key and explicit `belongs_to` field; target deletion maps to an intentional conflict |
-| Ownership cannot be crossed | pending | Create and update accept only a target owned by the authenticated user; a missing target and another user's target return the same field-level 422 response; raw cross-owner SQL fails; a target-delete race produces either a valid child or a disclosure-safe relation failure |
-| JSON and browser workflows are complete | pending | Exact JSON/form semantics require a positive relation ID; new/edit forms provide bounded owner-only choices and preserve submitted selections and errors; list/show/create/update responses render the loaded relationship |
-| Relationship reads remain bounded | pending | List and pagination eager-load in batches with constant queries per batch rather than per row; single-record paths load explicitly; every related query retains the owner predicate |
-| Optimistic and rollback safety are retained | pending | Relationship-aware updates require a positive version; stale forms keep safe submitted values and fresh versions; collisions, cancellation, compilation failures, managed-write failures, and concurrent generators preserve complete state |
-| Existing applications keep working | pending | Formats 8 and 9 retain implicit and scalar-only generation plus every compatible command, relationship flags fail before writes outside format 10, frozen released applications remain compatible, and handwritten ORM relationships plus direct SQL remain available |
-| A fresh PostgreSQL application works end to end | pending | A two-user Category/Issue application migrates, tests, races, vets, builds, and proves owned create/read/update, cross-owner rejection, eager loading, browser choices, stale writes, delete restriction, rollback, and direct-Go escape hatches |
-| The milestone passes twice without regression | pending | Two independent complete runs pass without intervening changes and an independent architecture/security review reports no P0-P2 blocker |
+| CLI parsing and preflight are exact | passing | Both flag forms, declaration order, bounds, unsafe or duplicate names, scalar/FK/Go collisions, missing or self targets, and incompatible edited target models fail before any write |
+| One ephemeral contract drives every generated layer | passing | The relationship reaches the application model, migration, generated ORM, separate association IDs, JSON/form request, repository, controllers, Forge views, and generated tests without being stored as runtime schema |
+| Persistence is explicit and conservative | passing | Format-10 resources expose an owner/ID candidate key; child SQL uses a required indexed `BIGINT` and composite `(user_id, target_id)` foreign key with non-cascading `NO ACTION`; the model exposes the protected key and explicit `belongs_to` field; target deletion maps to an intentional conflict |
+| Ownership cannot be crossed | passing | Create and update accept only a target owned by the authenticated user; a missing target and another user's target return the same field-level 422 response; raw cross-owner SQL fails; a target-delete race produces either a valid child or a disclosure-safe relation failure |
+| JSON and browser workflows are complete | passing | Exact JSON/form semantics require a positive relation ID; new/edit forms provide bounded owner-only choices and preserve submitted selections and errors; list/show/create/update responses render the loaded relationship |
+| Relationship reads remain bounded | passing | List and pagination eager-load in batches with constant queries per batch rather than per row; single-record paths load explicitly; every related query retains the owner predicate |
+| Optimistic and rollback safety are retained | passing | Relationship-aware updates require a positive version; stale forms keep safe submitted values and fresh versions; collisions, cancellation, compilation failures, managed-write failures, and concurrent generators preserve complete state |
+| Existing applications keep working | passing | Formats 8 and 9 retain implicit and scalar-only generation plus every compatible command, relationship flags fail before writes outside format 10, frozen released applications remain compatible, and handwritten ORM relationships plus direct SQL remain available |
+| A fresh PostgreSQL application works end to end | passing | A two-user Category/Issue application migrates, tests, races, vets, builds, and proves owned create/read/update, cross-owner rejection, eager loading, browser choices, stale writes, delete restriction, rollback, and direct-Go escape hatches |
+| The milestone passes twice without regression | passing | Push run 34367665049 and pull-request run 34367670306 independently passed Linux/PostgreSQL and native Windows on commit `88ee62f`; independent architecture/security reviews found no P0–P2 blocker |
+
+## Acceptance evidence — 2026-09-09
+
+- [Push CI run 34367665049](https://github.com/ShanilKoshitha/goforge/actions/runs/34367665049)
+  and [pull-request CI run 34367670306](https://github.com/ShanilKoshitha/goforge/actions/runs/34367670306)
+  independently passed Linux race tests, vet, CLI build, released format-8
+  compatibility, current format-10 scaffold checks, the generated PostgreSQL
+  suite, and native Windows tests, vet, and build on commit `88ee62f`.
+- The PostgreSQL gate ran the relationship workflow twice per run. It generated
+  a two-user Category/Issue application, applied and reversed its migrations,
+  proved owner-only create/read/update and browser choices, indistinguishable
+  missing/cross-owner rejection, exact query budgets, raw composite-FK
+  enforcement, stale writes, delete restriction, and the create/delete race.
+- The final local revision passed `go test ./... -count=1`, `go test -race
+  ./... -count=1`, `go vet ./...`, a Windows CLI build, multi-relationship
+  generated-app compilation, format-8/9 scalar compatibility, and adversarial
+  candidate-key/dependency-publication tests.
+- Independent architecture and security re-reviews found no remaining P0–P2
+  blocker after repeatable-template scoping, bounded JSON pagination,
+  association-field allowlisting, target-migration DDL validation, and final
+  dependency fingerprinting were added.
 
 ## Runnable baseline — 2026-09-09
 
