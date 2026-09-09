@@ -40,6 +40,22 @@ func NewDispatcher(store Store, executor Executor, config DispatcherConfig) (Dis
 	return Dispatcher{store: store, executor: executor, observer: newEventEmitter(config.Observer), maxPayloadBytes: config.MaxPayloadBytes}, nil
 }
 
+// Validate reports whether the dispatcher has all dependencies required to
+// enqueue. Long-lived processes use it to fail at startup rather than when
+// their first delayed operation becomes due.
+func (dispatcher Dispatcher) Validate() error {
+	if nilValue(dispatcher.store) {
+		return fmt.Errorf("job: store is required")
+	}
+	if err := ValidateExecutor(dispatcher.executor); err != nil {
+		return err
+	}
+	if dispatcher.maxPayloadBytes < 1 {
+		return fmt.Errorf("job: max payload bytes must be positive")
+	}
+	return nil
+}
+
 // Using returns a dispatcher whose next calls use the supplied DB or transaction.
 func (dispatcher Dispatcher) Using(executor Executor) Dispatcher {
 	dispatcher.executor = executor
@@ -135,7 +151,7 @@ func (definition Definition[P]) Dispatch(ctx context.Context, dispatcher Dispatc
 	if definition.name == "" {
 		return DispatchResult{}, fmt.Errorf("job: valid definition is required")
 	}
-	if dispatcher.store == nil || ValidateExecutor(dispatcher.executor) != nil {
+	if dispatcher.Validate() != nil {
 		return DispatchResult{}, fmt.Errorf("job: valid dispatcher is required")
 	}
 	settings := dispatchSettings{queue: definition.policy.Queue}

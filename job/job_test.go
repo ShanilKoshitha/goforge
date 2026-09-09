@@ -166,6 +166,25 @@ func TestTypedDispatchUsesExplicitExecutorAndSnapshotsOptions(t *testing.T) {
 	}
 }
 
+func TestDispatcherValidateReportsStartupReadiness(t *testing.T) {
+	var zero job.Dispatcher
+	if err := zero.Validate(); err == nil {
+		t.Fatal("zero dispatcher was valid")
+	}
+	store := &fakeStore{}
+	dispatcher, err := job.NewDispatcher(store, inertExecutor{}, job.DispatcherConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.Validate(); err != nil {
+		t.Fatalf("constructed dispatcher invalid: %v", err)
+	}
+	var executor *inertExecutor
+	if err := dispatcher.Using(executor).Validate(); err == nil {
+		t.Fatal("typed-nil transaction executor was valid")
+	}
+}
+
 func TestDispatchDeduplicationAndDefensiveBoundaries(t *testing.T) {
 	store := &fakeStore{enqueueResult: job.DispatchResult{ID: "existing", Enqueued: false}}
 	dispatcher, err := job.NewDispatcher(store, inertExecutor{}, job.DispatcherConfig{MaxPayloadBytes: 16})
