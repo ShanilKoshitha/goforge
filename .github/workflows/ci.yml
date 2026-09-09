@@ -127,7 +127,7 @@ jobs:
           wait "$serve_pid"
           trap - EXIT
       - name: Generated PostgreSQL applications
-        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow)$' -count=2 -v
+        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow)$' -count=2 -v
 
   windows:
     runs-on: windows-latest
