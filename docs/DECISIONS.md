@@ -803,3 +803,53 @@ serve, and direct Go module verification.
 Reason: a scaffold must pin an immutable public module whose checksums already
 exist. The two-step release keeps each tag reproducible and proves generated
 applications do not depend on the framework checkout.
+
+## D034 — Required belongs-to is generated policy, not runtime schema
+
+**Status:** accepted for v0.13 implementation
+
+`forge make:resource` accepts a repeatable
+`--belongs-to <lower_snake_name>:<ExistingResource>` option. The target must be
+an already-generated owner-scoped resource whose current application model has
+the conventional integer identity and owner fields. Target metadata is used
+only to locate that source; Go source remains authoritative and an incompatible
+human edit fails generation before any write. Relationships are required in
+this milestone. The generated foreign-key name is `<name>_id`, and all scalar,
+database, Go, transport, and presentation name collisions are rejected.
+
+The option produces an ordinary protected foreign-key field, explicit
+`belongs_to` model field, `BIGINT NOT NULL` foreign key, index, writable
+application attribute, exact JSON/form input, field-level validation, repository
+policy, eager loader, browser choice loader, and rendered relationship output.
+The database uses `ON DELETE RESTRICT`: deleting a referenced parent is an
+intentional conflict rather than surprising child deletion. The relationship
+identifier is writable only through the resource's explicit Attributes value;
+it is not a generic mass-assignment escape hatch.
+
+Application repositories verify the target with both identity and authenticated
+owner predicates before create or update. Missing and cross-owner targets share
+one disclosure-safe validation result. Because generated ownership is immutable,
+the foreign key closes the remaining parent-deletion race: either the child
+write wins and deletion is restricted, or deletion wins and the child write is
+reported as an invalid relationship. Reads use explicit generated ORM loaders
+with owner-scoped target queries in bounded batches. Browser choices are bounded
+and owner-scoped; generated presentation code is the visible place to replace
+the conservative `Resource #ID` label.
+
+Relationship declarations remain one-shot command input. They are not added to
+`.forge/resources.json`, embedded as a schema, discovered from packages at
+runtime, or used for lazy loading. Generated Go and SQL become application-owned
+and directly editable. Existing resources are never rewritten; direct ORM
+descriptors, handwritten SQL, custom repositories, controllers, and views remain
+complete escape hatches.
+
+Nullable relationships, inverse generation, nested routes, collection
+relationships, configurable delete actions, searchable widgets, and regeneration
+are deferred. Recurring schedules remain the next separately gated operational
+milestone after this core resource workflow passes.
+
+Reason: GoForge already has a capable reflection-free relationship engine, but
+its flagship resource generator cannot produce a normal parent/child domain
+slice. Exposing one conservative required relation through static generation
+turns proven ORM machinery into Laravel/Rails-class productivity without adding
+runtime magic or a competing application schema.

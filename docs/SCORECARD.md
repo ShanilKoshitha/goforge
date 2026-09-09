@@ -1,3 +1,84 @@
+# v0.13 required belongs-to resource generation scorecard
+
+Status: **in progress** — 2026-09-09
+
+Target:
+
+> From a fresh application, generate one owner-scoped parent resource and one
+> child resource with a required belongs-to relationship. The relationship must
+> remain consistent across ordinary Go models, PostgreSQL constraints, exact
+> JSON and form decoding, validation, repositories, eager loading, browser
+> choices, rendered views, and generated tests. Missing and cross-owner parents
+> must be indistinguishable, concurrent parent deletion must fail predictably,
+> and all generated behavior must remain directly inspectable and replaceable.
+
+The intended workflow is:
+
+```text
+forge new issueboard --module example.com/issueboard
+forge make:resource Category --field name:string
+forge make:resource Issue \
+  --field title:string \
+  --belongs-to category:Category
+forge migrate
+forge serve
+```
+
+`--belongs-to` is repeatable and accepts
+`<lower_snake_name>:<ExistingResource>`. Relationships in this milestone are
+always required. Targets must already be generated owner-scoped resources;
+their current model source, not persisted field metadata, is authoritative.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| CLI parsing and preflight are exact | pending | Both flag forms, declaration order, bounds, unsafe or duplicate names, scalar/FK/Go collisions, missing or self targets, and incompatible edited target models fail before any write |
+| One ephemeral contract drives every generated layer | pending | The relationship reaches the application model, migration, generated ORM, attributes, JSON/form request, repository, controllers, Forge views, and generated tests without being stored as runtime schema |
+| Persistence is explicit and conservative | pending | Generated SQL uses a required indexed `BIGINT` foreign key with `ON DELETE RESTRICT`; the model exposes the protected key and explicit `belongs_to` field; target deletion maps to an intentional conflict |
+| Ownership cannot be crossed | pending | Create and update accept only a target owned by the authenticated user; a missing target and another user's target return the same field-level 422 response; a target-delete race produces either a valid child or a disclosure-safe relation failure |
+| JSON and browser workflows are complete | pending | Exact JSON/form semantics require a positive relation ID; new/edit forms provide bounded owner-only choices and preserve submitted selections and errors; list/show/create/update responses render the loaded relationship |
+| Relationship reads remain bounded | pending | List and pagination eager-load in batches with constant queries per batch rather than per row; single-record paths load explicitly; every related query retains the owner predicate |
+| Optimistic and rollback safety are retained | pending | Relationship-aware updates require a positive version; stale forms keep safe submitted values and fresh versions; collisions, cancellation, compilation failures, managed-write failures, and concurrent generators preserve complete state |
+| Existing applications keep working | pending | Implicit and scalar-only format-9 resources preserve their public behavior, frozen released applications remain compatible, and handwritten ORM relationships plus direct SQL remain available |
+| A fresh PostgreSQL application works end to end | pending | A two-user Category/Issue application migrates, tests, races, vets, builds, and proves owned create/read/update, cross-owner rejection, eager loading, browser choices, stale writes, delete restriction, rollback, and direct-Go escape hatches |
+| The milestone passes twice without regression | pending | Two independent complete runs pass without intervening changes and an independent architecture/security review reports no P0-P2 blocker |
+
+## Runnable baseline — 2026-09-09
+
+- Public `main` commit `f23e204` passes Linux/PostgreSQL and native Windows in
+  CI run 34353173213. A clean worktree at that commit also passes
+  `go test ./... -count=1` after its pinned modules are available.
+- Format 9 already generates complete owner-scoped JSON and browser CRUD for
+  required and nullable scalar fields with exact request semantics, optimistic
+  versions, failure-safe publication, and real PostgreSQL acceptance coverage.
+- The static ORM already validates and generates typed belongs-to, has-one,
+  has-many, and many-to-many descriptors and batched loaders without runtime
+  reflection. Every resource already uses an implicit protected Owner/User
+  belongs-to relationship.
+- `make:resource` cannot describe any domain relationship. Treating a foreign
+  key as an integer field would omit the database constraint, allow cross-owner
+  attachment, provide no eager loading or browser choices, and surface races as
+  raw persistence failures.
+- Recurring schedules remain the next operational milestone. Durable one-off
+  jobs already provide delayed dispatch and production workers, while this
+  milestone closes a gap in the north star's primary resource-generation path.
+
+## Explicit non-goals for v0.13
+
+- Nullable belongs-to, inverse relationship generation, nested routes,
+  relationship mutation endpoints, has-one, has-many, many-to-many,
+  polymorphism, composite keys, or configurable cascading deletes.
+- Updating or regenerating an existing application-owned resource after its
+  initial generation.
+- Persisting relationship or field definitions in `.forge`, interpreting them
+  at runtime, reflection-driven serialization, lazy loading, package scanning,
+  or hidden database queries.
+- Searchable/autocomplete relationship widgets, relationship pagination APIs,
+  arbitrary display-label configuration, or nested form creation.
+- Recurring schedules, scheduler leadership, frontend assets/HMR, or a
+  multi-process `forge dev` command.
+
 # v0.12 delivery-backed account recovery scorecard
 
 Status: **accepted** — 2026-09-08
