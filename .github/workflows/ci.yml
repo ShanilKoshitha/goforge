@@ -46,6 +46,7 @@ jobs:
           cp internal/models/zz_orm_gen.go "$RUNNER_TEMP/orm-before.go"
           "$RUNNER_TEMP/forge" test
           "$RUNNER_TEMP/forge" build
+          go mod verify
           cmp "$RUNNER_TEMP/orm-before.go" internal/models/zz_orm_gen.go
           test -x bin/app
           grep -q '^version: 8$' forge.yaml
@@ -81,10 +82,13 @@ jobs:
           cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
       - name: Current checkout scaffold
         run: |
-          "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp --replace "$GITHUB_WORKSPACE"
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.12.1'
+          "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.11.0' go.mod
-          grep -q '^replace github.com/ShanilKoshitha/goforge => ' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.12.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.12.0 h1:/wmB+d+3au9s6Ei3iJLPgmfE3DIMyBO3kFaeg0hXEX0=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.12.0/go.mod h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=' go.sum
           grep -q '^version: 9$' forge.yaml
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           "$RUNNER_TEMP/forge" make:resource TypedTicket \
@@ -96,10 +100,13 @@ jobs:
             --field featured:boolean:nullable
           "$RUNNER_TEMP/forge" make:mail AuditNotice
           go mod verify
+          go mod tidy -diff
           "$RUNNER_TEMP/forge" test
+          go vet ./...
           "$RUNNER_TEMP/forge" build
+          go build ./cmd/worker
           test -x bin/app
-          APP_ENV=local APP_ADDRESS=127.0.0.1:18082 "$RUNNER_TEMP/forge" serve >"$RUNNER_TEMP/current-serve.log" 2>&1 &
+          APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 "$RUNNER_TEMP/forge" serve >"$RUNNER_TEMP/current-serve.log" 2>&1 &
           serve_pid=$!
           cleanup() {
             kill -TERM "$serve_pid" 2>/dev/null || true

@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.11.1 is PostgreSQL-first and accepted against its written milestone
+GoForge v0.12.1 is PostgreSQL-first and accepted against its written milestone
 scorecard. It includes explicit database wiring, parallel JSON and
 server-rendered authentication, database-backed sessions, CSRF-protected HTML
 forms, production middleware, embedded migrations, owner-scoped JSON and HTML
@@ -53,13 +53,18 @@ complete owner-scoped JSON and browser CRUD slice as ordinary Go, SQL, and
 Forge templates. Required and nullable string, text, integer, and boolean
 semantics remain explicit from transport decoding through PostgreSQL, and new
 schema-driven resources require optimistic versions on every update.
+The v0.12 account-recovery workflow adds browser and JSON forgot/reset routes,
+single-use hashed reset tokens, immediate session revocation, application-owned
+text and Forge HTML mail, an encrypted durable outbox, and an explicit SMTP
+adapter. Generated applications own the routes, policy, SQL, templates, jobs,
+and dependency wiring; every boundary remains replaceable ordinary Go.
 
 ## Install and try it
 
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.11.1
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.12.1
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -67,6 +72,7 @@ forge make:resource Issue
 forge migrate
 # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
 forge serve
+# In another terminal, start durable delivery with: forge queue:work
 ```
 
 For framework development from this checkout:
@@ -93,6 +99,8 @@ deployed process because it disables secure cookies.
 Visit `http://localhost:8080/register` for the browser workflow or
 `http://localhost:8080/health` for liveness. Readiness, including PostgreSQL
 and expected migration state, is available at `http://localhost:8080/ready`.
+Password recovery starts at `http://localhost:8080/forgot-password`; delivered
+development mail is visible in Mailpit at `http://localhost:8025`.
 
 ## The generated request path
 
@@ -110,9 +118,7 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below describes the development branch. The released
-v0.11.1 CLI does not yet include account recovery or `make:mail`; use the
-checkout workflow above when evaluating those v0.12 candidates.
+The command surface below is included in the v0.12.1 CLI.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
