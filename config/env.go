@@ -4,10 +4,10 @@
 package config
 
 import (
-	"maps"
 	"bufio"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
