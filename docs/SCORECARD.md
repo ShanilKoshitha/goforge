@@ -40,7 +40,7 @@ module tag.
 | Durable materialization is atomic | in progress | PostgreSQL row locking plus the existing transactional dispatcher commit the job and cursor together; cancellation, enqueue failure, state failure, panic, and process death commit neither half |
 | Multiple scheduler processes are safe | in progress | Concurrent runners coordinate per schedule without a global leader; one occurrence creates at most one queue row while unrelated schedule rows can progress independently |
 | Missed-run and overlap policy are bounded | in progress | Missed occurrences coalesce to the latest occurrence inside a bounded grace window, older windows record a skip, and the default active-job deduplication policy suppresses overlap while advancing the cursor |
-| Definition drift fails closed | in progress | A canonical behavior fingerprint is stored durably; a same-name mismatch stops without rewriting state or dispatching, while dormant rows absent from the explicit registry never run |
+| Definition drift fails closed | in progress | A canonical declarative fingerprint is stored durably; a same-name mismatch stops without rewriting state or dispatching, dormant rows absent from the explicit registry never run, and changed-registry deployment boundaries are explicit |
 | Operational commands form one inspectable workflow | in progress | `schedule:list`, one-shot `schedule:run`, daemon `schedule:work`, direct `go run ./cmd/scheduler`, deterministic output, signal cancellation, and bounded configuration all work from outside the source directory |
 | Fresh and existing applications remain coherent | in progress | Format 11 includes visible registry, scheduler binary, config, migrations, and docs; formats 8–10 retain compatible commands; format 10 belongs-to remains supported; server, worker, scheduler, console, views, and ORM all compile |
 | Escape hatches stay complete | in progress | Public registry, scheduler, store/coordinator, observer, and PostgreSQL primitives are usable directly; application teams can replace cron registration, payload factories, process wiring, SQL adapter, or the entire scheduler |
@@ -65,8 +65,8 @@ module tag.
   or schedule command surface.
 - The implementation is intentionally staged. The runtime/PostgreSQL contract
   lands first while fresh apps remain format 10, then an immutable v0.14.0 tag
-  allows the format-11 scaffold to pin resolvable public code in a checksum-
-  bearing v0.14.1 CLI release.
+  allows the format-11 scaffold to pin resolvable public code in a
+  checksum-bearing v0.14.1 CLI release.
 
 ## Explicit non-goals for v0.14
 
@@ -78,6 +78,8 @@ module tag.
 - Alternate Redis, cloud-queue, or Kubernetes scheduler adapters.
 - Runtime package scanning, annotations, reflection, server embedding, or a
   generated schedule metadata file.
+- Mixed-registry rolling replacement or an automatic durable retirement
+  protocol; removals and replacements use a scheduler-only maintenance window.
 - A `make:schedule` generator, unified `forge dev`, or frontend asset/HMR work.
 
 # v0.13 required belongs-to resource generation scorecard

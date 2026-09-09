@@ -925,8 +925,8 @@ leased, or retrying prior job suppresses the next materialization, records that
 outcome, and still advances the occurrence cursor. Queue delivery and handler
 effects remain at least once, not exactly once.
 
-The durable row stores a SHA-256 fingerprint of every behavioral input,
-including canonical cron, location, job name and policy, queue, payload
+The durable row stores a SHA-256 fingerprint of every declarative behavioral
+input, including canonical cron, location, job name and policy, queue, payload
 strategy, grace, and overlap policy. Static payload fingerprints also include
 their canonical encoded bytes. Dynamic factories use a distinct strategy
 marker and rely on the versioned schedule name as their deployment contract. A
@@ -936,6 +936,16 @@ Changing a deployed schedule requires a new versioned name in v0.14; automatic
 in-place replacement is deferred because mixed scheduler releases must not
 alternate between definitions.
 
+Scheduler releases with identical registries may overlap, and a purely
+additive registry change is safe because older processes cannot see the new
+definition. Removing or replacing a definition is different: an old process
+can continue materializing the removed name while a new process materializes
+its replacement. v0.14 therefore requires a scheduler-only maintenance window
+for removals and replacements: stop every old scheduler, deploy the changed
+registry, then start the new schedulers. HTTP servers and queue workers do not
+need to stop. A durable retirement protocol for mixed-registry rolling deploys
+is deferred rather than implied by the per-row coordination guarantee.
+
 The release is split to preserve a compileable public scaffold at every main
 commit. First, the schedule runtime and PostgreSQL adapter merge while fresh
 applications remain format 10; lightweight tag v0.14.0 then makes that package
@@ -943,10 +953,11 @@ public. Second, the checksum-bearing v0.14.1 CLI moves fresh applications to
 format 11 and pins v0.14.0. This avoids generating imports that do not yet exist
 in the scaffold's public module dependency.
 
-Dynamic schedules, per-tenant definitions, seconds/macros/RRULE, arbitrary
-catch-up, overlap, occurrence history, dashboards, alternate stores, runtime
-discovery, HTTP-server embedding, and unified development orchestration remain
-outside this milestone.
+Database-authored or runtime-generated schedules, per-tenant definitions,
+seconds/macros/RRULE, arbitrary catch-up, overlap, occurrence history,
+dashboards, alternate stores, runtime discovery, HTTP-server embedding,
+durable mixed-registry retirement, and unified development orchestration
+remain outside this milestone.
 
 Reason: delayed jobs alone do not provide the operational contract developers
 expect from Laravel, Symfony, Rails, or Spring. A small durable materializer
