@@ -14,7 +14,82 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestRemoveEmptyGeneratedDirectoryRetriesTransientFailures(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "resource")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("temporary sharing violation")
+	attempts := 0
+	pauses := 0
+	err := removeEmptyGeneratedDirectoryWith(directory, 4, func(path string) error {
+		attempts++
+		if attempts < 3 {
+			return sentinel
+		}
+		return os.Remove(path)
+	}, func(time.Duration) {
+		pauses++
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || pauses != 2 {
+		t.Fatalf("attempts = %d, pauses = %d, want 3/2", attempts, pauses)
+	}
+	if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("generated directory still exists: %v", err)
+	}
+}
+
+func TestRemoveEmptyGeneratedDirectoryPreservesNewContents(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "resource")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("temporary sharing violation")
+	attempts := 0
+	pauses := 0
+	if err := removeEmptyGeneratedDirectoryWith(directory, 4, func(string) error {
+		attempts++
+		if attempts > 1 {
+			t.Fatal("cleanup retried removal after the directory gained content")
+		}
+		if err := os.WriteFile(filepath.Join(directory, "editor.go"), []byte("package resource\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return sentinel
+	}, func(time.Duration) {
+		pauses++
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || pauses != 1 {
+		t.Fatalf("attempts = %d, pauses = %d, want 1/1", attempts, pauses)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "editor.go")); err != nil {
+		t.Fatalf("concurrent editor file was not preserved: %v", err)
+	}
+}
+
+func TestRemoveEmptyGeneratedDirectoryReportsPersistentFailure(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "resource")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("persistent sharing violation")
+	attempts := 0
+	err := removeEmptyGeneratedDirectoryWith(directory, 3, func(string) error {
+		attempts++
+		return sentinel
+	}, func(time.Duration) {})
+	if !errors.Is(err, sentinel) || attempts != 3 || !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Fatalf("error = %v, attempts = %d", err, attempts)
+	}
+}
 
 func TestMakeResourceGeneratesCompleteSafeVerticalSlices(t *testing.T) {
 	root := projectRoot(t)

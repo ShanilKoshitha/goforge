@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.12.1\n" {
+	if output.String() != "forge 0.13.1\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -103,8 +103,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.12.0") {
-		t.Fatalf("scaffold does not pin GoForge v0.12.0:\n%s", moduleFile)
+	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.13.0") {
+		t.Fatalf("scaffold does not pin GoForge v0.13.0:\n%s", moduleFile)
 	}
 	requestPath, requestContent, err := requestFile("CreateUser")
 	if err != nil {

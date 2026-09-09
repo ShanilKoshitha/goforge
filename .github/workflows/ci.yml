@@ -82,13 +82,13 @@ jobs:
           cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.12.1'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.13.1'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.12.0' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.13.0' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.12.0 h1:/wmB+d+3au9s6Ei3iJLPgmfE3DIMyBO3kFaeg0hXEX0=' go.sum
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.12.0/go.mod h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.13.0 h1:ky4g5QeWdG2M3rZdeYd7pkD+8Cz1dVHHWlqewm/SMcw=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.13.0/go.mod h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=' go.sum
           grep -q '^version: 10$' forge.yaml
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           "$RUNNER_TEMP/forge" make:resource TypedTicket \

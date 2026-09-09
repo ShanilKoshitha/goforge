@@ -858,3 +858,34 @@ its flagship resource generator cannot produce a normal parent/child domain
 slice. Exposing one conservative required relation through static generation
 turns proven ORM machinery into Laravel/Rails-class productivity without adding
 runtime magic or a competing application schema.
+
+## D035 — v0.13 uses a runtime tag followed by a checksum-bearing CLI tag
+
+**Status:** accepted for v0.13
+
+The lightweight unsigned `v0.13.0` tag fixes the reviewed required-belongs-to
+runtime and format-10 generator source at merge commit `9078e56`. Merged-main
+CI run 34371037790 passed Linux/PostgreSQL and native Windows before
+publication. The public Go proxy resolves module checksum
+`h1:ky4g5QeWdG2M3rZdeYd7pkD+8Cz1dVHHWlqewm/SMcw=` and unchanged module-file
+checksum `h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=`. The checksum-bearing
+CLI patch reports v0.13.1 and generates applications that pin v0.13.0.
+
+The distribution gate retains the released v0.11.0 format-8 compatibility
+proof. Separately, the v0.13.1 CLI generates a format-10 application without a
+`replace`, verifies the public v0.13.0 module and exact checksums, creates both
+typed scalar and required relationship resources plus application-owned mail,
+and passes tidy, tests, vet, server and worker builds, serve, and direct Go
+module verification.
+
+The release smoke also exposed a transient Windows/OneDrive sharing violation
+while a failed resource generation removed a newly emptied directory. Managed
+files and metadata were already restored, but leaving the directory violated
+the generator's all-or-nothing contract. Resource rollback now rechecks that a
+directory remains empty before each bounded removal retry, preserves any new
+editor content, and reports the final error instead of hiding a persistent
+failure.
+
+Reason: the scaffold must pin an immutable public module whose checksums already
+exist. The two-step release keeps each tag reproducible and proves generated
+applications do not depend on the framework checkout.

@@ -64,6 +64,33 @@ their current model source, not persisted field metadata, is authoritative.
   blocker after repeatable-template scoping, bounded JSON pagination,
   association-field allowlisting, target-migration DDL validation, and final
   dependency fingerprinting were added.
+- PR 13 merged as `9078e56`, and
+  [main CI run 34371037790](https://github.com/ShanilKoshitha/goforge/actions/runs/34371037790)
+  passed Linux/PostgreSQL and native Windows before the lightweight unsigned
+  `v0.13.0` tag was published on that exact merge commit. The public Go proxy
+  resolves module checksum
+  `h1:ky4g5QeWdG2M3rZdeYd7pkD+8Cz1dVHHWlqewm/SMcw=` and module-file checksum
+  `h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=`.
+- The checksum-bearing v0.13.1 candidate reports the new version and generates
+  a format-10 application without `replace` while pinning public v0.13.0. The
+  candidate's [push CI run 34375859749](https://github.com/ShanilKoshitha/goforge/actions/runs/34375859749)
+  and [pull-request CI run 34375894479](https://github.com/ShanilKoshitha/goforge/actions/runs/34375894479)
+  both passed Linux/PostgreSQL and native Windows. The distribution gate
+  verified the exact embedded checksums, scalar and required relationship
+  generation, generated tests, vet, server and worker builds, serve, and all
+  PostgreSQL workflows.
+- A blocked public-module download reproduced a Windows transient-sharing
+  rollback edge. Resource generation now retries removal of only still-empty
+  generated directories, preserves concurrent editor content, and returns the
+  final persistent error; deterministic retry, preservation, and exhaustion
+  tests pass on the release candidate.
+- [Final evidence run 34377344124](https://github.com/ShanilKoshitha/goforge/actions/runs/34377344124)
+  exposed an overly aggressive reclaim acceptance budget: the generated worker
+  had only 250ms for each PostgreSQL operation, compared with the production
+  default of 5s. The same head and the test's second iteration passed, isolating
+  a timing flake. The probe now retains a short 3s lease but allows 1s operations
+  and reports both worker event streams on timeout, keeping ordinary CI load
+  from masquerading as a failed lease-recovery invariant.
 
 ## Runnable baseline — 2026-09-09
 

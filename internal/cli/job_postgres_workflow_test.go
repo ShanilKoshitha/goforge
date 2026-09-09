@@ -408,10 +408,10 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 		"JOB_QUEUES":             "reclaim",
 		"JOB_CONCURRENCY":        "1",
 		"JOB_POLL_INTERVAL":      "25ms",
-		"JOB_LEASE_DURATION":     "800ms",
-		"JOB_HEARTBEAT_INTERVAL": "150ms",
-		"JOB_OPERATION_TIMEOUT":  "250ms",
-		"JOB_SHUTDOWN_TIMEOUT":   "2s",
+		"JOB_LEASE_DURATION":     "3s",
+		"JOB_HEARTBEAT_INTERVAL": "600ms",
+		"JOB_OPERATION_TIMEOUT":  "1s",
+		"JOB_SHUTDOWN_TIMEOUT":   "3s",
 	})
 	owner := exec.Command(workerBinary)
 	owner.Dir, owner.Env = runDirectory, reclaimEnvironment
@@ -462,9 +462,9 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(runDirectory, applicationEnvironment, helperBinary, "allow", "reclaim-active"); err != nil {
 		t.Fatalf("release reclaimed handler: %v\n%s", err, output)
 	}
-	jobAcceptanceEventually(t, 10*time.Second, func() (bool, string) {
+	jobAcceptanceEventually(t, 15*time.Second, func() (bool, string) {
 		if jobAcceptanceCount(t, db, "SELECT COUNT(*) FROM job_effects WHERE business_key = $1", "reclaim-active") != 1 {
-			return false, "waiting for reclaimed effect"
+			return false, fmt.Sprintf("waiting for reclaimed effect; owner=%q successor=%q", ownerOutput.String(), successorOutput.String())
 		}
 		if jobAcceptanceCount(t, db, "SELECT COUNT(*) FROM goforge_jobs WHERE id = $1::uuid", dispatched.Reclaim) != 0 {
 			return false, "waiting for successor acknowledgement"
