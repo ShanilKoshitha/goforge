@@ -83,8 +83,8 @@ The JSON equivalents are `POST /auth/password/forgot` and
   concurrent one-winner consumption.
 - After the final hardening changes, `go test ./... -count=1`,
   `go test -race ./... -count=1`, `go vet ./...`, and a native Windows CLI
-  build pass. The CLI deliberately still reports v0.11.1 until the staged
-  v0.12 runtime and checksum-bearing distribution release are created.
+  build pass. The reviewed runtime source reports v0.11.1; the
+  checksum-bearing distribution patch reports v0.12.1.
 - [Push CI run 34292249546](https://github.com/ShanilKoshitha/goforge/actions/runs/34292249546)
   and [pull-request CI run 34292252232](https://github.com/ShanilKoshitha/goforge/actions/runs/34292252232)
   independently passed Linux/PostgreSQL and native Windows on `198c6f9`. Both
@@ -92,6 +92,21 @@ The JSON equivalents are `POST /auth/password/forgot` and
   fresh-checkout scaffolding, and every generated PostgreSQL application.
 - Independent architecture and security reviews of the final implementation
   found no P0–P2 blocker.
+- PR 9 merged as `bc1dd2b`, and
+  [main CI run 34294151854](https://github.com/ShanilKoshitha/goforge/actions/runs/34294151854)
+  passed Linux/PostgreSQL and native Windows before the lightweight unsigned
+  `v0.12.0` tag was published on that exact merge commit. The public Go proxy
+  resolves checksum `h1:/wmB+d+3au9s6Ei3iJLPgmfE3DIMyBO3kFaeg0hXEX0=`.
+- A clean v0.12.1 candidate reports the new version and generated a format-9
+  application without `replace` while pinning public v0.12.0. Module
+  verification, resource and mail generation, generated tests, and server
+  and worker builds passed; the resulting binary reports the exact public
+  runtime checksum.
+- [Distribution push run 34296296919](https://github.com/ShanilKoshitha/goforge/actions/runs/34296296919)
+  and [pull-request run 34296351515](https://github.com/ShanilKoshitha/goforge/actions/runs/34296351515)
+  independently passed Linux/PostgreSQL and native Windows on `047cf77`. Each
+  Linux job proved the frozen format-8 path and the checksum-bearing v0.12.1
+  format-9 path before running every generated PostgreSQL journey twice.
 
 ## Explicit non-goals for v0.12
 

@@ -43,8 +43,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		t.Fatal("local replacement path must be quoted")
 	}
 	for _, checksum := range []string{
-		"github.com/ShanilKoshitha/goforge v0.11.0 h1:PpJ4gjHJxAM8tZmQ7Ajh++Fce05+w0l9la6F4oe8Dcc=",
-		"github.com/ShanilKoshitha/goforge v0.11.0/go.mod h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=",
+		"github.com/ShanilKoshitha/goforge v0.12.0 h1:/wmB+d+3au9s6Ei3iJLPgmfE3DIMyBO3kFaeg0hXEX0=",
+		"github.com/ShanilKoshitha/goforge v0.12.0/go.mod h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=",
 	} {
 		if !strings.Contains(files["go.sum"], checksum) {
 			t.Errorf("generated go.sum omits released framework checksum %q", checksum)
