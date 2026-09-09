@@ -11,7 +11,7 @@ import (
 
 const (
 	minimumWorkflowFormat = 4
-	maximumWorkflowFormat = 8
+	maximumWorkflowFormat = 9
 )
 
 func runProjectTests(

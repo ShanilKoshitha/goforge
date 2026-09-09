@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -219,8 +220,8 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 			t.Fatalf("concurrent migrate failed: %v\n%s", result.err, result.output)
 		}
 	}
-	if got := strings.Count(combined, "migrated "); got != 6 {
-		t.Fatalf("expected six migrations to be applied exactly once, got %d:\n%s", got, combined)
+	if got := strings.Count(combined, "migrated "); got != 7 {
+		t.Fatalf("expected seven migrations to be applied exactly once, got %d:\n%s", got, combined)
 	}
 	if output, err := generatedCommand(directory, environment, forgeBinary, "migrate"); err != nil || !strings.Contains(output, "No pending migrations") {
 		t.Fatalf("idempotent migrate failed: %v\n%s", err, output)
@@ -885,6 +886,9 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	shutdownAddress := freeAddress(t)
 	shutdownEnvironment := append(environment,
 		"APP_ADDRESS="+shutdownAddress,
+		"APP_URL=http://"+shutdownAddress,
+		"MAIL_FROM=GoForge Acceptance <no-reply@example.test>",
+		"MAIL_OUTBOX_KEY="+base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x6b}, 32)),
 		"SESSION_SECRET="+strings.Repeat("s", 32),
 	)
 	shutdownServer := exec.Command(binary)
@@ -1058,8 +1062,8 @@ func TestRelationshipAcceptanceFixtureEmitsInspectableGeneratedApp(t *testing.T)
 		filepath.Join("internal", "models", "tenant_profile.go"),
 		filepath.Join("internal", "models", "project.go"),
 		filepath.Join("internal", "models", "tag.go"),
-		filepath.Join("database", "migrations", "000004_relationship_acceptance.up.sql"),
-		filepath.Join("database", "migrations", "000004_relationship_acceptance.down.sql"),
+		filepath.Join("database", "migrations", "900001_relationship_acceptance.up.sql"),
+		filepath.Join("database", "migrations", "900001_relationship_acceptance.down.sql"),
 		filepath.Join(".forge", "relationship_acceptance.go"),
 	} {
 		if _, err := os.Stat(path); err != nil {
@@ -1082,8 +1086,8 @@ func writeRelationshipAcceptanceFixture(directory, module string) error {
 		filepath.Join("internal", "models", "tenant_profile.go"):                           relationshipTenantProfileModel,
 		filepath.Join("internal", "models", "project.go"):                                  relationshipProjectModel,
 		filepath.Join("internal", "models", "tag.go"):                                      relationshipTagModel,
-		filepath.Join("database", "migrations", "000004_relationship_acceptance.up.sql"):   relationshipMigrationUp,
-		filepath.Join("database", "migrations", "000004_relationship_acceptance.down.sql"): relationshipMigrationDown,
+		filepath.Join("database", "migrations", "900001_relationship_acceptance.up.sql"):   relationshipMigrationUp,
+		filepath.Join("database", "migrations", "900001_relationship_acceptance.down.sql"): relationshipMigrationDown,
 		filepath.Join(".forge", "relationship_acceptance.go"):                              strings.ReplaceAll(relationshipAcceptanceProgram, "example.com/issueboard", module),
 	}
 	for path, contents := range files {

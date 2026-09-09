@@ -13,7 +13,7 @@ forge make:job SendWelcome
 forge migrate
 forge test
 forge build
-# For plain-HTTP development, first set APP_ENV=local in .env.
+# For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
 forge serve
 ```
 
@@ -21,13 +21,15 @@ These commands assume PostgreSQL is reachable at the
 generated local database URL. If it is not already running, start the explicit
 development service with `docker compose up -d` after entering the project.
 GoForge never starts external services implicitly. The generated `.env`
-contains a unique session secret and retains `APP_ENV=production`, which keeps
-cookies HTTPS-only. Change it to `APP_ENV=local` only for local plain-HTTP
-development, before running `forge serve`. Never use `APP_ENV=local` in a
+contains unique session/outbox secrets and retains `APP_ENV=production`, which
+keeps cookies HTTPS-only and rejects plaintext SMTP. For local plain-HTTP
+development, change `APP_ENV` to `local` and `APP_URL` to
+`http://localhost:8080` before running `forge serve` or the worker. Mailpit is
+available at `http://localhost:8025`. Never use `APP_ENV=local` in a
 deployed process because it disables secure cookies. Replace the local database
-URL and rotate the session secret before deployment. The generated Compose port
-is bound to `127.0.0.1` so its known
-development credentials are not exposed on other network interfaces.
+URL, rotate both secrets, and configure TLS-protected SMTP before deployment.
+Generated Compose ports are bound to `127.0.0.1` so known development
+credentials and Mailpit are not exposed on other network interfaces.
 HTTP limits and timeouts are listed in `.env.example`. Enable
 `APP_ENABLE_HSTS` only when production traffic always uses HTTPS, including
 the trusted proxy-to-client path. `TRUSTED_PROXIES` accepts explicit,
@@ -60,6 +62,34 @@ production worker with `go build -trimpath -o bin/worker ./cmd/worker`.
 `JOB_CANCELLATION_TIMEOUT` bounds how long a handler may ignore cancellation;
 after that deadline the worker stops heartbeating and exits so another worker
 can reclaim the fenced lease.
+
+Password recovery is ready at `/forgot-password` and
+`POST /auth/password/forgot`; reset links finish at `/reset-password` or
+`POST /auth/password/reset`. Start `go run ./cmd/worker` (or `forge queue:work`)
+to deliver them. Links always use the validated `APP_URL`, never request Host or
+forwarding headers. Only a selector and SHA-256 digest are stored for the
+single-use token. Recipient, subject, text, HTML, and the complete link live in
+AES-256-GCM outbox ciphertext, while the durable job payload contains only the
+opaque outbox ID. Account-dependent issuance work has a 400ms atomic budget
+beneath the generic 650–850ms response envelope; edit the ordinary
+`internal/auth.PasswordRecovery` service if the application's latency policy
+differs. `MAIL_OUTBOX_KEY` must be an independent 32-byte unpadded
+base64url secret; rotating it makes pending messages unreadable, so drain or
+deliberately discard them first. Production SMTP requires `starttls` or
+`implicit` TLS. `none` is accepted only for unauthenticated loopback SMTP in
+`APP_ENV=local`. SMTP delivery is at least once: a connection failure around
+the provider acceptance boundary can duplicate a message, but reset links
+remain single-use.
+Every envelope also receives an application-owned delayed cleanup job. Accepted
+delivery removes it immediately; otherwise encrypted data is retained for at
+most the explicit seven-day `internal/jobs.MailOutboxRetention` window. Edit
+that ordinary Go policy when the application requires a different retention
+period.
+
+Create an application-owned dual-template message with
+`forge make:mail AuditNotice`. The generated Go under `internal/mail`, Forge
+HTML under `resources/views/mail`, and standard-library text template are the
+complete implementation and can be edited or replaced directly.
 
 Views live in `resources/views` and compile to the inspectable
 `resources/views/views_gen.go` artifact consumed in production. Generate an

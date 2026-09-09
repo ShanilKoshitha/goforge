@@ -1,0 +1,175 @@
+package mailbox
+
+import (
+	"bytes"
+	"errors"
+	netmail "net/mail"
+	"testing"
+	"time"
+
+	frameworkmail "github.com/ShanilKoshitha/goforge/mail"
+)
+
+const (
+	firstID  ID = "00112233-4455-4677-8899-aabbccddeeff"
+	secondID ID = "10112233-4455-4677-8899-aabbccddeeff"
+)
+
+func TestEncryptedRecordRoundTrip(t *testing.T) {
+	store := testStore(t, bytes.Repeat([]byte{0x41}, 128))
+	want := testMessage(t)
+	nonce, ciphertext, err := store.seal(firstID, recordVersion, want)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	if bytes.Contains(ciphertext, []byte("reader@example.test")) || bytes.Contains(ciphertext, []byte("reset-secret")) {
+		t.Fatal("ciphertext disclosed message content")
+	}
+	got, err := store.open(firstID, recordVersion, nonce, ciphertext)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	assertMessageEqual(t, got, want)
+}
+
+func TestEncryptedRecordRejectsTamperingSwappingAndWrongKey(t *testing.T) {
+	store := testStore(t, bytes.Repeat([]byte{0x42}, 128))
+	nonce, ciphertext, err := store.seal(firstID, recordVersion, testMessage(t))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+
+	tampered := append([]byte(nil), ciphertext...)
+	tampered[len(tampered)-1] ^= 1
+	assertInvalidRecord(t, func() error {
+		_, err := store.open(firstID, recordVersion, nonce, tampered)
+		return err
+	})
+	assertInvalidRecord(t, func() error {
+		_, err := store.open(secondID, recordVersion, nonce, ciphertext)
+		return err
+	})
+	assertInvalidRecord(t, func() error {
+		_, err := store.open(firstID, recordVersion+1, nonce, ciphertext)
+		return err
+	})
+
+	wrongKeyStore, err := New(bytes.Repeat([]byte{0x99}, 32))
+	if err != nil {
+		t.Fatalf("new wrong-key store: %v", err)
+	}
+	assertInvalidRecord(t, func() error {
+		_, err := wrongKeyStore.open(firstID, recordVersion, nonce, ciphertext)
+		return err
+	})
+}
+
+func TestSealUsesFreshNonces(t *testing.T) {
+	store, err := New(bytes.Repeat([]byte{0x24}, 32))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	message := testMessage(t)
+	firstNonce, firstCiphertext, err := store.seal(firstID, recordVersion, message)
+	if err != nil {
+		t.Fatalf("first seal: %v", err)
+	}
+	secondNonce, secondCiphertext, err := store.seal(firstID, recordVersion, message)
+	if err != nil {
+		t.Fatalf("second seal: %v", err)
+	}
+	if bytes.Equal(firstNonce, secondNonce) {
+		t.Fatal("successive records reused a nonce")
+	}
+	if bytes.Equal(firstCiphertext, secondCiphertext) {
+		t.Fatal("successive records produced identical ciphertext")
+	}
+}
+
+func TestNewRequiresExactly256BitKey(t *testing.T) {
+	for _, size := range []int{0, 16, 24, 31, 33, 64} {
+		if _, err := New(make([]byte, size)); !errors.Is(err, ErrInvalidKey) {
+			t.Fatalf("New(%d-byte key) error = %v", size, err)
+		}
+	}
+	if _, err := New(make([]byte, 32)); err != nil {
+		t.Fatalf("New(32-byte key): %v", err)
+	}
+}
+
+func TestSealRejectsTheZeroMessage(t *testing.T) {
+	store := testStore(t, bytes.Repeat([]byte{0x55}, 64))
+	_, _, err := store.seal(firstID, recordVersion, frameworkmail.Message{})
+	if !errors.Is(err, frameworkmail.ErrInvalidMessage) {
+		t.Fatalf("seal zero message error = %v", err)
+	}
+}
+
+func TestIDsAreCanonicalVersionFourUUIDs(t *testing.T) {
+	store, err := New(bytes.Repeat([]byte{0x13}, 32))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	id, err := store.newID()
+	if err != nil {
+		t.Fatalf("new id: %v", err)
+	}
+	if !validID(id) {
+		t.Fatalf("generated invalid id %q", id)
+	}
+	for _, id := range []ID{"", "00112233-4455-6677-8899-aabbccddeeff", "00112233-4455-4677-7899-aabbccddeeff", "00112233-4455-4677-8899-AABBCCDDEEFF"} {
+		if validID(id) {
+			t.Fatalf("accepted invalid id %q", id)
+		}
+	}
+}
+
+func testStore(t *testing.T, random []byte) *Store {
+	t.Helper()
+	store, err := newWithRandom(bytes.Repeat([]byte{0x12}, 32), bytes.NewReader(random))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	return store
+}
+
+func testMessage(t *testing.T) frameworkmail.Message {
+	t.Helper()
+	replyTo := netmail.Address{Name: "Support", Address: "support@example.test"}
+	message, err := frameworkmail.NewMessage(frameworkmail.MessageOptions{
+		From:    netmail.Address{Name: "GoForge", Address: "no-reply@example.test"},
+		To:      []netmail.Address{{Name: "Reader", Address: "reader@example.test"}},
+		ReplyTo: &replyTo,
+		Subject: "Reset your password",
+		Text:    "reset-secret",
+		HTML:    "<strong>reset-secret</strong>",
+		Date:    time.Date(2026, time.September, 8, 12, 30, 0, 123, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("new message: %v", err)
+	}
+	return message
+}
+
+func assertInvalidRecord(t *testing.T, operation func() error) {
+	t.Helper()
+	if err := operation(); !errors.Is(err, ErrInvalidRecord) {
+		t.Fatalf("error = %v, want ErrInvalidRecord", err)
+	}
+}
+
+func assertMessageEqual(t *testing.T, got, want frameworkmail.Message) {
+	t.Helper()
+	if got.From() != want.From() || got.Subject() != want.Subject() || got.Text() != want.Text() || got.HTML() != want.HTML() || !got.Date().Equal(want.Date()) {
+		t.Fatalf("restored message differs: got %#v, want %#v", got, want)
+	}
+	gotTo, wantTo := got.To(), want.To()
+	if len(gotTo) != len(wantTo) || gotTo[0] != wantTo[0] {
+		t.Fatalf("restored recipients = %#v, want %#v", gotTo, wantTo)
+	}
+	gotReply, gotHasReply := got.ReplyTo()
+	wantReply, wantHasReply := want.ReplyTo()
+	if gotHasReply != wantHasReply || gotReply != wantReply {
+		t.Fatalf("restored reply-to = %#v/%v, want %#v/%v", gotReply, gotHasReply, wantReply, wantHasReply)
+	}
+}

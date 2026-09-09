@@ -31,7 +31,7 @@ type jobSpec struct {
 type jobExclusiveWriter func(string, string) error
 
 func makeJob(name string, stdout io.Writer) error {
-	if err := requireProjectFormatRange(6, 8); err != nil {
+	if err := requireProjectFormatRange(6, 9); err != nil {
 		return err
 	}
 	return makeJobWithWriters(name, stdout, writeExclusive, writeManagedFile)
@@ -50,6 +50,13 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	if err != nil {
 		return err
 	}
+	format, err := projectFormat()
+	if err != nil {
+		return err
+	}
+	if err := validateJobBuiltinDeclarations(append(append([]jobSpec(nil), state.Jobs...), spec), format); err != nil {
+		return err
+	}
 	files, err := jobFiles(spec)
 	if err != nil {
 		return err
@@ -63,7 +70,7 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	}
 	next := jobState{Jobs: append(append([]jobSpec(nil), state.Jobs...), spec)}
 	sort.Slice(next.Jobs, func(i, j int) bool { return next.Jobs[i].Name < next.Jobs[j].Name })
-	registry, err := generatedJobRegistry(module, next)
+	registry, err := generatedJobRegistryForFormat(module, next, format)
 	if err != nil {
 		return err
 	}
@@ -231,6 +238,28 @@ func validateJobDeclarations(jobs []jobSpec) error {
 	return nil
 }
 
+func validateJobBuiltinDeclarations(jobs []jobSpec, format int) error {
+	if format < 9 {
+		return nil
+	}
+	owners := make(map[string]string)
+	for _, declaration := range []string{
+		"Outbox", "Dependencies", "DeliverMail", "DeliverMailDefinition",
+		"DeliverMailHandler", "DispatchDeliverMail", "CleanupMail", "CleanupMailDefinition",
+		"CleanupMailHandler", "DispatchCleanupMail", "MailOutboxRetention", "NewDispatcher", "NewRegistry",
+	} {
+		owners[strings.ToLower(declaration)] = "format 9 built-in declaration " + declaration
+	}
+	for _, spec := range jobs {
+		for _, declaration := range jobDeclarations(spec) {
+			if owner, exists := owners[strings.ToLower(declaration)]; exists {
+				return fmt.Errorf("job %s declaration %s conflicts with %s", spec.Name, declaration, owner)
+			}
+		}
+	}
+	return nil
+}
+
 func jobDeclarations(spec jobSpec) []string {
 	return []string{
 		spec.Name,
@@ -259,10 +288,15 @@ func jobFiles(spec jobSpec) ([]plannedFile, error) {
 }
 
 func generatedJobRegistry(module string, state jobState) (string, error) {
+	return generatedJobRegistryForFormat(module, state, 6)
+}
+
+func generatedJobRegistryForFormat(module string, state jobState, format int) (string, error) {
 	return renderTemplate("templates/job/registry_gen.go.tmpl", generatedJobRegistryPath, struct {
-		Module string
-		Jobs   []jobSpec
-	}{Module: module, Jobs: state.Jobs})
+		Module   string
+		Jobs     []jobSpec
+		Builtins bool
+	}{Module: module, Jobs: state.Jobs, Builtins: format >= 9})
 }
 
 func readOptionalGeneratedFile(path string) ([]byte, bool, error) {

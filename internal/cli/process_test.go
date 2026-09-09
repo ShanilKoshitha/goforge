@@ -110,7 +110,7 @@ func TestQueueCommandsDelegateForSupportedFormats(t *testing.T) {
 }
 
 func TestQueueCommandsRefuseOtherProjectFormatsBeforeSpawning(t *testing.T) {
-	for _, version := range []string{"5", "9"} {
+	for _, version := range []string{"5", "10"} {
 		t.Run(version, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {

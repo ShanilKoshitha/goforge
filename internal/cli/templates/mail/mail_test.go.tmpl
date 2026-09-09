@@ -1,0 +1,27 @@
+package mail
+
+import (
+	"strings"
+	netmail "net/mail"
+	"testing"
+
+	views "[[.Module]]/resources/views"
+)
+
+func Test[[.Name]]BuildsTextAndHTML(t *testing.T) {
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mail, err := New[[.Name]](renderer, netmail.Address{Name: "Application", Address: "no-reply@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := mail.Message(netmail.Address{Address: "person@example.test"}, [[.Name]]Data{Message: "A useful update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message.Text(), "A useful update") || !strings.Contains(message.HTML(), "A useful update") {
+		t.Fatalf("rendered bodies are incomplete: text=%q HTML=%q", message.Text(), message.HTML())
+	}
+}

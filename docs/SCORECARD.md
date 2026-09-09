@@ -1,3 +1,111 @@
+# v0.12 delivery-backed account recovery scorecard
+
+Status: **accepted** — 2026-09-08
+
+Target:
+
+> From a fresh application, request a password reset through either the browser
+> or JSON API, deliver a text-and-HTML message through an explicit durable mail
+> path, consume the short-lived link once, and invalidate every prior session.
+> Public responses must not disclose account or token state, durable storage and
+> logs must not expose the reset secret, and all mail, token, persistence,
+> rendering, job, and transport boundaries must remain ordinary replaceable Go.
+
+The intended browser journey is:
+
+```text
+GET  /forgot-password
+POST /forgot-password
+GET  /reset-password?token=<selector.secret>
+POST /reset-password
+POST /login
+```
+
+The JSON equivalents are `POST /auth/password/forgot` and
+`POST /auth/password/reset`.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Mail transport is explicit and production-safe | passing | Immutable messages and the small `mail.Sender` seam have bounded RFC 5322 encoding; the SMTP adapter enforces TLS/auth/plaintext policy, timeouts, cancellation, and disclosure-safe errors under focused race tests in both public runs |
+| Mail authoring is application-owned | passing | `forge make:mail` and the built-in password-reset message use ordinary generated Go, compiled Forge HTML, and embedded standard-library text templates; callers directly replace the renderer, message, or sender |
+| Reset issuance is enumeration-safe and bounded | passing | The generated service silently account-throttles normalized addresses, caps account-dependent work at 400ms beneath a 650–850ms response envelope, emits only a nonblocking fixed-stage failure signal, uses database-clock expiry, and supersedes by user; both PostgreSQL runs proved healthy and deliberately delayed failure parity |
+| Durable delivery does not persist the reset secret in plaintext | passing | One generated transaction stores the selector/digest, AES-256-GCM envelope, outbox-ID-only delivery job, and outbox-ID-only seven-day cleanup job; both PostgreSQL runs injected rollback at token, outbox, and final job writes and proved SMTP retry/disclosure behavior |
+| Reset consumption is single-use and revocation-safe | passing | A cheap selector/digest/generation preflight rejects invalid links before password hashing, then the generated transaction locks and revalidates token plus user, advances credentials, and consumes once; both PostgreSQL runs covered rollback/retry, replay, selector throttling across sources, concurrency, and session revocation |
+| Browser and JSON contracts are complete | passing | Generated request/controller/view suites cover exact JSON/form decoding, validation, privacy headers, generic wrapped-sentinel failures, 202/204, PRG flashes/redirects, secret preservation, and contextual Forge escaping |
+| Generation and configuration fail before partial state | passing | Format 9, random outbox keys, loopback-only Mailpit, strict process-specific settings, recovery migration/routes/job wiring, and rollback-safe `make:mail` pass fresh generated tests |
+| Existing applications remain conventional and compatible | passing | A frozen format-6 application still compiles after `make:job`; format-aware registry generation adds built-ins only to format 9, and both public runs passed the released format-8 compatibility gate |
+| A fresh PostgreSQL application works end to end | passing | Both isolated format-9 journeys generated, raced, vetted, built server/worker, migrated, captured SMTP, injected transaction faults, and exercised browser plus JSON recovery |
+| The milestone passes twice without regression | passing | Push run 34292249546 and pull-request run 34292252232 independently passed Linux/PostgreSQL and native Windows on commit `198c6f9`; independent security and architecture reviews report no P0–P2 blocker |
+
+## Runnable baseline — 2026-09-08
+
+- Released `main` at `v0.11.1` passes `go test ./...`, `go vet ./...`, and a
+  native Windows CLI build. Public CI already exercises every generated
+  PostgreSQL workflow twice.
+- Fresh applications have registration, login, password change, account-wide
+  credential-version session revocation, source/account throttles, durable typed
+  jobs, application-owned Forge views, and explicit transaction helpers.
+- No `mail` package, SMTP settings, mail templates or generator, reset-token
+  schema, forgotten/reset routes, durable encrypted outbox, or reset acceptance
+  journey exists. Registration through password change is therefore strong, but
+  a user who forgets the credential cannot recover the account.
+- Recurring schedules and relationship-aware resource generation are valuable
+  next milestones. They do not close this production authentication gap and are
+  deliberately deferred until the written v0.12 target passes.
+
+## Implementation evidence — 2026-09-08
+
+- `go test -race ./mail/...` and `go vet ./mail/...` pass for immutable message
+  construction plus STARTTLS, implicit TLS, and explicit loopback-only plaintext
+  SMTP delivery.
+- Focused CLI and fresh-application tests pass for strict recovery/mail
+  configuration and `forge make:mail AuditNotice`, including view compilation,
+  collision preflight, rollback, and generated Go tests.
+- Generated mailbox race tests pass repeated AES-256-GCM round trips and reject
+  ciphertext tampering, row swaps, version changes, wrong keys, invalid IDs,
+  invalid messages, and nonce reuse. The migration exposes no plaintext message
+  columns and stores reset selectors plus SHA-256 digests only.
+- Fresh generated whole-application tests compile the recovery service, strict
+  browser/JSON presentation, application-owned dual-template message, atomic
+  outbox dispatch adapter, built-in delivery handler, explicit routes, and SMTP
+  worker. Focused format-6 compatibility tests confirm later job generation does
+  not inject format-9 built-ins into an older application.
+- A dedicated real-PostgreSQL acceptance journey compiles and vets. Both public
+  CI events passed its generated race and vet gates; the journey
+  measures known/unknown response timing, including a two-second database delay
+  cancelled by the 400ms internal budget; injects token, outbox, cleanup-job,
+  and reset-update failures; and covers hostile Host headers, SMTP 451 retry,
+  bounded encrypted retention, opaque payloads, supersession, malformed,
+  cross-account, expired, replayed and selector-throttled links, browser and
+  JSON completion, credential invalidation, sign-in, session revocation, and
+  concurrent one-winner consumption.
+- After the final hardening changes, `go test ./... -count=1`,
+  `go test -race ./... -count=1`, `go vet ./...`, and a native Windows CLI
+  build pass. The CLI deliberately still reports v0.11.1 until the staged
+  v0.12 runtime and checksum-bearing distribution release are created.
+- [Push CI run 34292249546](https://github.com/ShanilKoshitha/goforge/actions/runs/34292249546)
+  and [pull-request CI run 34292252232](https://github.com/ShanilKoshitha/goforge/actions/runs/34292252232)
+  independently passed Linux/PostgreSQL and native Windows on `198c6f9`. Both
+  Linux jobs passed framework race/vet/build, released-format compatibility,
+  fresh-checkout scaffolding, and every generated PostgreSQL application.
+- Independent architecture and security reviews of the final implementation
+  found no P0–P2 blocker.
+
+## Explicit non-goals for v0.12
+
+- Email verification, passwordless or magic-link login, invitations, MFA,
+  WebAuthn/passkeys, OAuth/social login, API tokens, or device administration.
+- SMS, push, webhooks, marketing/bulk delivery, campaigns, provider analytics,
+  inbound mail, attachments, DKIM signing, or a web mail/queue dashboard.
+- Exactly-once SMTP delivery. Queue and transport effects remain at least once;
+  reset-token consumption is the single-use security boundary.
+- A proprietary mail expression language, runtime template discovery, package
+  scanning, dependency injection, or reflection-based message registration.
+- Recurring job schedules, relationship-aware resources, frontend asset
+  bundling/HMR, or a multi-process `forge dev` command.
+
 # v0.11 typed scalar resource generation scorecard
 
 Status: **accepted** — 2026-09-08

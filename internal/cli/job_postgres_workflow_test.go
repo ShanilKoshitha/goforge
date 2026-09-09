@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -51,8 +52,8 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(manifest, []byte("version: 8")) {
-		t.Fatalf("fresh application is not format 8:\n%s", manifest)
+	if !bytes.Contains(manifest, []byte("version: 9")) {
+		t.Fatalf("fresh application is not format 9:\n%s", manifest)
 	}
 	for _, name := range []string{"RecordEffect", "PoisonMessage"} {
 		if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "make:job", name); err != nil {
@@ -98,8 +99,8 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 		filepath.Join("internal", "jobs", "record_effect_test.go"):                jobAcceptanceRecordEffectTestSource,
 		filepath.Join("internal", "jobs", "poison_message.go"):                    jobAcceptancePoisonMessageSource,
 		filepath.Join("internal", "jobs", "poison_message_test.go"):               jobAcceptancePoisonMessageTestSource,
-		filepath.Join("database", "migrations", "000004_job_acceptance.up.sql"):   jobAcceptanceMigrationUp,
-		filepath.Join("database", "migrations", "000004_job_acceptance.down.sql"): jobAcceptanceMigrationDown,
+		filepath.Join("database", "migrations", "900001_job_acceptance.up.sql"):   jobAcceptanceMigrationUp,
+		filepath.Join("database", "migrations", "900001_job_acceptance.down.sql"): jobAcceptanceMigrationDown,
 		filepath.Join(".forge", "job_acceptance.go"):                              jobAcceptanceHelperSource,
 	}
 	for relative, contents := range fixtures {
@@ -145,7 +146,7 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 	})
 	if output, err := generatedCommand(directory, applicationEnvironment, forgeBinary, "migrate"); err != nil {
 		t.Fatalf("migrate isolated job schema: %v\n%s", err, output)
-	} else if !strings.Contains(output, "000004_job_acceptance") {
+	} else if !strings.Contains(output, "900001_job_acceptance") {
 		t.Fatalf("application-owned job migration was not applied:\n%s", output)
 	}
 	for _, gate := range [][]string{{"test", "./..."}, {"vet", "./..."}, {"test", "-race", "./..."}} {
@@ -222,6 +223,11 @@ func TestGeneratedJobPostgresWorkflow(t *testing.T) {
 		"JOB_HEARTBEAT_INTERVAL": "500ms",
 		"JOB_OPERATION_TIMEOUT":  "500ms",
 		"JOB_SHUTDOWN_TIMEOUT":   "3s",
+		"MAIL_SMTP_ADDRESS":      "127.0.0.1:1",
+		"MAIL_SMTP_TLS":          "none",
+		"MAIL_SMTP_SERVER_NAME":  "localhost",
+		"MAIL_SMTP_TIMEOUT":      "1s",
+		"MAIL_OUTBOX_KEY":        base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x6b}, 32)),
 	})
 	for _, entry := range workerEnvironment {
 		if strings.HasPrefix(strings.ToUpper(entry), "SESSION_SECRET=") {

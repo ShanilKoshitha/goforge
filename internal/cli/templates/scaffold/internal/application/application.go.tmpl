@@ -13,16 +13,18 @@ import (
 
 	"[[.Module]]/internal/auth"
 	"[[.Module]]/internal/config"
+	"[[.Module]]/internal/http/controllers"
 	httperrors "[[.Module]]/internal/http/errors"
 	views "[[.Module]]/resources/views"
 	"[[.Module]]/routes"
 )
 
 type Dependencies struct {
-	DB         *sql.DB
-	Sessions   session.Store
-	RateLimits ratelimit.Store
-	Registration auth.RegistrationTransaction
+	DB               *sql.DB
+	Sessions         session.Store
+	RateLimits       ratelimit.Store
+	Registration     auth.RegistrationTransaction
+	PasswordRecovery controllers.PasswordRecoveryService
 }
 
 func New(settings config.Config, dependencies Dependencies) (*forge.App, error) {
@@ -73,7 +75,7 @@ func New(settings config.Config, dependencies Dependencies) (*forge.App, error) 
 		strictTransport = "max-age=31536000; includeSubDomains"
 	}
 	security, err := httpx.NewSecureHeaders(httpx.SecurityHeadersConfig{
-		ContentSecurityPolicy: "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+		ContentSecurityPolicy:   "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
 		StrictTransportSecurity: strictTransport,
 	})
 	if err != nil {
@@ -92,7 +94,7 @@ func New(settings config.Config, dependencies Dependencies) (*forge.App, error) 
 		return nil, err
 	}
 	app.Router.OnError(httperrors.New(renderer))
-	if err := routes.Register(app.Router, renderer, dependencies.DB, dependencies.Sessions, attemptStore, settings, registration); err != nil {
+	if err := routes.Register(app.Router, renderer, dependencies.DB, dependencies.Sessions, attemptStore, settings, dependencies.PasswordRecovery, registration); err != nil {
 		return nil, err
 	}
 	return app, nil

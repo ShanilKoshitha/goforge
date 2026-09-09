@@ -2,10 +2,17 @@
 
 package jobs
 
-import "github.com/ShanilKoshitha/goforge/job"
+import (
+	"fmt"
+
+	"github.com/ShanilKoshitha/goforge/job"
+)
 
 // NewRegistry explicitly wires every application-owned job handler.
 func NewRegistry(dependencies Dependencies) (*job.Registry, error) {
-	_ = dependencies
-	return job.NewRegistry(), nil
+	registry := job.NewRegistry()
+	if err := registerBuiltins(registry, dependencies); err != nil {
+		return nil, fmt.Errorf("register built-in jobs: %w", err)
+	}
+	return registry, nil
 }

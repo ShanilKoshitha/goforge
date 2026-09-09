@@ -1,9 +1,26 @@
 package jobs
 
-import "database/sql"
+import (
+	"context"
+	"database/sql"
+
+	frameworkmail "github.com/ShanilKoshitha/goforge/mail"
+
+	"[[.Module]]/internal/mailbox"
+)
+
+// Outbox is the narrow encrypted-message boundary used by the built-in mail
+// delivery job. mailbox.Store implements it; the interface keeps handlers
+// straightforward to test and replace.
+type Outbox interface {
+	Load(context.Context, mailbox.Executor, mailbox.ID) (frameworkmail.Message, bool, error)
+	Delete(context.Context, mailbox.Executor, mailbox.ID) (bool, error)
+}
 
 // Dependencies are the explicit application services available to job handlers.
 // Add application-owned interfaces here as handlers need them.
 type Dependencies struct {
-	DB *sql.DB
+	DB         *sql.DB
+	Outbox     Outbox
+	MailSender frameworkmail.Sender
 }

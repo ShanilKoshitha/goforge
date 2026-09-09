@@ -38,7 +38,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return nil
 	case "new":
 		return runNew(args[1:], stdout)
-	case "make", "make:controller", "make:request", "make:migration", "make:model", "make:resource", "make:component", "make:job":
+	case "make", "make:controller", "make:request", "make:migration", "make:model", "make:resource", "make:component", "make:job", "make:mail":
 		return runMake(ctx, args, stdin, stdout, stderr, processes)
 	case "serve":
 		if len(args) != 1 {
@@ -84,7 +84,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := requireProjectRoot(); err != nil {
 			return err
 		}
-		if err := requireProjectFormatRange(6, 8); err != nil {
+		if err := requireProjectFormatRange(6, 9); err != nil {
 			return err
 		}
 		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", args[0], args[1])
@@ -95,7 +95,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := requireProjectRoot(); err != nil {
 			return err
 		}
-		if err := requireProjectFormatRange(6, 8); err != nil {
+		if err := requireProjectFormatRange(6, 9); err != nil {
 			return err
 		}
 		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", "queue:forget", args[1])
@@ -114,7 +114,7 @@ func requireQueueProject(args []string, usage string) error {
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	return requireProjectFormatRange(6, 8)
+	return requireProjectFormatRange(6, 9)
 }
 
 func printHelp(w io.Writer) {
@@ -146,6 +146,7 @@ Usage:
   forge make:resource <name> [--field <name>:<type>[:required|nullable]]...
   forge make:component <name>
   forge make:job <name>
+  forge make:mail <name>
   forge version
 
 Resource field types: string, text, integer, boolean. Fields are required by

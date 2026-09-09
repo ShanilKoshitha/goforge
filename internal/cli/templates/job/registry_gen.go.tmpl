@@ -11,7 +11,11 @@ import (
 // NewRegistry explicitly wires every application-owned job handler.
 func NewRegistry(dependencies Dependencies) (*job.Registry, error) {
 	registry := job.NewRegistry()
-	_ = dependencies
+[[if .Builtins]]	if err := registerBuiltins(registry, dependencies); err != nil {
+		return nil, fmt.Errorf("register built-in jobs: %w", err)
+	}
+[[else]]	_ = dependencies
+[[end]]
 [[range .Jobs]]	handler[[.Name]] := [[.Name]]Handler{Dependencies: dependencies}
 	if err := job.Register(registry, [[.Name]]Definition, handler[[.Name]].Handle); err != nil {
 		return nil, fmt.Errorf("register [[.Definition]]: %w", err)

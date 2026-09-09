@@ -7,6 +7,7 @@ import (
 )
 
 func TestHTTPConfigurationHasBoundedDefaultsAndRejectsInvalidLimits(t *testing.T) {
+	setValidRecoveryConfiguration(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/application")
 	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
 	settings, err := Load()
@@ -29,6 +30,7 @@ func TestHTTPConfigurationHasBoundedDefaultsAndRejectsInvalidLimits(t *testing.T
 }
 
 func TestSessionConfigurationRejectsInvalidLifetimePolicy(t *testing.T) {
+	setValidRecoveryConfiguration(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/application")
 	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
 	t.Setenv("SESSION_IDLE_LIFETIME", "4h")
@@ -39,6 +41,7 @@ func TestSessionConfigurationRejectsInvalidLifetimePolicy(t *testing.T) {
 }
 
 func TestBackgroundConfigurationDoesNotRequireHTTPSessionSecret(t *testing.T) {
+	setValidWorkerMailConfiguration(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/application")
 	t.Setenv("SESSION_SECRET", "")
 	for key, value := range map[string]string{
@@ -62,4 +65,51 @@ func TestBackgroundConfigurationDoesNotRequireHTTPSessionSecret(t *testing.T) {
 	if settings.JobConcurrency != 4 || settings.JobQueues != "default" {
 		t.Fatalf("unexpected worker defaults: %+v", settings)
 	}
+}
+
+func TestRecoveryConfigurationRejectsUnsafeOriginsAndInvalidKeys(t *testing.T) {
+	setValidRecoveryConfiguration(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/application")
+	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
+	t.Setenv("APP_URL", "http://example.com/reset?token=leak")
+	t.Setenv("MAIL_OUTBOX_KEY", "predictable")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "APP_URL") || !strings.Contains(err.Error(), "MAIL_OUTBOX_KEY") {
+		t.Fatalf("unsafe recovery configuration was accepted: %v", err)
+	}
+}
+
+func TestWorkerAllowsPlaintextSMTPOnlyOnLocalLoopback(t *testing.T) {
+	setValidWorkerMailConfiguration(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/application")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("MAIL_SMTP_ADDRESS", "smtp.example.com:25")
+	t.Setenv("MAIL_SMTP_TLS", "none")
+	if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), "loopback SMTP") {
+		t.Fatalf("production plaintext SMTP was accepted: %v", err)
+	}
+
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("MAIL_SMTP_ADDRESS", "127.0.0.1:1025")
+	if _, err := LoadWorker(); err != nil {
+		t.Fatalf("local loopback SMTP was rejected: %v", err)
+	}
+}
+
+func setValidRecoveryConfiguration(t *testing.T) {
+	t.Helper()
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("APP_URL", "https://example.test")
+	t.Setenv("AUTH_PASSWORD_RESET_TTL", "30m")
+	t.Setenv("MAIL_FROM", "GoForge <no-reply@example.test>")
+	t.Setenv("MAIL_OUTBOX_KEY", strings.Repeat("A", 43))
+}
+
+func setValidWorkerMailConfiguration(t *testing.T) {
+	t.Helper()
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("MAIL_SMTP_ADDRESS", "smtp.example.test:465")
+	t.Setenv("MAIL_SMTP_TLS", "implicit")
+	t.Setenv("MAIL_SMTP_SERVER_NAME", "smtp.example.test")
+	t.Setenv("MAIL_SMTP_TIMEOUT", "10s")
+	t.Setenv("MAIL_OUTBOX_KEY", strings.Repeat("A", 43))
 }

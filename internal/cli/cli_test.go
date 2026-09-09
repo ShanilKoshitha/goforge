@@ -26,7 +26,7 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err := Run([]string{"new", directory, "--module", "example.com/orders", "--replace", root}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "set APP_ENV=local in .env") {
+	if !strings.Contains(output.String(), "set APP_ENV=local and APP_URL=http://localhost:8080 in .env") {
 		t.Fatalf("new-project instructions omit the local HTTP environment step:\n%s", output.String())
 	}
 	for _, name := range []string{
@@ -41,16 +41,26 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"internal/models/zz_orm_gen.go",
 		"database/migrations/000001_create_auth.up.sql",
 		"database/migrations/000002_create_jobs.up.sql",
+		"database/migrations/000004_create_account_recovery.up.sql",
 		"internal/jobs/dependencies.go",
 		"internal/jobs/dispatcher.go",
 		"internal/jobs/registry_gen.go",
+		"internal/jobs/deliver_mail.go",
 		".forge/jobs.json",
+		"internal/mailbox/store.go",
+		"internal/mail/password_reset.go",
+		"internal/auth/password_recovery.go",
+		"internal/http/controllers/password_recovery.go",
+		"internal/http/requests/password_recovery.go",
 		"resources/views/layouts/app.forge.html",
 		"resources/views/components/card.forge.html",
 		"resources/views/functions.go",
 		"resources/views/viewfuncs/functions.go",
 		"resources/views/pages/welcome.forge.html",
 		"resources/views/auth/security.forge.html",
+		"resources/views/auth/forgot_password.forge.html",
+		"resources/views/auth/reset_password.forge.html",
+		"resources/views/mail/password_reset.forge.html",
 		"resources/views/views_gen.go",
 	} {
 		if _, err := os.Stat(filepath.Join(directory, filepath.FromSlash(name))); err != nil {
@@ -71,8 +81,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "version: 8") {
-		t.Fatalf("fresh scaffold is not format 8:\n%s", manifest)
+	if !strings.Contains(string(manifest), "version: 9") {
+		t.Fatalf("fresh scaffold is not format 9:\n%s", manifest)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {
@@ -123,6 +133,18 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	}
 	if err := Run([]string{"make:job", "SendWelcome"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold cannot generate a job: %v\n%s", err, checkOutput.String())
+	}
+	if err := Run([]string{"make:mail", "AuditNotice"}, &checkOutput, &checkOutput); err != nil {
+		t.Fatalf("fresh scaffold cannot generate mail: %v\n%s", err, checkOutput.String())
+	}
+	for _, name := range []string{
+		"internal/mail/audit_notice.go",
+		"internal/mail/templates/audit_notice.txt.tmpl",
+		"resources/views/mail/audit_notice.forge.html",
+	} {
+		if _, err := os.Stat(filepath.FromSlash(name)); err != nil {
+			t.Fatalf("generated mail artifact %s is missing: %v", name, err)
+		}
 	}
 	if err := Run([]string{"make", "job", "ArchiveAccount"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold cannot generate a job through the spaced alias: %v\n%s", err, checkOutput.String())
@@ -228,7 +250,7 @@ func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
-			if err := os.WriteFile("forge.yaml", []byte("version: 9\n"), 0o644); err != nil {
+			if err := os.WriteFile("forge.yaml", []byte("version: 10\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer

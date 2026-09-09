@@ -15,7 +15,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	var rest []string
 	if args[0] == "make" {
 		if len(args) < 2 {
-			return errors.New("usage: forge make <controller|request|migration|model|resource|component|job> <name>")
+			return errors.New("usage: forge make <controller|request|migration|model|resource|component|job|mail> <name>")
 		}
 		kind, rest = args[1], args[2:]
 	} else {
@@ -39,7 +39,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	if err := requireProjectFormatRange(1, 8); err != nil {
+	if err := requireProjectFormatRange(1, 9); err != nil {
 		return err
 	}
 	lock, err := acquireGeneratorLock(ctx)
@@ -66,6 +66,8 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		return makeComponent(ctx, name, stdin, stdout, stderr, processes)
 	case "job":
 		return makeJob(name, stdout)
+	case "mail":
+		return makeMail(ctx, name, stdin, stdout, stderr, processes)
 	default:
 		return fmt.Errorf("unknown generator %q", kind)
 	}
@@ -80,7 +82,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 }
 
 func makeComponent(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
-	if err := requireProjectFormatRange(5, 8); err != nil {
+	if err := requireProjectFormatRange(5, 9); err != nil {
 		return err
 	}
 	componentName, err := snake(name)

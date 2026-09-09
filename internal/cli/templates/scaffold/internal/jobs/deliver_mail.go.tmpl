@@ -1,0 +1,93 @@
+package jobs
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge/job"
+
+	"[[.Module]]/internal/mailbox"
+)
+
+// DeliverMail is deliberately only an opaque outbox locator. Recipient and
+// message data remain encrypted in mail_outbox and never enter queue payloads.
+type DeliverMail struct {
+	OutboxID mailbox.ID `json:"outbox_id"`
+}
+
+var DeliverMailDefinition = job.MustDefine[DeliverMail]("goforge.mail.deliver.v1", job.Policy{
+	MaxAttempts: 8,
+	Timeout:     2 * time.Minute,
+	Backoff: []time.Duration{
+		5 * time.Second,
+		30 * time.Second,
+		2 * time.Minute,
+		10 * time.Minute,
+		30 * time.Minute,
+	},
+})
+
+// DeliverMailHandler performs the application-owned half of at-least-once
+// delivery. A replay after deletion is successful. A failed send leaves the
+// encrypted row intact so the queue can retry it.
+type DeliverMailHandler struct {
+	Dependencies Dependencies
+}
+
+func (handler DeliverMailHandler) Handle(ctx context.Context, payload DeliverMail) error {
+	message, found, err := handler.Dependencies.Outbox.Load(ctx, handler.Dependencies.DB, payload.OutboxID)
+	if err != nil {
+		return deliveryFailure("load encrypted outbox", err)
+	}
+	if !found {
+		return nil
+	}
+	if err := handler.Dependencies.MailSender.Send(ctx, message); err != nil {
+		return deliveryFailure("send message", err)
+	}
+	if _, err := handler.Dependencies.Outbox.Delete(ctx, handler.Dependencies.DB, payload.OutboxID); err != nil {
+		return deliveryFailure("delete accepted message", err)
+	}
+	return nil
+}
+
+func DispatchDeliverMail(ctx context.Context, dispatcher job.Dispatcher, payload DeliverMail, options ...job.DispatchOption) (job.DispatchResult, error) {
+	return DeliverMailDefinition.Dispatch(ctx, dispatcher, payload, options...)
+}
+
+func registerBuiltins(registry *job.Registry, dependencies Dependencies) error {
+	if dependencies.DB == nil {
+		return errors.New("register built-in jobs: database is required")
+	}
+	if dependencies.Outbox == nil {
+		return errors.New("register built-in jobs: outbox is required")
+	}
+	if dependencies.MailSender == nil {
+		return errors.New("register built-in jobs: mail sender is required")
+	}
+	handler := DeliverMailHandler{Dependencies: dependencies}
+	if err := job.Register(registry, DeliverMailDefinition, handler.Handle); err != nil {
+		return deliveryFailure("register built-in mail delivery", err)
+	}
+	cleanup := CleanupMailHandler{Dependencies: dependencies}
+	if err := job.Register(registry, CleanupMailDefinition, cleanup.Handle); err != nil {
+		return deliveryFailure("register built-in mail cleanup", err)
+	}
+	return nil
+}
+
+// deliveryError retains cancellation and transport identity for errors.Is,
+// while its rendered form is deliberately safe for queue administration and
+// structured logs even when an injected sender returns a sensitive error.
+type deliveryError struct {
+	operation string
+	cause     error
+}
+
+func (err *deliveryError) Error() string { return "deliver mail: " + err.operation }
+func (err *deliveryError) Unwrap() error { return err.cause }
+
+func deliveryFailure(operation string, cause error) error {
+	return &deliveryError{operation: operation, cause: cause}
+}

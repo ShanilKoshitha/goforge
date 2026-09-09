@@ -33,8 +33,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
 		t.Fatal("project name must be quoted YAML")
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 8") {
-		t.Fatal("fresh scaffold must declare format 8")
+	if !strings.Contains(files["forge.yaml"], "version: 9") {
+		t.Fatal("fresh scaffold must declare format 9")
 	}
 	if !strings.Contains(files["resources/views/pages/welcome.forge.html"], "{{.Title}}") {
 		t.Fatal("HTML template expression was altered")
@@ -53,11 +53,19 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {
 		t.Fatal("PostgreSQL 18 volume must contain its versioned data directory")
 	}
+	for _, want := range []string{"axllent/mailpit:v1.31.1", `"127.0.0.1:1025:1025"`, `"127.0.0.1:8025:8025"`} {
+		if !strings.Contains(files["compose.yaml"], want) {
+			t.Errorf("generated Compose file omits safe mail catcher setting %q", want)
+		}
+	}
 	for _, setting := range []string{
 		"APP_REQUEST_TIMEOUT=15s", "APP_READ_HEADER_TIMEOUT=5s", "APP_READ_TIMEOUT=30s",
 		"APP_WRITE_TIMEOUT=30s", "APP_IDLE_TIMEOUT=2m", "APP_MAX_HEADER_BYTES=1048576",
 		"APP_ENABLE_HSTS=false", "TRUSTED_PROXIES=",
 		"SESSION_IDLE_LIFETIME=2h", "SESSION_ABSOLUTE_LIFETIME=24h",
+		"APP_URL=https://example.com", "AUTH_PASSWORD_RESET_TTL=30m",
+		"MAIL_FROM=GoForge <no-reply@example.test>", "MAIL_SMTP_TLS=implicit",
+		"MAIL_OUTBOX_KEY=replace-with-32-random-bytes-as-unpadded-base64url",
 	} {
 		if !strings.Contains(files[".env.example"], setting) {
 			t.Errorf("generated .env.example omits %q", setting)
@@ -78,10 +86,33 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if strings.TrimSpace(files["database/migrations/000002_create_jobs.up.sql"]) != strings.TrimSpace(jobpostgres.Schema) {
 		t.Fatal("scaffold queue migration must match the public PostgreSQL adapter schema")
 	}
+	recoveryMigration := files["database/migrations/000004_create_account_recovery.up.sql"]
+	for _, want := range []string{"selector TEXT PRIMARY KEY", "secret_digest BYTEA", "credential_version BIGINT", "mail_outbox", "nonce BYTEA", "ciphertext BYTEA"} {
+		if !strings.Contains(recoveryMigration, want) {
+			t.Errorf("recovery migration omits %q", want)
+		}
+	}
+	for _, forbidden := range []string{"presented_token", "raw_token", "recipient", "subject", "body", "email TEXT"} {
+		if strings.Contains(recoveryMigration, forbidden) {
+			t.Errorf("recovery migration persists forbidden plaintext field %q", forbidden)
+		}
+	}
+	mailbox := files["internal/mailbox/store.go"]
+	for _, want := range []string{"aes.NewCipher", "cipher.NewGCM", "additionalData(id, version)", "frameworkmail.NewMessage", "type Executor interface"} {
+		if !strings.Contains(mailbox, want) {
+			t.Errorf("generated encrypted mailbox omits %q", want)
+		}
+	}
 	worker := files["cmd/worker/main.go"]
-	for _, want := range []string{"jobpostgres.New(db)", "jobs.NewRegistry", "job.NewWorker", "worker.Run(ctx)", "job.SlogObserver"} {
+	for _, want := range []string{"jobpostgres.New(db)", "jobs.NewRegistry", "job.NewWorker", "worker.Run(ctx)", "job.SlogObserver", "mailsmtp.New", "mailbox.New(settings.MailOutboxKey)"} {
 		if !strings.Contains(worker, want) {
 			t.Errorf("generated worker omits %q", want)
+		}
+	}
+	routes := files["routes/routes.go"]
+	for _, want := range []string{"/forgot-password", "/reset-password", "/auth/password/forgot", "/auth/password/reset", "defaultPasswordRecovery"} {
+		if !strings.Contains(routes, want) {
+			t.Errorf("generated routes omit recovery contract %q", want)
 		}
 	}
 	dispatcher := files["internal/jobs/dispatcher.go"]
@@ -111,8 +142,23 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if files[".env"] == second[".env"] {
-		t.Fatal("new applications must have different session secrets")
+		t.Fatal("new applications must have different generated secrets")
 	}
+	firstKey := environmentValue(files[".env"], "MAIL_OUTBOX_KEY")
+	secondKey := environmentValue(second[".env"], "MAIL_OUTBOX_KEY")
+	if firstKey == "" || secondKey == "" || firstKey == secondKey || len(firstKey) != 43 || len(secondKey) != 43 {
+		t.Fatal("new applications must have independent 256-bit mail outbox keys")
+	}
+}
+
+func environmentValue(contents, name string) string {
+	prefix := name + "="
+	for _, line := range strings.Split(contents, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	return ""
 }
 
 func TestCreatedProjectProtectsEnvironmentSecrets(t *testing.T) {
