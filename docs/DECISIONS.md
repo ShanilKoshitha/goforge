@@ -808,7 +808,10 @@ applications do not depend on the framework checkout.
 
 **Status:** accepted for v0.13 implementation
 
-`forge make:resource` accepts a repeatable
+Fresh applications move to project format 10. Formats 8 and 9 keep their
+compatible scalar generators, but relation flags fail before writing because
+their resource tables do not promise the owner/identity candidate key needed
+for the database invariant. `forge make:resource` accepts a repeatable
 `--belongs-to <lower_snake_name>:<ExistingResource>` option. The target must be
 an already-generated owner-scoped resource whose current application model has
 the conventional integer identity and owner fields. Target metadata is used
@@ -818,20 +821,22 @@ this milestone. The generated foreign-key name is `<name>_id`, and all scalar,
 database, Go, transport, and presentation name collisions are rejected.
 
 The option produces an ordinary protected foreign-key field, explicit
-`belongs_to` model field, `BIGINT NOT NULL` foreign key, index, writable
-application attribute, exact JSON/form input, field-level validation, repository
-policy, eager loader, browser choice loader, and rendered relationship output.
-The database uses `ON DELETE RESTRICT`: deleting a referenced parent is an
-intentional conflict rather than surprising child deletion. The relationship
-identifier is writable only through the resource's explicit Attributes value;
-it is not a generic mass-assignment escape hatch.
+`belongs_to` model field, `BIGINT NOT NULL` column, index, separate
+`AssociationIDs` value, exact JSON/form input, field-level validation,
+repository policy, eager loader, browser choice loader, and rendered
+relationship output. Scalar `Attributes` stays relationship-free. Each
+format-10 resource table exposes `UNIQUE (user_id, id)`; a child uses
+`FOREIGN KEY (user_id, target_id) REFERENCES targets (user_id, id) ON DELETE
+NO ACTION`. Direct parent deletion is therefore an intentional conflict rather
+than surprising child deletion, while same-statement account cascades can
+settle before the constraint is checked.
 
 Application repositories verify the target with both identity and authenticated
 owner predicates before create or update. Missing and cross-owner targets share
-one disclosure-safe validation result. Because generated ownership is immutable,
-the foreign key closes the remaining parent-deletion race: either the child
-write wins and deletion is restricted, or deletion wins and the child write is
-reported as an invalid relationship. Reads use explicit generated ORM loaders
+one disclosure-safe validation result. The composite foreign key also prevents
+cross-owner attachment through custom SQL and closes the parent-deletion race:
+either the child write wins and deletion is restricted, or deletion wins and
+the child write is reported as an invalid relationship. Reads use explicit generated ORM loaders
 with owner-scoped target queries in bounded batches. Browser choices are bounded
 and owner-scoped; generated presentation code is the visible place to replace
 the conservative `Resource #ID` label.

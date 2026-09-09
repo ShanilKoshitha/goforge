@@ -6,7 +6,7 @@ Target:
 
 > From a fresh application, generate one owner-scoped parent resource and one
 > child resource with a required belongs-to relationship. The relationship must
-> remain consistent across ordinary Go models, PostgreSQL constraints, exact
+> remain consistent across ordinary Go models, PostgreSQL ownership constraints, exact
 > JSON and form decoding, validation, repositories, eager loading, browser
 > choices, rendered views, and generated tests. Missing and cross-owner parents
 > must be indistinguishable, concurrent parent deletion must fail predictably,
@@ -24,7 +24,7 @@ forge migrate
 forge serve
 ```
 
-`--belongs-to` is repeatable and accepts
+Fresh applications use project format 10. `--belongs-to` is repeatable and accepts
 `<lower_snake_name>:<ExistingResource>`. Relationships in this milestone are
 always required. Targets must already be generated owner-scoped resources;
 their current model source, not persisted field metadata, is authoritative.
@@ -34,13 +34,13 @@ their current model source, not persisted field metadata, is authoritative.
 | Criterion | State | Required evidence |
 | --- | --- | --- |
 | CLI parsing and preflight are exact | pending | Both flag forms, declaration order, bounds, unsafe or duplicate names, scalar/FK/Go collisions, missing or self targets, and incompatible edited target models fail before any write |
-| One ephemeral contract drives every generated layer | pending | The relationship reaches the application model, migration, generated ORM, attributes, JSON/form request, repository, controllers, Forge views, and generated tests without being stored as runtime schema |
-| Persistence is explicit and conservative | pending | Generated SQL uses a required indexed `BIGINT` foreign key with `ON DELETE RESTRICT`; the model exposes the protected key and explicit `belongs_to` field; target deletion maps to an intentional conflict |
-| Ownership cannot be crossed | pending | Create and update accept only a target owned by the authenticated user; a missing target and another user's target return the same field-level 422 response; a target-delete race produces either a valid child or a disclosure-safe relation failure |
+| One ephemeral contract drives every generated layer | pending | The relationship reaches the application model, migration, generated ORM, separate association IDs, JSON/form request, repository, controllers, Forge views, and generated tests without being stored as runtime schema |
+| Persistence is explicit and conservative | pending | Format-10 resources expose an owner/ID candidate key; child SQL uses a required indexed `BIGINT` and composite `(user_id, target_id)` foreign key with non-cascading `NO ACTION`; the model exposes the protected key and explicit `belongs_to` field; target deletion maps to an intentional conflict |
+| Ownership cannot be crossed | pending | Create and update accept only a target owned by the authenticated user; a missing target and another user's target return the same field-level 422 response; raw cross-owner SQL fails; a target-delete race produces either a valid child or a disclosure-safe relation failure |
 | JSON and browser workflows are complete | pending | Exact JSON/form semantics require a positive relation ID; new/edit forms provide bounded owner-only choices and preserve submitted selections and errors; list/show/create/update responses render the loaded relationship |
 | Relationship reads remain bounded | pending | List and pagination eager-load in batches with constant queries per batch rather than per row; single-record paths load explicitly; every related query retains the owner predicate |
 | Optimistic and rollback safety are retained | pending | Relationship-aware updates require a positive version; stale forms keep safe submitted values and fresh versions; collisions, cancellation, compilation failures, managed-write failures, and concurrent generators preserve complete state |
-| Existing applications keep working | pending | Implicit and scalar-only format-9 resources preserve their public behavior, frozen released applications remain compatible, and handwritten ORM relationships plus direct SQL remain available |
+| Existing applications keep working | pending | Formats 8 and 9 retain implicit and scalar-only generation plus every compatible command, relationship flags fail before writes outside format 10, frozen released applications remain compatible, and handwritten ORM relationships plus direct SQL remain available |
 | A fresh PostgreSQL application works end to end | pending | A two-user Category/Issue application migrates, tests, races, vets, builds, and proves owned create/read/update, cross-owner rejection, eager loading, browser choices, stale writes, delete restriction, rollback, and direct-Go escape hatches |
 | The milestone passes twice without regression | pending | Two independent complete runs pass without intervening changes and an independent architecture/security review reports no P0-P2 blocker |
 
@@ -60,6 +60,9 @@ their current model source, not persisted field metadata, is authoritative.
   key as an integer field would omit the database constraint, allow cross-owner
   attachment, provide no eager loading or browser choices, and surface races as
   raw persistence failures.
+- Format 9 resource tables do not declare the owner/ID candidate key required
+  for a database-enforced cross-owner relationship invariant. A visible format
+  10 boundary is therefore required instead of silently weakening old projects.
 - Recurring schedules remain the next operational milestone. Durable one-off
   jobs already provide delayed dispatch and production workers, while this
   milestone closes a gap in the north star's primary resource-generation path.
