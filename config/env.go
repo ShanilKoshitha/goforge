@@ -4,6 +4,7 @@
 package config
 
 import (
+	"maps"
 	"bufio"
 	"errors"
 	"fmt"
@@ -34,9 +35,7 @@ func FromEnvironment() *Reader {
 // FromMap copies values so later caller changes do not affect configuration.
 func FromMap(values map[string]string) *Reader {
 	snapshot := make(map[string]string, len(values))
-	for key, value := range values {
-		snapshot[key] = value
-	}
+	maps.Copy(snapshot, values)
 	return &Reader{values: snapshot}
 }
 
