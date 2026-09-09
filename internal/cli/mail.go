@@ -14,7 +14,7 @@ import (
 )
 
 func makeMail(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
-	if err := requireProjectFormatRange(9, 9); err != nil {
+	if err := requireProjectFormatRange(9, 10); err != nil {
 		return err
 	}
 	typeName, err := pascal(strings.TrimSuffix(name, "Mail"))

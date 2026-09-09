@@ -6,6 +6,7 @@
 [[if .SchemaDriven]]
     <dl>
 [[range .Fields]]      <dt>[[.Label]]</dt><dd>{{.Item.[[.GoName]]}}</dd>
+[[end]][[range .Relationships]]      <dt>[[.Label]]</dt><dd>{{.Item.[[.GoName]]}}</dd>
 [[end]]    </dl>
 [[end]]
     <form action="/app/[[.Plural]]/{{.Item.ID}}" method="post">

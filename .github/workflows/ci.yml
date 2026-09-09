@@ -89,7 +89,7 @@ jobs:
           test -z "$(grep '^replace ' go.mod || true)"
           grep -Fqx 'github.com/ShanilKoshitha/goforge v0.12.0 h1:/wmB+d+3au9s6Ei3iJLPgmfE3DIMyBO3kFaeg0hXEX0=' go.sum
           grep -Fqx 'github.com/ShanilKoshitha/goforge v0.12.0/go.mod h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=' go.sum
-          grep -q '^version: 9$' forge.yaml
+          grep -q '^version: 10$' forge.yaml
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           "$RUNNER_TEMP/forge" make:resource TypedTicket \
             --field title:string \
@@ -98,6 +98,10 @@ jobs:
             --field estimate:integer:nullable \
             --field active:boolean \
             --field featured:boolean:nullable
+          "$RUNNER_TEMP/forge" make:resource Category --field title:string
+          "$RUNNER_TEMP/forge" make:resource Issue \
+            --field summary:string \
+            --belongs-to category:Category
           "$RUNNER_TEMP/forge" make:mail AuditNotice
           go mod verify
           go mod tidy -diff

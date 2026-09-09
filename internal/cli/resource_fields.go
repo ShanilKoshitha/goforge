@@ -11,6 +11,7 @@ import (
 
 const (
 	maximumResourceFields      = 32
+	maximumResourceBelongsTo   = 8
 	maximumResourceFieldLength = 256
 	maximumResourceIdentifier  = 63
 )
@@ -37,12 +38,26 @@ type resourceField struct {
 	Nullable bool
 }
 
+// resourceBelongsTo is the generator's one-shot description of a required
+// relationship to an existing generated resource. Emitted Go and SQL become
+// authoritative after generation; this description is never runtime schema.
+type resourceBelongsTo struct {
+	Name             string
+	GoName           string
+	Label            string
+	ForeignKey       string
+	ForeignKeyGoName string
+	Target           string
+	Required         bool
+}
+
 // resourceDefinition is deliberately ephemeral. Persistent resource metadata
 // retains identity and migration allocation, not a second application schema.
 type resourceDefinition struct {
 	resourceSpec
-	Fields       []resourceField
-	SchemaDriven bool
+	Fields        []resourceField
+	Relationships []resourceRelationship
+	SchemaDriven  bool
 }
 
 var resourceFieldName = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`)
@@ -57,40 +72,187 @@ var reservedResourceFieldGoNames = map[string]bool{
 	"Version": true, "Owner": true,
 }
 
-func parseMakeResourceArguments(arguments []string) (string, []resourceField, bool, error) {
+func parseMakeResourceArguments(arguments []string) (string, []resourceField, []resourceBelongsTo, bool, error) {
 	if len(arguments) == 0 || strings.HasPrefix(arguments[0], "--") {
-		return "", nil, false, resourceUsageError()
+		return "", nil, nil, false, resourceUsageError()
 	}
 	name := arguments[0]
-	var specifications []string
+	var fieldSpecifications []string
+	var belongsToSpecifications []string
 	for index := 1; index < len(arguments); index++ {
 		argument := arguments[index]
 		switch {
 		case argument == "--field":
 			if index+1 >= len(arguments) || strings.HasPrefix(arguments[index+1], "--") {
-				return "", nil, false, fmt.Errorf("--field requires a field specification; %w", resourceUsageError())
+				return "", nil, nil, false, fmt.Errorf("--field requires a field specification; %w", resourceUsageError())
 			}
 			index++
-			specifications = append(specifications, arguments[index])
+			fieldSpecifications = append(fieldSpecifications, arguments[index])
 		case strings.HasPrefix(argument, "--field="):
 			value := strings.TrimPrefix(argument, "--field=")
 			if value == "" {
-				return "", nil, false, fmt.Errorf("--field requires a field specification; %w", resourceUsageError())
+				return "", nil, nil, false, fmt.Errorf("--field requires a field specification; %w", resourceUsageError())
 			}
-			specifications = append(specifications, value)
+			fieldSpecifications = append(fieldSpecifications, value)
+		case argument == "--belongs-to":
+			if index+1 >= len(arguments) || strings.HasPrefix(arguments[index+1], "--") {
+				return "", nil, nil, false, fmt.Errorf("--belongs-to requires a relationship specification; %w", resourceUsageError())
+			}
+			index++
+			belongsToSpecifications = append(belongsToSpecifications, arguments[index])
+		case strings.HasPrefix(argument, "--belongs-to="):
+			value := strings.TrimPrefix(argument, "--belongs-to=")
+			if value == "" {
+				return "", nil, nil, false, fmt.Errorf("--belongs-to requires a relationship specification; %w", resourceUsageError())
+			}
+			belongsToSpecifications = append(belongsToSpecifications, value)
 		default:
-			return "", nil, false, fmt.Errorf("unknown resource option %q; %w", argument, resourceUsageError())
+			return "", nil, nil, false, fmt.Errorf("unknown resource option %q; %w", argument, resourceUsageError())
 		}
 	}
-	fields, err := parseResourceFields(specifications)
+	fields, err := parseResourceFields(fieldSpecifications)
 	if err != nil {
-		return "", nil, false, err
+		return "", nil, nil, false, err
 	}
-	return name, fields, len(specifications) > 0, nil
+	belongsTo, err := parseResourceBelongsTo(name, belongsToSpecifications)
+	if err != nil {
+		return "", nil, nil, false, err
+	}
+	if err := validateResourceMemberCollisions(fields, belongsTo); err != nil {
+		return "", nil, nil, false, err
+	}
+	return name, fields, belongsTo, len(fieldSpecifications) > 0 || len(belongsToSpecifications) > 0, nil
 }
 
 func resourceUsageError() error {
-	return fmt.Errorf("usage: forge make:resource <name> [--field <name>:<string|text|integer|boolean>[:required|nullable]]...")
+	return fmt.Errorf("usage: forge make:resource <name> [--field <name>:<string|text|integer|boolean>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...")
+}
+
+func parseResourceBelongsTo(resourceName string, specifications []string) ([]resourceBelongsTo, error) {
+	if len(specifications) > maximumResourceBelongsTo {
+		return nil, fmt.Errorf("resource relationships exceed the maximum of %d", maximumResourceBelongsTo)
+	}
+	if len(specifications) == 0 {
+		return nil, nil
+	}
+	resourceType, err := pascal(resourceName)
+	if err != nil {
+		return nil, err
+	}
+
+	belongsTo := make([]resourceBelongsTo, 0, len(specifications))
+	seenNames := make(map[string]struct{}, len(specifications))
+	for _, specification := range specifications {
+		relation, err := parseRequiredBelongsTo(specification)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seenNames[relation.Name]; exists {
+			return nil, fmt.Errorf("duplicate belongs-to relationship %q", relation.Name)
+		}
+		if relation.Target == resourceType {
+			return nil, fmt.Errorf("belongs-to relationship %q cannot target its own resource %s", relation.Name, resourceType)
+		}
+		seenNames[relation.Name] = struct{}{}
+		belongsTo = append(belongsTo, relation)
+	}
+	return belongsTo, nil
+}
+
+func parseRequiredBelongsTo(specification string) (resourceBelongsTo, error) {
+	if specification == "" {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship specification cannot be empty")
+	}
+	if len(specification) > maximumResourceFieldLength {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship specification exceeds %d bytes", maximumResourceFieldLength)
+	}
+	if strings.TrimSpace(specification) != specification {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship specification %q cannot contain surrounding whitespace", specification)
+	}
+	parts := strings.Split(specification, ":")
+	if len(parts) != 2 {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q must use name:ExistingResource", specification)
+	}
+	name, targetName := parts[0], parts[1]
+	if strings.TrimSpace(name) != name || strings.TrimSpace(targetName) != targetName || targetName == "" {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q must use name:ExistingResource without whitespace", specification)
+	}
+	if reservedResourceFieldNames[name] {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q is reserved", name)
+	}
+	if !resourceFieldName.MatchString(name) {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship name %q must be lower_snake_case", name)
+	}
+	if !safeIdentifier(name) || len(name) > maximumResourceIdentifier {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship name %q is not a safe PostgreSQL identifier", name)
+	}
+	goName, err := pascal(name)
+	if err != nil || !token.IsIdentifier(goName) || !ast.IsExported(goName) || len(goName) > maximumResourceIdentifier {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship name %q does not produce a safe exported Go identifier", name)
+	}
+	if reservedResourceFieldGoNames[goName] {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q produces reserved Go name %s", name, goName)
+	}
+	foreignKey := name + "_id"
+	if reservedResourceFieldNames[foreignKey] {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q produces reserved foreign key %s", name, foreignKey)
+	}
+	if !safeIdentifier(foreignKey) || len(foreignKey) > maximumResourceIdentifier {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q produces unsafe foreign key %q", name, foreignKey)
+	}
+	foreignKeyGoName, err := pascal(foreignKey)
+	if err != nil || !token.IsIdentifier(foreignKeyGoName) || !ast.IsExported(foreignKeyGoName) || len(foreignKeyGoName) > maximumResourceIdentifier {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q does not produce a safe foreign-key Go identifier", name)
+	}
+	if reservedResourceFieldGoNames[foreignKeyGoName] {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q produces reserved Go name %s", name, foreignKeyGoName)
+	}
+	target, err := pascal(targetName)
+	packageName := strings.ToLower(target)
+	if err != nil || !token.IsIdentifier(target) || !ast.IsExported(target) || len(target) > maximumResourceIdentifier ||
+		!token.IsIdentifier(packageName) || token.IsKeyword(packageName) {
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q target %q does not produce valid Go identifiers", name, targetName)
+	}
+	return resourceBelongsTo{
+		Name: name, GoName: goName, Label: resourceFieldLabel(name),
+		ForeignKey: foreignKey, ForeignKeyGoName: foreignKeyGoName,
+		Target: target, Required: true,
+	}, nil
+}
+
+func validateResourceMemberCollisions(fields []resourceField, belongsTo []resourceBelongsTo) error {
+	rawNames := make(map[string]string, len(fields)+len(belongsTo)*2)
+	goNames := make(map[string]string, len(fields)+len(belongsTo)*2)
+	claim := func(names map[string]string, name, owner, namespace string) error {
+		if previous, exists := names[name]; exists {
+			return fmt.Errorf("resource %s %s conflicts with %s", namespace, name, previous)
+		}
+		names[name] = owner
+		return nil
+	}
+	for _, field := range fields {
+		owner := fmt.Sprintf("field %q", field.Name)
+		if err := claim(rawNames, field.Name, owner, "name"); err != nil {
+			return err
+		}
+		if err := claim(goNames, field.GoName, owner, "Go name"); err != nil {
+			return err
+		}
+	}
+	for _, relation := range belongsTo {
+		owner := fmt.Sprintf("belongs-to relationship %q", relation.Name)
+		for _, name := range []string{relation.Name, relation.ForeignKey} {
+			if err := claim(rawNames, name, owner, "name"); err != nil {
+				return err
+			}
+		}
+		for _, name := range []string{relation.GoName, relation.ForeignKeyGoName} {
+			if err := claim(goNames, name, owner, "Go name"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func parseResourceFields(specifications []string) ([]resourceField, error) {

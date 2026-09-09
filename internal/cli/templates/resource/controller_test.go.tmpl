@@ -21,7 +21,12 @@ type fakeRepository struct {
 	item              resource.[[.Name]]
 	createdAttributes resource.Attributes
 	updatedAttributes resource.Attributes
-	pageNumber        int
+	[[if .Relationships]]createdAssociations resource.AssociationIDs
+	updatedAssociations resource.AssociationIDs
+	createError         error
+	updateError         error
+	[[end]][[if .OwnerCandidateKey]]deleteError error
+	[[end]]pageNumber int
 	pageSize          int
 	paginationUserID  int64
 	paginationHasNext bool
@@ -45,11 +50,16 @@ func (repository *fakeRepository) Paginate(_ context.Context, userID int64, page
 	}, nil
 }
 
-func (repository *fakeRepository) Create(_ context.Context, userID int64, attributes resource.Attributes) (resource.[[.Name]], error) {
-	repository.createdAttributes = attributes
+func (repository *fakeRepository) Create(_ context.Context, userID int64, attributes resource.Attributes[[if .Relationships]], associations resource.AssociationIDs[[end]]) (resource.[[.Name]], error) {
+	[[if .Relationships]]if repository.createError != nil {
+		return resource.[[.Name]]{}, repository.createError
+	}
+	repository.createdAssociations = associations
+	[[end]]repository.createdAttributes = attributes
 	repository.item = resource.[[.Name]]{
 		ID: 1, UserID: userID,
 [[range .Fields]]		[[.GoName]]: attributes.[[.GoName]],
+[[end]][[range .Relationships]]		[[.ForeignKeyGoName]]: associations.[[.ForeignKeyGoName]],
 [[end]]		CreatedAt: time.Now(), UpdatedAt: time.Now(), Version: 1,
 	}
 	return repository.item, nil
@@ -59,18 +69,31 @@ func (repository *fakeRepository) Find(context.Context, int64, int64) (resource.
 	return repository.item, nil
 }
 
-func (repository *fakeRepository) Update(_ context.Context, userID, id int64, attributes resource.Attributes, expectedVersion *int64) (resource.[[.Name]], error) {
-	if expectedVersion != nil && *expectedVersion != repository.item.Version {
+func (repository *fakeRepository) Update(_ context.Context, userID, id int64, attributes resource.Attributes[[if .Relationships]], associations resource.AssociationIDs[[end]], expectedVersion *int64) (resource.[[.Name]], error) {
+	[[if .Relationships]]if repository.updateError != nil {
+		return resource.[[.Name]]{}, repository.updateError
+	}
+	[[end]]if expectedVersion != nil && *expectedVersion != repository.item.Version {
 		return resource.[[.Name]]{}, resource.ErrStale
 	}
 	repository.updatedAttributes = attributes
-	repository.item.UserID, repository.item.ID = userID, id
+	[[if .Relationships]]repository.updatedAssociations = associations
+	[[end]]repository.item.UserID, repository.item.ID = userID, id
 [[range .Fields]]	repository.item.[[.GoName]] = attributes.[[.GoName]]
+[[end]][[range .Relationships]]	repository.item.[[.ForeignKeyGoName]] = associations.[[.ForeignKeyGoName]]
 [[end]]	repository.item.Version++
 	return repository.item, nil
 }
 
-func (repository *fakeRepository) Delete(context.Context, int64, int64) error { return nil }
+func (repository *fakeRepository) Delete(context.Context, int64, int64) error {
+	[[if .OwnerCandidateKey]]return repository.deleteError
+	[[else]]return nil
+	[[end]]}
+[[range .Relationships]]
+func (repository *fakeRepository) [[.GoName]]Choices(context.Context, int64) ([]resource.AssociationChoice, error) {
+	return []resource.AssociationChoice{{ID: 7, Label: "[[.TargetSpec.Name]] #7"}}, nil
+}
+[[end]]
 
 type fakeUsers struct{ user auth.User }
 
@@ -81,11 +104,11 @@ func (users fakeUsers) Create(context.Context, string, string, string) (auth.Use
 func (users fakeUsers) ByEmail(context.Context, string) (auth.User, error) { return users.user, nil }
 func (users fakeUsers) ByID(context.Context, int64) (auth.User, error)    { return users.user, nil }
 
-const sampleResourceJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.SampleJSONValue]][[end]]}`
-const updatedResourceJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]]}`
-const sampleResourceVersionOneJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.SampleJSONValue]][[end]],"version":1}`
-const updatedResourceVersionOneJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]],"version":1}`
-const updatedResourceInvalidVersionJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]],"version":0}`
+const sampleResourceJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.SampleJSONValue]][[end]][[range .Relationships]],"[[.ForeignKey]]":7[[end]]}`
+const updatedResourceJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]][[range .Relationships]],"[[.ForeignKey]]":11[[end]]}`
+const sampleResourceVersionOneJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.SampleJSONValue]][[end]][[range .Relationships]],"[[.ForeignKey]]":7[[end]],"version":1}`
+const updatedResourceVersionOneJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]][[range .Relationships]],"[[.ForeignKey]]":11[[end]],"version":1}`
+const updatedResourceInvalidVersionJSON = `{[[range $index, $field := .Fields]][[if $index]],[[end]]"[[$field.Name]]":[[$field.UpdatedJSONValue]][[end]][[range .Relationships]],"[[.ForeignKey]]":11[[end]],"version":0}`
 
 func resourceJSONWithRaw(t *testing.T, field, raw string) string {
 	t.Helper()
@@ -117,6 +140,8 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	router := httpx.NewRouter()
 	router.POST("/[[.Plural]]", auth.Require(manager, users)(controller.Create))
 	router.PUT("/[[.Plural]]/{id}", auth.Require(manager, users)(controller.Update))
+	[[if .OwnerCandidateKey]]router.DELETE("/[[.Plural]]/{id}", auth.Require(manager, users)(controller.Delete))
+	[[end]]
 
 	request := httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(sampleResourceJSON))
 	request.Header.Set("Content-Type", "application/json")
@@ -170,6 +195,16 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 		t.Fatalf("noncanonical JSON key [[$target.GoName]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
 	}
 
+[[end]][[range $target := .Relationships]]	response = serveJSON(strings.TrimSuffix(sampleResourceJSON, "}") + `,"[[$target.ForeignKey]]":11}`)
+	if response.Code != http.StatusBadRequest || repository.item.ID != 0 {
+		t.Fatalf("duplicate JSON key [[$target.ForeignKey]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+	response = serveJSON(strings.TrimSuffix(sampleResourceJSON, "}") + `,"[[$target.ForeignKeyGoName]]":11}`)
+	if response.Code != http.StatusBadRequest || repository.item.ID != 0 {
+		t.Fatalf("noncanonical JSON key [[$target.ForeignKeyGoName]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
 [[end]]	for _, protected := range []string{
 		strings.TrimSuffix(sampleResourceJSON, "}") + `,"id":1}`,
 		strings.TrimSuffix(sampleResourceJSON, "}") + `,"user_id":9}`,
@@ -191,6 +226,18 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 [[range $target := .Fields]]	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", [[printf "%q" $target.InvalidJSONValue]]))
 	if response.Code != http.StatusBadRequest || repository.item.ID != 0 {
 		t.Fatalf("wrong JSON type for [[$target.Name]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+[[end]][[range $target := .Relationships]]	response = serveJSON(resourceJSONWithRaw(t, "[[$target.ForeignKey]]", `"7"`))
+	if response.Code != http.StatusBadRequest || repository.item.ID != 0 {
+		t.Fatalf("wrong JSON type for [[$target.ForeignKey]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+	}
+
+	for _, invalidAssociation := range []string{"", `null`, `0`, `-1`} {
+		response = serveJSON(resourceJSONWithRaw(t, "[[$target.ForeignKey]]", invalidAssociation))
+		if response.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 || !strings.Contains(response.Body.String(), `"path":"[[$target.ForeignKey]]"`) {
+			t.Fatalf("invalid required [[$target.ForeignKey]] reached persistence: %d item=%+v: %s", response.Code, repository.item, response.Body.String())
+		}
 	}
 
 [[end]][[range $target := .Fields]][[if $target.Required]]	response = serveJSON(resourceJSONWithRaw(t, "[[$target.Name]]", ""))
@@ -267,6 +314,30 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	if !reflect.DeepEqual(repository.createdAttributes, controllerTestSampleAttributes()) {
 		t.Fatalf("create attributes = %#v, want %#v", repository.createdAttributes, controllerTestSampleAttributes())
 	}
+	[[if .Relationships]]if !reflect.DeepEqual(repository.createdAssociations, controllerTestSampleAssociations()) {
+		t.Fatalf("create associations = %#v, want %#v", repository.createdAssociations, controllerTestSampleAssociations())
+	}
+[[range $target := .Relationships]]	if !strings.Contains(response.Body.String(), `"[[$target.ForeignKey]]":7`) || strings.Contains(response.Body.String(), `"[[$target.Name]]":`) {
+		t.Fatalf("create response did not expose only the [[$target.ForeignKey]] foreign key: %s", response.Body.String())
+	}
+[[end]][[with index .Relationships 0]]	repository.createError = &resource.InvalidAssociationError{Field: "[[.ForeignKey]]"}
+	response = serveJSON(sampleResourceJSON)
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"path":"[[.ForeignKey]]"`) || !strings.Contains(response.Body.String(), `"code":"association.invalid"`) {
+		t.Fatalf("invalid association create was not a field-level 422: %d: %s", response.Code, response.Body.String())
+	}
+	repository.createError = nil
+
+[[end]][[end]][[if .OwnerCandidateKey]]	repository.deleteError = resource.ErrInUse
+	request = httptest.NewRequest(http.MethodDelete, "/[[.Plural]]/1", nil)
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("in-use delete: expected 409, got %d: %s", response.Code, response.Body.String())
+	}
+	repository.deleteError = nil
+
+[[end]]
 
 [[if .SchemaDriven]]	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(strings.TrimSuffix(updatedResourceVersionOneJSON, "}")+`,"version":1}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -298,6 +369,21 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	if !reflect.DeepEqual(repository.updatedAttributes, controllerTestUpdatedAttributes()) {
 		t.Fatalf("update attributes = %#v, want %#v", repository.updatedAttributes, controllerTestUpdatedAttributes())
 	}
+	[[if .Relationships]]if !reflect.DeepEqual(repository.updatedAssociations, controllerTestUpdatedAssociations()) {
+		t.Fatalf("update associations = %#v, want %#v", repository.updatedAssociations, controllerTestUpdatedAssociations())
+	}
+[[with index .Relationships 0]]	repository.updateError = &resource.InvalidAssociationError{Field: "[[.ForeignKey]]"}
+	request = httptest.NewRequest(http.MethodPut, "/[[$.Plural]]/1", strings.NewReader(strings.Replace(updatedResourceVersionOneJSON, `"version":1`, `"version":2`, 1)))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"path":"[[.ForeignKey]]"`) || !strings.Contains(response.Body.String(), `"code":"association.invalid"`) {
+		t.Fatalf("invalid association update was not a field-level 422: %d: %s", response.Code, response.Body.String())
+	}
+	repository.updateError = nil
+
+[[end]][[end]]
 
 	request = httptest.NewRequest(http.MethodPut, "/[[.Plural]]/1", strings.NewReader(sampleResourceVersionOneJSON))
 	request.Header.Set("Content-Type", "application/json")
@@ -330,6 +416,18 @@ func controllerTestUpdatedAttributes() resource.Attributes {
 [[end]]	}
 }
 
-func pointer[T any](value T) *T {
+[[if .Relationships]]func controllerTestSampleAssociations() resource.AssociationIDs {
+	return resource.AssociationIDs{
+[[range .Relationships]]		[[.ForeignKeyGoName]]: 7,
+[[end]]	}
+}
+
+func controllerTestUpdatedAssociations() resource.AssociationIDs {
+	return resource.AssociationIDs{
+[[range .Relationships]]		[[.ForeignKeyGoName]]: 11,
+[[end]]	}
+}
+
+[[end]]func pointer[T any](value T) *T {
 	return &value
 }

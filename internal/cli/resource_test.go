@@ -818,7 +818,7 @@ func TestMakeResourceRefusesOlderProjectFormatBeforeWriting(t *testing.T) {
 func TestMakeResourceRefusesNewerProjectFormatBeforeWriting(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 10\n"), 0o644); err != nil {
+	if err := os.WriteFile("forge.yaml", []byte("version: 11\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := makeResource("Issue", &bytes.Buffer{})

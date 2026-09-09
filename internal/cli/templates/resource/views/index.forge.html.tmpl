@@ -10,6 +10,7 @@
 [[if .SchemaDriven]]
         <dl>
 [[range .Fields]]          <dt>[[.Label]]</dt><dd>{{.[[.GoName]]}}</dd>
+[[end]][[range .Relationships]]          <dt>[[.Label]]</dt><dd>{{.[[.GoName]]}}</dd>
 [[end]]        </dl>
 [[end]]
       </li>@empty<li>No [[.Plural]] yet.</li>@endfor
