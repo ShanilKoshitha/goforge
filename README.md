@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.12.1 is PostgreSQL-first and accepted against its written milestone
+GoForge v0.13.1 is PostgreSQL-first and accepted against its written milestone
 scorecard. It includes explicit database wiring, parallel JSON and
 server-rendered authentication, database-backed sessions, CSRF-protected HTML
 forms, production middleware, embedded migrations, owner-scoped JSON and HTML
@@ -58,13 +58,19 @@ single-use hashed reset tokens, immediate session revocation, application-owned
 text and Forge HTML mail, an encrypted durable outbox, and an explicit SMTP
 adapter. Generated applications own the routes, policy, SQL, templates, jobs,
 and dependency wiring; every boundary remains replaceable ordinary Go.
+The v0.13 resource workflow adds repeatable required belongs-to generation
+across ordinary models, composite owner-safe PostgreSQL constraints, exact JSON
+and form input, eager-loaded repositories, bounded browser choices, Forge
+views, and generated tests. Missing and cross-owner targets are deliberately
+indistinguishable, while direct SQL and handwritten relationship code remain
+complete escape hatches.
 
 ## Install and try it
 
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.12.1
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.13.1
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -118,7 +124,7 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.12.1 CLI.
+The command surface below is included in the v0.13.1 CLI.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]

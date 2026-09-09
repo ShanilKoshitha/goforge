@@ -64,6 +64,23 @@ their current model source, not persisted field metadata, is authoritative.
   blocker after repeatable-template scoping, bounded JSON pagination,
   association-field allowlisting, target-migration DDL validation, and final
   dependency fingerprinting were added.
+- PR 13 merged as `9078e56`, and
+  [main CI run 34371037790](https://github.com/ShanilKoshitha/goforge/actions/runs/34371037790)
+  passed Linux/PostgreSQL and native Windows before the lightweight unsigned
+  `v0.13.0` tag was published on that exact merge commit. The public Go proxy
+  resolves module checksum
+  `h1:ky4g5QeWdG2M3rZdeYd7pkD+8Cz1dVHHWlqewm/SMcw=` and module-file checksum
+  `h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=`.
+- The checksum-bearing v0.13.1 candidate reports the new version and generates
+  a format-10 application without `replace` while pinning public v0.13.0. Its
+  distribution gate verifies the exact embedded checksums, scalar and required
+  relationship generation, generated tests, vet, server and worker builds,
+  serve, and all PostgreSQL workflows.
+- A blocked public-module download reproduced a Windows transient-sharing
+  rollback edge. Resource generation now retries removal of only still-empty
+  generated directories, preserves concurrent editor content, and returns the
+  final persistent error; deterministic retry, preservation, and exhaustion
+  tests pass on the release candidate.
 
 ## Runnable baseline — 2026-09-09
 
