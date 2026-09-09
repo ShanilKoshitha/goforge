@@ -102,6 +102,11 @@ The JSON equivalents are `POST /auth/password/forgot` and
   verification, resource and mail generation, generated tests, and server
   and worker builds passed; the resulting binary reports the exact public
   runtime checksum.
+- [Distribution push run 34296296919](https://github.com/ShanilKoshitha/goforge/actions/runs/34296296919)
+  and [pull-request run 34296351515](https://github.com/ShanilKoshitha/goforge/actions/runs/34296351515)
+  independently passed Linux/PostgreSQL and native Windows on `047cf77`. Each
+  Linux job proved the frozen format-8 path and the checksum-bearing v0.12.1
+  format-9 path before running every generated PostgreSQL journey twice.
 
 ## Explicit non-goals for v0.12
 
