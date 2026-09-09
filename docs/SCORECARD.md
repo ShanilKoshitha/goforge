@@ -72,10 +72,13 @@ their current model source, not persisted field metadata, is authoritative.
   `h1:ky4g5QeWdG2M3rZdeYd7pkD+8Cz1dVHHWlqewm/SMcw=` and module-file checksum
   `h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=`.
 - The checksum-bearing v0.13.1 candidate reports the new version and generates
-  a format-10 application without `replace` while pinning public v0.13.0. Its
-  distribution gate verifies the exact embedded checksums, scalar and required
-  relationship generation, generated tests, vet, server and worker builds,
-  serve, and all PostgreSQL workflows.
+  a format-10 application without `replace` while pinning public v0.13.0. The
+  candidate's [push CI run 34375859749](https://github.com/ShanilKoshitha/goforge/actions/runs/34375859749)
+  and [pull-request CI run 34375894479](https://github.com/ShanilKoshitha/goforge/actions/runs/34375894479)
+  both passed Linux/PostgreSQL and native Windows. The distribution gate
+  verified the exact embedded checksums, scalar and required relationship
+  generation, generated tests, vet, server and worker builds, serve, and all
+  PostgreSQL workflows.
 - A blocked public-module download reproduced a Windows transient-sharing
   rollback edge. Resource generation now retries removal of only still-empty
   generated directories, preserves concurrent editor content, and returns the
