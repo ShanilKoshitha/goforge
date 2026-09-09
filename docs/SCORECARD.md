@@ -84,6 +84,13 @@ their current model source, not persisted field metadata, is authoritative.
   generated directories, preserves concurrent editor content, and returns the
   final persistent error; deterministic retry, preservation, and exhaustion
   tests pass on the release candidate.
+- [Final evidence run 34377344124](https://github.com/ShanilKoshitha/goforge/actions/runs/34377344124)
+  exposed an overly aggressive reclaim acceptance budget: the generated worker
+  had only 250ms for each PostgreSQL operation, compared with the production
+  default of 5s. The same head and the test's second iteration passed, isolating
+  a timing flake. The probe now retains a short 3s lease but allows 1s operations
+  and reports both worker event streams on timeout, keeping ordinary CI load
+  from masquerading as a failed lease-recovery invariant.
 
 ## Runnable baseline — 2026-09-09
 
