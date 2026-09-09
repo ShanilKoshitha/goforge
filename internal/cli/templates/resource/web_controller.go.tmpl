@@ -340,12 +340,7 @@ func invalidAssociationField(err error) (string, bool) {
 	if !errors.As(err, &invalid) || invalid == nil {
 		return "", false
 	}
-	switch invalid.Field {
-[[range .Relationships]]	case "[[.ForeignKey]]":
-		return invalid.Field, true
-[[end]]	default:
-		return "", false
-	}
+	return validAssociationInputField(invalid.Field)
 }
 
 [[end]]func formatOptional[T any](value *T, format func(T) string) string {

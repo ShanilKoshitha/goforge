@@ -19,4 +19,13 @@ type Attributes struct {
 type AssociationIDs struct {
 [[range .Relationships]]	[[.ForeignKeyGoName]] int64
 [[end]]}
+
+func validAssociationInputField(field string) (string, bool) {
+	switch field {
+[[range .Relationships]]	case "[[.ForeignKey]]":
+		return field, true
+[[end]]	default:
+		return "", false
+	}
+}
 [[end]]

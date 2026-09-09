@@ -262,6 +262,9 @@ func makeResourceWithRelationshipDependencies(ctx context.Context, name string, 
 	if currentORM != generatedORM {
 		return rollback(errors.New("application models changed during resource generation; retry the command"))
 	}
+	if err := recheckResourceRelationshipDependencies(relationships); err != nil {
+		return rollback(err)
+	}
 
 	for _, file := range files {
 		fmt.Fprintf(stdout, "created %s\n", filepath.ToSlash(file.path))

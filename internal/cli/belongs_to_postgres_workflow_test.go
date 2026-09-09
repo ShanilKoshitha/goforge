@@ -250,8 +250,10 @@ import (
 	"strings"
 	"sync"
 
+	appmigrations "example.com/issueboard/database/migrations"
 	category "example.com/issueboard/internal/resources/category"
 	issue "example.com/issueboard/internal/resources/issue"
+	"github.com/ShanilKoshitha/goforge/database/migrate"
 	"github.com/ShanilKoshitha/goforge/orm"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -380,6 +382,18 @@ func main() {
 	deleteWon := deleteErr == nil && errors.As(createErr, &invalid) && invalid.Field == "category_id"
 	if !createWon && !deleteWon {
 		panic("parent-delete/create race escaped its two legal outcomes")
+	}
+
+	runner := migrate.Migrator{DB: db, Files: appmigrations.Files, Dialect: migrate.Postgres}
+	reversed, err := runner.Down(ctx, 3)
+	if err != nil || len(reversed) != 3 {
+		panic("relationship migrations did not reverse in dependency order")
+	}
+	for _, table := range []string{"issues", "alternate_categories", "categories"} {
+		var present bool
+		if err := db.QueryRowContext(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&present); err != nil || present {
+			panic("relationship down migration left table " + table)
+		}
 	}
 
 	fmt.Println("belongs-to acceptance passed")

@@ -22,12 +22,19 @@ func TestResolveResourceRelationshipsResolvesExistingGeneratedTarget(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	migrationPath := filepath.Join("database", "migrations", fixture.target.MigrationVersion+"_create_"+fixture.target.Plural+".up.sql")
+	migration, err := captureDevelopmentFile(migrationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []resourceRelationship{{
 		resourceBelongsTo:   relation,
 		TargetSpec:          fixture.target,
 		TargetQueryAccessor: "APIClients",
 		IndexName:           "audit_entries_reviewer_id_idx",
 		ConstraintName:      "audit_entries_reviewer_owner_fkey",
+		targetMigrationPath: migrationPath,
+		targetMigration:     migration,
 	}}
 	if !reflect.DeepEqual(resolved, want) {
 		t.Fatalf("resolved relationships = %#v, want %#v", resolved, want)
@@ -133,6 +140,108 @@ func TestResolveResourceRelationshipsRejectsPostgresIdentifierOverflowWithoutWri
 	assertRelationshipProjectUnchanged(t, fixture.directory, before)
 }
 
+func TestResolveResourceRelationshipsRejectsLegacyTargetWithoutOwnerCandidateKey(t *testing.T) {
+	fixture := newResourceRelationshipFixture(t, "Project", "Issue")
+	migration := filepath.Join(fixture.directory, "database", "migrations", fixture.target.MigrationVersion+"_create_projects.up.sql")
+	contents, err := os.ReadFile(migration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents = []byte(strings.Replace(string(contents), "    CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)\n", "", 1))
+	if err := os.WriteFile(migration, contents, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotRelationshipProject(t, fixture.directory)
+	relation, err := parseRequiredBelongsTo("project:Project")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = resolveResourceRelationships(fixture.child, fixture.state, []resourceBelongsTo{relation})
+	if err == nil || !strings.Contains(err.Error(), "migration must retain effective constraint projects_owner_id_key UNIQUE (user_id, id)") {
+		t.Fatalf("error = %v", err)
+	}
+	assertRelationshipProjectUnchanged(t, fixture.directory, before)
+}
+
+func TestOwnerCandidateKeyRequiresEffectiveSQL(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{
+			name:   "generated declaration",
+			source: `CREATE TABLE projects (CONSTRAINT projects_owner_id_key UNIQUE (user_id, id));`,
+			want:   true,
+		},
+		{
+			name: "quoted multiline declaration",
+			source: `ALTER TABLE "projects" ADD CONSTRAINT "projects_owner_id_key"
+				UNIQUE ("user_id", "id");`,
+			want: true,
+		},
+		{
+			name:   "line comment",
+			source: `-- CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)`,
+		},
+		{
+			name:   "nested block comment",
+			source: `/* outer /* CONSTRAINT projects_owner_id_key UNIQUE (user_id, id) */ outer */`,
+		},
+		{
+			name:   "single quoted body",
+			source: `SELECT 'CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)'`,
+		},
+		{
+			name:   "dollar quoted body",
+			source: `SELECT $migration$CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)$migration$`,
+		},
+		{
+			name:   "escape string body",
+			source: `SELECT E'prefix \' CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)'`,
+		},
+		{
+			name: "ordinary string ending in backslash",
+			source: `CREATE TABLE projects (
+				note TEXT DEFAULT 'path\',
+				CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)
+			);`,
+			want: true,
+		},
+		{
+			name: "constraint on another table",
+			source: `CREATE TABLE decoy (
+				CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)
+			);`,
+		},
+		{
+			name: "constraint dropped later",
+			source: `CREATE TABLE projects (
+				CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)
+			);
+			ALTER TABLE projects DROP CONSTRAINT projects_owner_id_key;`,
+		},
+		{
+			name: "constraint restored after drop",
+			source: `CREATE TABLE projects (
+				CONSTRAINT projects_owner_id_key UNIQUE (user_id, id)
+			);
+			ALTER TABLE projects DROP CONSTRAINT projects_owner_id_key;
+			ALTER TABLE public.projects ADD CONSTRAINT "projects_owner_id_key"
+				UNIQUE ("user_id", "id");`,
+			want: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := containsOwnerCandidateKey([]byte(test.source), "projects", "projects_owner_id_key"); got != test.want {
+				t.Fatalf("containsOwnerCandidateKey() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 type resourceRelationshipFixture struct {
 	directory   string
 	state       resourceState
@@ -169,19 +278,25 @@ func newResourceRelationshipFixture(t *testing.T, targetName, childName string) 
 		t.Fatal(err)
 	}
 	targetModel := filepath.Join("internal", "models", target.Package+".go")
+	targetMigration := filepath.Join("database", "migrations", target.MigrationVersion+"_create_"+target.Plural+".up.sql")
 	wroteModel := false
+	wroteMigration := false
 	for _, file := range files {
-		if filepath.Clean(file.path) != targetModel {
-			continue
+		switch filepath.Clean(file.path) {
+		case targetModel:
+			if err := os.WriteFile(targetModel, []byte(file.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			wroteModel = true
+		case targetMigration:
+			if err := os.WriteFile(targetMigration, []byte(file.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			wroteMigration = true
 		}
-		if err := os.WriteFile(targetModel, []byte(file.content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		wroteModel = true
-		break
 	}
-	if !wroteModel {
-		t.Fatalf("resource files did not contain generated target model %s", targetModel)
+	if !wroteModel || !wroteMigration {
+		t.Fatalf("resource files did not contain target model/migration: model=%t migration=%t", wroteModel, wroteMigration)
 	}
 
 	state.Resources = append(state.Resources, target)

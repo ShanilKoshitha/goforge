@@ -258,15 +258,17 @@ func (repository *PostgresRepository) Delete(ctx context.Context, userID, id int
 [[if .Relationships]]
 
 func (repository *PostgresRepository) validateAssociations(ctx context.Context, userID int64, associations AssociationIDs) error {
-[[range .Relationships]]	exists, err := models.NewStore(repository.Executor).[[.TargetQueryAccessor]]().Select().Where(
-		models.[[.TargetSpec.Name]]Columns.ID.Eq(associations.[[.ForeignKeyGoName]]),
-		models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID),
-	).Exists(ctx, repository.Executor)
-	if err != nil {
-		return fmt.Errorf("validate [[.ForeignKey]] association: %w", postgres.Classify(err))
-	}
-	if !exists {
-		return &InvalidAssociationError{Field: "[[.ForeignKey]]"}
+[[range .Relationships]]	{
+		exists, err := models.NewStore(repository.Executor).[[.TargetQueryAccessor]]().Select().Where(
+			models.[[.TargetSpec.Name]]Columns.ID.Eq(associations.[[.ForeignKeyGoName]]),
+			models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID),
+		).Exists(ctx, repository.Executor)
+		if err != nil {
+			return fmt.Errorf("validate [[.ForeignKey]] association: %w", postgres.Classify(err))
+		}
+		if !exists {
+			return &InvalidAssociationError{Field: "[[.ForeignKey]]"}
+		}
 	}
 [[end]]	return nil
 }

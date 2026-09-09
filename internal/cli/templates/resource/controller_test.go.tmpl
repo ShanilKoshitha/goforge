@@ -138,7 +138,8 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	repository := &fakeRepository{}
 	controller := resource.NewController(repository)
 	router := httpx.NewRouter()
-	router.POST("/[[.Plural]]", auth.Require(manager, users)(controller.Create))
+[[if .OwnerCandidateKey]]	router.GET("/[[.Plural]]", auth.Require(manager, users)(controller.Index))
+[[end]]	router.POST("/[[.Plural]]", auth.Require(manager, users)(controller.Create))
 	router.PUT("/[[.Plural]]/{id}", auth.Require(manager, users)(controller.Update))
 	[[if .OwnerCandidateKey]]router.DELETE("/[[.Plural]]/{id}", auth.Require(manager, users)(controller.Delete))
 	[[end]]
@@ -166,6 +167,23 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	cookie := cookieResponse.Result().Cookies()[0]
+[[if .OwnerCandidateKey]]
+	indexRequest := httptest.NewRequest(http.MethodGet, "/[[.Plural]]?page=2&per_page=5", nil)
+	indexRequest.AddCookie(cookie)
+	indexResponse := httptest.NewRecorder()
+	router.ServeHTTP(indexResponse, indexRequest)
+	if indexResponse.Code != http.StatusOK || repository.paginationUserID != 9 || repository.pageNumber != 2 || repository.pageSize != 5 ||
+		!strings.Contains(indexResponse.Body.String(), `"pagination":{"has_next":false,"has_previous":true,"page":2,"per_page":5}`) {
+		t.Fatalf("bounded API pagination: status=%d owner=%d page=%d per_page=%d: %s", indexResponse.Code, repository.paginationUserID, repository.pageNumber, repository.pageSize, indexResponse.Body.String())
+	}
+	invalidIndex := httptest.NewRequest(http.MethodGet, "/[[.Plural]]?page=1&page=2", nil)
+	invalidIndex.AddCookie(cookie)
+	invalidIndexResponse := httptest.NewRecorder()
+	router.ServeHTTP(invalidIndexResponse, invalidIndex)
+	if invalidIndexResponse.Code != http.StatusBadRequest {
+		t.Fatalf("repeated API page was accepted: %d: %s", invalidIndexResponse.Code, invalidIndexResponse.Body.String())
+	}
+[[end]]
 
 	request = httptest.NewRequest(http.MethodPost, "/[[.Plural]]", strings.NewReader(`null`))
 	request.Header.Set("Content-Type", "application/json")
@@ -324,6 +342,11 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	response = serveJSON(sampleResourceJSON)
 	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"path":"[[.ForeignKey]]"`) || !strings.Contains(response.Body.String(), `"code":"association.invalid"`) {
 		t.Fatalf("invalid association create was not a field-level 422: %d: %s", response.Code, response.Body.String())
+	}
+	repository.createError = &resource.InvalidAssociationError{Field: "unexpected_field"}
+	response = serveJSON(sampleResourceJSON)
+	if response.Code != http.StatusInternalServerError || strings.Contains(response.Body.String(), "unexpected_field") {
+		t.Fatalf("unknown association error field escaped the generated allowlist: %d: %s", response.Code, response.Body.String())
 	}
 	repository.createError = nil
 

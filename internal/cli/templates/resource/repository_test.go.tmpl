@@ -132,19 +132,21 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 		t.Fatalf("found [[.GoName]] was not eagerly loaded: %#v", item.[[.GoName]])
 	}
 [[end]]
-[[range .Relationships]]	connection.targetRowCount = 1
-	connection.resetStatements()
-	choices, err := repository.[[.GoName]]Choices(context.Background(), 9)
-	if err != nil || len(choices) != 1 || choices[0].ID != 71 || choices[0].Label != "[[.TargetSpec.Name]] #71" {
-		t.Fatalf("[[.GoName]] choices = %#v, %v", choices, err)
-	}
-	if len(connection.queries) != 1 || !strings.Contains(connection.queries[0], `"[[.TargetSpec.Plural]]"."user_id" = $1`) ||
-		!strings.Contains(connection.queries[0], "ORDER BY") || !strings.Contains(connection.queries[0], "LIMIT $2") {
-		t.Fatalf("[[.GoName]] choices are not bounded and owner-scoped: %#v", connection.queries)
-	}
-	connection.targetRowCount = maximumAssociationChoices + 1
-	if _, err := repository.[[.GoName]]Choices(context.Background(), 9); !errors.Is(err, ErrAssociationChoicesOverflow) {
-		t.Fatalf("[[.GoName]] choice overflow = %v", err)
+[[range .Relationships]]	{
+		connection.targetRowCount = 1
+		connection.resetStatements()
+		choices, err := repository.[[.GoName]]Choices(context.Background(), 9)
+		if err != nil || len(choices) != 1 || choices[0].ID != 71 || choices[0].Label != "[[.TargetSpec.Name]] #71" {
+			t.Fatalf("[[.GoName]] choices = %#v, %v", choices, err)
+		}
+		if len(connection.queries) != 1 || !strings.Contains(connection.queries[0], `"[[.TargetSpec.Plural]]"."user_id" = $1`) ||
+			!strings.Contains(connection.queries[0], "ORDER BY") || !strings.Contains(connection.queries[0], "LIMIT $2") {
+			t.Fatalf("[[.GoName]] choices are not bounded and owner-scoped: %#v", connection.queries)
+		}
+		connection.targetRowCount = maximumAssociationChoices + 1
+		if _, err := repository.[[.GoName]]Choices(context.Background(), 9); !errors.Is(err, ErrAssociationChoicesOverflow) {
+			t.Fatalf("[[.GoName]] choice overflow = %v", err)
+		}
 	}
 [[end]]}
 
