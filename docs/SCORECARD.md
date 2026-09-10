@@ -12,9 +12,9 @@ Target:
 > equalization through deterministic control-flow invariants rather than noisy
 > sequential wall-clock comparisons.
 
-The release remains staged. v0.14.2 publishes the backward-compatible runtime
+The release is staged. v0.14.2 publishes the backward-compatible runtime
 factory seam, deterministic security acceptance, and generated target-name
-validation that compiles against v0.14.0. v0.14.3 then pins the immutable new
+validation that compiles against v0.14.0. v0.14.3 pins the immutable new
 runtime from generated format-11 applications and adopts `DynamicContext` in
 their schedule journey. No project-format or database migration boundary changes.
 
@@ -51,6 +51,24 @@ their schedule journey. No project-format or database migration boundary changes
   the operation deadline, generated scheduler startup does not prove its job
   targets have worker handlers, and the process-level concurrency journey does
   not force or assert actual row contention.
+
+## v0.14.2 public runtime evidence — 2026-09-10
+
+- PR 17 exact-head push and pull-request runs 34481655944 and 34481719203
+  passed Linux race/vet/build, released-format compatibility, public v0.14.1
+  format-11 upgrade, the current scaffold, generated PostgreSQL applications,
+  and native Windows checks. Merged-main run 34483256073 passed the same gates.
+- Lightweight unsigned tag `v0.14.2` points directly to merge `5114808`.
+  The public Go proxy resolves that tag with module checksum
+  `h1:HIjhuU2nsE17gLc6C537lmILYB5aRkfs2dWlXFEuLYA=` and module-file checksum
+  `h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`. A clean public install
+  reports `forge 0.14.2`.
+- Two consecutive final-head framework suites passed locally with module files
+  read-only, alongside vet, schedule race tests, tidy, a native Windows CLI
+  build, and an untouched no-replace format-11 application pinned to the public
+  module. Independent exact-head review found no P0–P3 actionable finding.
+- Tag run 34484640732 passed Linux/PostgreSQL in 13m24s and native Windows in
+  6m07s, closing the public runtime stage before v0.14.3 adoption.
 
 ## Explicit non-goals
 
