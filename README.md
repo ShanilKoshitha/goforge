@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.14.0 is PostgreSQL-first and under acceptance against its written
+GoForge v0.14.1 is PostgreSQL-first and under acceptance against its written
 recurring-schedule milestone scorecard. It includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
@@ -71,15 +71,16 @@ IANA civil time and DST behavior, bounded misfire coalescing, conservative
 active-job overlap suppression, fail-closed definition fingerprints,
 competing-process row coordination, read-only inspection, and payload-free
 observers.
-Fresh scaffolds intentionally remain format 10 until the public v0.14.0 module
-can be pinned by the format-11 patch release.
+Fresh format-11 scaffolds now own the schedule registry, PostgreSQL migration,
+isolated configuration, scheduler process, inspection command, and direct Go
+escape hatches while pinning the immutable public v0.14.0 runtime.
 
 ## Install and try it
 
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.0
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.1
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -87,7 +88,8 @@ forge make:resource Issue
 forge migrate
 # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
 forge serve
-# In another terminal, start durable delivery with: forge queue:work
+# In other terminals, materialize recurring jobs with `forge schedule:work`
+# and execute durable delivery with `forge queue:work`.
 ```
 
 For framework development from this checkout:
@@ -133,9 +135,8 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.14.0 CLI. The bridge release
-keeps fresh applications on format 10 while making the schedule runtime public;
-generated `schedule:*` commands follow in the format-11 patch release.
+The command surface below is included in the v0.14.1 CLI. Fresh applications
+use format 11 and pin the immutable public v0.14.0 runtime.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
@@ -156,6 +157,9 @@ forge queue:work
 forge queue:failed
 forge queue:retry <id|--all>
 forge queue:forget <id>
+forge schedule:list
+forge schedule:run
+forge schedule:work
 ```
 
 The spaced forms (`forge make controller Users`) also work. Generators never
@@ -182,8 +186,8 @@ runtime schema. Updates replace the complete writable resource: a missing,
 `null`, or empty nullable value clears that column to SQL `NULL`, while numeric
 `0` and boolean `false` remain present values.
 
-Fresh format-10 applications can generate a required owner-scoped relationship
-to an existing resource:
+Format-10 and format-11 applications can generate a required owner-scoped
+relationship to an existing resource:
 
 ```sh
 forge make:resource Category --field name:string
@@ -198,7 +202,7 @@ choices, and presentation; generated SQL owns the composite owner/target
 constraint. No relationship registry or runtime schema is added.
 
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-10 projects. Both non-mutating preflights check the
+format-4 through format-11 projects. Both non-mutating preflights check the
 generated ORM first and compiled views second. Testing then runs exactly `go
 test ./...`. Building stages a trimmed `./cmd/server` executable and publishes
 it atomically as `bin/app` on Unix or `bin/app.exe` on Windows, so a failed build
@@ -211,7 +215,9 @@ forge orm:generate --check
 forge views:compile --check
 go test ./...
 go build -trimpath -o bin/app ./cmd/server
+go build -trimpath -o bin/scheduler ./cmd/scheduler
 go run ./cmd/server
+go run ./cmd/scheduler --once
 ```
 
 Use direct Go commands for custom packages, flags, tags, targets, output paths,

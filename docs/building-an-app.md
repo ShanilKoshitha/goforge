@@ -81,7 +81,7 @@ Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 `/issues`; handlers do not silently switch behavior based on content negotiation.
 
-Fresh format-10 JSON resource indexes are bounded and paginated. `GET /issues`
+Fresh format-10 and format-11 JSON resource indexes are bounded and paginated. `GET /issues`
 defaults to `page=1&per_page=20`; each parameter must appear at most once and be
 a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
 The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,
@@ -136,12 +136,15 @@ forge orm:generate --check
 forge views:compile --check
 go test ./...
 go build -trimpath -o bin/app ./cmd/server
+go build -trimpath -o bin/scheduler ./cmd/scheduler
 go run ./cmd/server
+go run ./cmd/scheduler --once
 ```
 
 Use direct `go test` or `go build` for custom packages, flags, build tags,
 targets, cross-compilation, or output paths. Build the generated worker with
-`go build -trimpath -o bin/worker ./cmd/worker` and the console with `go build
+`go build -trimpath -o bin/worker ./cmd/worker`, the scheduler with `go build
+-trimpath -o bin/scheduler ./cmd/scheduler`, and the console with `go build
 -trimpath -o bin/console ./cmd/console` when those deployment processes are
 needed.
 
