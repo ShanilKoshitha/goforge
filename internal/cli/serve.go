@@ -92,6 +92,10 @@ func runProjectServe(
 	if err := requireProjectFormatRange(minimumWorkflowFormat, currentProjectFormat); err != nil {
 		return err
 	}
+	processTreeGrace, err := developmentProcessTreeGrace()
+	if err != nil {
+		return err
+	}
 	publicAddress, err := developmentPublicAddress()
 	if err != nil {
 		return err
@@ -157,7 +161,7 @@ func runProjectServe(
 			return nil
 		},
 		start: func(startContext context.Context, binary string) (*developmentCandidate, error) {
-			return startDevelopmentCandidate(startContext, binary, stdout, stderr)
+			return startDevelopmentCandidate(startContext, binary, stdout, stderr, processTreeGrace)
 		},
 		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
 			return startServeProxy(address, target)
@@ -1021,6 +1025,7 @@ func startDevelopmentCandidate(
 	ctx context.Context,
 	binary string,
 	stdout, stderr io.Writer,
+	processTreeGrace time.Duration,
 ) (*developmentCandidate, error) {
 	return startDevelopmentCandidateWith(ctx, binary, stdout, stderr, developmentCandidateStartDependencies{
 		reserve:     reserveDevelopmentAddress,
@@ -1032,17 +1037,19 @@ func startDevelopmentCandidate(
 		ownsAddress: func(process developmentProcess, address string) (bool, error) {
 			return processOwnsDevelopmentAddress(process.PID(), address)
 		},
-		attempts: serveStartAttempts,
+		attempts:         serveStartAttempts,
+		processTreeGrace: processTreeGrace,
 	})
 }
 
 type developmentCandidateStartDependencies struct {
-	reserve     func() (string, *url.URL, error)
-	environment func(string) ([]string, error)
-	start       func(managedProcessSpec) (developmentProcess, error)
-	health      func(context.Context, developmentProcess, *url.URL, time.Duration) error
-	ownsAddress func(developmentProcess, string) (bool, error)
-	attempts    int
+	reserve          func() (string, *url.URL, error)
+	environment      func(string) ([]string, error)
+	start            func(managedProcessSpec) (developmentProcess, error)
+	health           func(context.Context, developmentProcess, *url.URL, time.Duration) error
+	ownsAddress      func(developmentProcess, string) (bool, error)
+	attempts         int
+	processTreeGrace time.Duration
 }
 
 func startDevelopmentCandidateWith(
@@ -1065,10 +1072,11 @@ func startDevelopmentCandidateWith(
 			return nil, err
 		}
 		process, err := dependencies.start(managedProcessSpec{
-			Name:        binary,
-			Environment: environment,
-			Stdout:      stdout,
-			Stderr:      stderr,
+			Name:             binary,
+			Environment:      environment,
+			Stdout:           stdout,
+			Stderr:           stderr,
+			ProcessTreeGrace: dependencies.processTreeGrace,
 		})
 		if err == nil {
 			err = dependencies.health(startupContext, process, target, serveStartupTimeout)

@@ -1022,3 +1022,44 @@ target absent from generated worker wiring, and a flaky security stopwatch all
 weaken the north-star promise of production-shaped defaults. Explicit typed
 context, generated metadata, and deterministic invariants close those gaps
 without runtime magic or hidden state.
+
+## D038 — `forge dev` composes the explicit format-11 processes
+
+**Status:** accepted in v0.15.0
+
+`forge dev` is an exact, no-argument format-11 development workflow. It runs the
+accepted `forge serve` loop in-process and starts the application-owned worker
+and scheduler through the same conventional commands as `forge queue:work` and
+`forge schedule:work`. Each service keeps its own configuration, database pool,
+registry, lifecycle, and executable entrypoint. GoForge adds coordination, not a
+combined application runtime.
+
+The supervisor labels complete output lines and waits for the existing server,
+worker, and scheduler startup signals before announcing the stack ready. A
+service that fails before readiness, exits cleanly when it should still be
+running, or stops unexpectedly later is a stack failure: its name and original
+cause are reported while one shared child context stops and reaps its peers.
+Cancellation of the parent is the one successful terminal path and waits for
+all owned work to finish within the supervisor's bounded grace. The default
+20-second grace exceeds the generated server and worker shutdown budgets. An
+application that deliberately lengthens either budget must export a longer
+`FORGE_DEV_SHUTDOWN_TIMEOUT`; the supervisor never waits without a bound.
+
+The command accepts only format 11. Formats 6 through 10 contain a worker but no
+scheduler, and earlier formats do not share the current background-process
+contract; silently choosing a different stack by project age would make the
+same command misleading. Their existing direct commands remain supported.
+
+`forge dev` does not start external infrastructure, apply migrations, mutate
+configuration, discover processes, or regenerate domain/ORM source. It retains
+only `forge serve`'s existing managed view compilation and last-good HTTP reload.
+Worker and scheduler source changes require restarting `forge dev`; coordinated
+hot replacement is not implied. Browser LiveReload and frontend assets remain
+separate because response/CSP safety and the production asset contract require
+their own acceptance boundaries.
+
+Reason: format-11 applications already form one production-shaped system across
+HTTP, durable jobs, and recurring schedules, but local development requires
+three manually coordinated terminals. A thin, fail-fast supervisor closes that
+workflow gap while preserving every direct Go escape hatch and avoiding new
+runtime magic.

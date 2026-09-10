@@ -49,10 +49,16 @@ commands:
 
 ```sh
 forge migrate
-forge serve
+forge dev
 ```
 
-`forge migrate` delegates to the application-owned console. `forge serve`
+`forge migrate` delegates to the application-owned console. Format-11
+`forge dev` starts the watched HTTP server, durable queue worker, and recurring
+scheduler together. It labels each service's output and reports the stack ready
+only after all three existing startup signals succeed. Any unexpected service
+exit stops its peers, and Ctrl-C waits for the complete owned process tree.
+
+`forge serve` remains the HTTP-only development command. It
 compiles views with the application's own function map, stages an ordinary Go
 server binary outside the repository, and keeps one public address while it
 watches Go, `.forge.html`, SQL, module, environment, and project-manifest
@@ -66,9 +72,11 @@ newest source, and Ctrl-C stops every owned process. `go run ./cmd/server`
 remains the exact one-shot escape hatch when watching or the development proxy
 does not fit.
 
-`forge serve` does not start Compose/PostgreSQL, apply migrations, generate a
-stale ORM artifact, change `.env`, start a worker, inject browser reload code,
-or compile frontend assets. Candidate promotion checks `/health` liveness;
+`forge dev` does not start Compose/PostgreSQL/Mailpit, apply migrations,
+generate a stale ORM artifact, change `.env`, inject browser reload code, or
+compile frontend assets. Worker and scheduler source or registry changes require
+restarting `forge dev`; the server retains its last-good hot replacement loop.
+Candidate promotion checks `/health` liveness;
 `/ready` continues to report PostgreSQL and exact migration readiness. A changed
 migration may therefore leave `/ready` at 503 until you run `forge migrate`.
 Run those operations explicitly.
@@ -151,8 +159,7 @@ needed.
 Test and build do not start services, provision a database, change `.env`, or
 apply migrations. Run `docker compose up -d` and `forge migrate` explicitly when
 the application workflow requires them. Browser LiveReload/HMR, frontend asset
-compilation, multi-process development, and environment diagnosis remain
-separate milestones.
+compilation, and environment diagnosis remain separate milestones.
 
 ## Run durable background work
 

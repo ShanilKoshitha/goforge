@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.14.3"
+const Version = "0.15.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -45,6 +45,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return errors.New("usage: forge serve")
 		}
 		return runProjectServe(ctx, stdin, stdout, stderr, processes)
+	case "dev":
+		if len(args) != 1 {
+			return errors.New("usage: forge dev")
+		}
+		return runProjectDev(ctx, stdin, stdout, stderr, processes)
 	case "test":
 		if len(args) != 1 {
 			return errors.New("usage: forge test")
@@ -148,6 +153,7 @@ func printHelp(w io.Writer) {
 Usage:
   forge new <directory> [--module <path>] [--replace <goforge-path>]
   forge serve
+  forge dev
   forge test
   forge build
   forge migrate

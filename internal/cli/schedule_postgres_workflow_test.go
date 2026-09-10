@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -401,6 +402,149 @@ func TestGeneratedSchedulePostgresWorkflow(t *testing.T) {
 	if daemon.ProcessState == nil || !daemon.ProcessState.Exited() {
 		t.Fatalf("generated scheduler daemon was not reaped: pid=%d", daemon.Process.Pid)
 	}
+
+	if _, err := db.ExecContext(context.Background(), "DELETE FROM goforge_jobs WHERE name = $1", scheduleAcceptanceJobName); err != nil {
+		t.Fatalf("reset scheduled jobs before forge dev: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), "DELETE FROM schedule_effects"); err != nil {
+		t.Fatalf("reset scheduled effects before forge dev: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `
+		UPDATE goforge_schedules
+		SET next_run_at = date_trunc('minute', clock_timestamp()),
+			last_evaluated_at = NULL,
+			last_cursor_at = NULL,
+			last_occurrence_at = NULL,
+			last_job_id = NULL,
+			last_outcome = NULL,
+			updated_at = clock_timestamp()
+		WHERE name = $1`, scheduleAcceptanceName); err != nil {
+		t.Fatalf("reseed due schedule cursor before forge dev: %v", err)
+	}
+
+	developmentAddress := freeAddress(t)
+	developmentEnvironment := jobAcceptanceEnvironment(applicationEnvironment, map[string]string{
+		"APP_ADDRESS": developmentAddress,
+		"APP_URL":     "http://" + developmentAddress,
+	})
+	developmentOutput := &synchronizedBuffer{}
+	development := exec.Command(forgeBinary, "dev")
+	development.Dir = directory
+	development.Env = developmentEnvironment
+	development.Stdout, development.Stderr = developmentOutput, developmentOutput
+	configureCommandProcess(development)
+	if err := development.Start(); err != nil {
+		t.Fatalf("start forge dev: %v", err)
+	}
+	developmentRunning := true
+	t.Cleanup(func() {
+		if developmentRunning {
+			stopCommandProcess(t, development, false)
+		}
+	})
+	jobAcceptanceEventually(t, 60*time.Second, func() (bool, string) {
+		output := developmentOutput.String()
+		ready := scheduleAcceptanceHasLabelledLine(output, "server", "serving http://") &&
+			scheduleAcceptanceHasLabelledLine(output, "worker", "worker_started") &&
+			scheduleAcceptanceHasLabelledLine(output, "scheduler", "event=scheduler_started") &&
+			strings.Count(output, developmentReadyMessage) == 1
+		return ready, output
+	})
+	baseURL := "http://" + developmentAddress
+	waitForHealth(t, baseURL, developmentOutput)
+
+	var developmentJobID string
+	jobAcceptanceEventually(t, 10*time.Second, func() (bool, string) {
+		err := db.QueryRowContext(context.Background(), `
+			SELECT COALESCE(last_job_id, '')
+			FROM goforge_schedules WHERE name = $1`, scheduleAcceptanceName).Scan(&developmentJobID)
+		return err == nil && developmentJobID != "", fmt.Sprintf("job=%q err=%v\n%s", developmentJobID, err, developmentOutput.String())
+	})
+	if _, err := db.ExecContext(context.Background(), `
+		UPDATE goforge_schedules
+		SET next_run_at = date_trunc('minute', clock_timestamp()) + interval '1 day',
+			updated_at = clock_timestamp()
+		WHERE name = $1`, scheduleAcceptanceName); err != nil {
+		t.Fatalf("freeze schedule cursor after forge dev materialization: %v", err)
+	}
+	var developmentOccurrence time.Time
+	var developmentOutcome string
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT last_occurrence_at, last_outcome
+		FROM goforge_schedules WHERE name = $1`, scheduleAcceptanceName).Scan(&developmentOccurrence, &developmentOutcome); err != nil {
+		t.Fatalf("read forge dev schedule materialization: %v", err)
+	}
+	if developmentOutcome != "enqueued" {
+		t.Fatalf("forge dev scheduler outcome = %q, want enqueued\n%s", developmentOutcome, developmentOutput.String())
+	}
+	jobAcceptanceEventually(t, 12*time.Second, func() (bool, string) {
+		effects := jobAcceptanceCount(t, db, "SELECT COUNT(*) FROM schedule_effects WHERE job_id = $1::uuid", developmentJobID)
+		queued := jobAcceptanceCount(t, db, "SELECT COUNT(*) FROM goforge_jobs WHERE id = $1::uuid", developmentJobID)
+		return effects == 1 && queued == 0, fmt.Sprintf("effect=%d queued=%d job=%s\n%s", effects, queued, developmentJobID, developmentOutput.String())
+	})
+	var developmentEffectAt time.Time
+	var developmentAttempt int
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT scheduled_at, attempt FROM schedule_effects WHERE job_id = $1::uuid`, developmentJobID,
+	).Scan(&developmentEffectAt, &developmentAttempt); err != nil {
+		t.Fatalf("read forge dev scheduled effect: %v", err)
+	}
+	if developmentAttempt != 1 || !developmentEffectAt.UTC().Equal(developmentOccurrence.UTC()) {
+		t.Fatalf("forge dev worker effect attempt=%d at=%s, want attempt=1 at=%s",
+			developmentAttempt, developmentEffectAt.UTC().Format(time.RFC3339), developmentOccurrence.UTC().Format(time.RFC3339))
+	}
+
+	initialBody := developmentResponse(t, baseURL)
+	partialPath := filepath.Join(directory, "resources", "views", "partials", "tagline.forge.html")
+	originalPartial, err := os.ReadFile(partialPath)
+	if err != nil {
+		t.Fatalf("read forge dev welcome partial: %v", err)
+	}
+	generatedPath := filepath.Join(directory, filepath.FromSlash(generatedViewsPath))
+	lastGoodArtifact, err := os.ReadFile(generatedPath)
+	if err != nil {
+		t.Fatalf("read forge dev compiled views: %v", err)
+	}
+	outputOffset := len(developmentOutput.String())
+	if err := os.WriteFile(partialPath, []byte("@if(.Ready)\n@endfor\n"), 0o644); err != nil {
+		t.Fatalf("write invalid Forge view under forge dev: %v", err)
+	}
+	waitForDevelopmentOutput(t, developmentOutput, outputOffset, "partials/tagline.forge.html:2:1")
+	if body := developmentResponse(t, baseURL); body != initialBody {
+		t.Fatalf("invalid Forge view replaced forge dev's last-good response:\n%s", body)
+	}
+	assertDevelopmentArtifact(t, generatedPath, lastGoodArtifact, "invalid Forge edit under forge dev")
+	repairedPartial := append(append([]byte(nil), originalPartial...), []byte("\n<p data-development-probe=\"forge-dev-recovered\">forge-dev-recovered</p>\n")...)
+	if err := os.WriteFile(partialPath, repairedPartial, 0o644); err != nil {
+		t.Fatalf("repair Forge view under forge dev: %v", err)
+	}
+	waitForDevelopmentResponse(t, baseURL, "forge-dev-recovered", developmentOutput)
+	if count := strings.Count(developmentOutput.String(), developmentReadyMessage); count != 1 {
+		t.Fatalf("forge dev aggregate readiness count = %d, want exactly one\n%s", count, developmentOutput.String())
+	}
+
+	stopCommandProcess(t, development, true)
+	developmentRunning = false
+	if development.ProcessState == nil || !development.ProcessState.Success() {
+		t.Fatalf("cancelled forge dev did not exit cleanly: %v\n%s", development.ProcessState, developmentOutput.String())
+	}
+	listener, err := net.Listen("tcp", developmentAddress)
+	if err != nil {
+		t.Fatalf("forge dev did not release its public address: %v\n%s", err, developmentOutput.String())
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close reused forge dev address: %v", err)
+	}
+}
+
+func scheduleAcceptanceHasLabelledLine(output, service, marker string) bool {
+	prefix := "[" + service + "] "
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, prefix) && strings.Contains(line, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func scheduleAcceptanceDatabaseMinute(t *testing.T, db *sql.DB) time.Time {

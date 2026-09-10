@@ -48,6 +48,29 @@ func TestRunCLIRecognizesWrappedChildExitError(t *testing.T) {
 	}
 }
 
+type detailedCLIError struct{ cause error }
+
+func (err *detailedCLIError) Error() string        { return "worker service failed: " + err.cause.Error() }
+func (err *detailedCLIError) Unwrap() error        { return err.cause }
+func (err *detailedCLIError) ReportCLIError() bool { return true }
+
+func TestRunCLIReportsAggregateChildFailureAndPreservesExitCode(t *testing.T) {
+	exitError := processExitError(t, 31)
+	var stderr bytes.Buffer
+
+	code := runCLI(context.Background(), nil, nil, io.Discard, &stderr,
+		func(context.Context, []string, io.Reader, io.Writer, io.Writer) error {
+			return &detailedCLIError{cause: exitError}
+		})
+
+	if code != 31 {
+		t.Fatalf("exit code = %d, want 31", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "worker service failed") {
+		t.Fatalf("aggregate diagnostic = %q", got)
+	}
+}
+
 func TestRunCLIPrintsFrameworkErrorOnce(t *testing.T) {
 	var stderr bytes.Buffer
 

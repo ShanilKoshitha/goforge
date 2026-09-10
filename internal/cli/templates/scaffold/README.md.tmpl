@@ -15,7 +15,7 @@ forge schedule:list
 forge test
 forge build
 # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
-forge serve
+forge dev
 ```
 
 These commands assume PostgreSQL is reachable at the
@@ -25,10 +25,15 @@ GoForge never starts external services implicitly. The generated `.env`
 contains unique session/outbox secrets and retains `APP_ENV=production`, which
 keeps cookies HTTPS-only and rejects plaintext SMTP. For local plain-HTTP
 development, change `APP_ENV` to `local` and `APP_URL` to
-`http://localhost:8080` before running `forge serve` or the worker. Mailpit is
-available at `http://localhost:8025`. Never use `APP_ENV=local` in a
+`http://localhost:8080` before running `forge dev`, `forge serve`, or the
+worker. Mailpit is available at `http://localhost:8025`. Never use
+`APP_ENV=local` in a
 deployed process because it disables secure cookies. Replace the local database
 URL, rotate both secrets, and configure TLS-protected SMTP before deployment.
+`forge dev` allows 20 seconds for graceful process-tree shutdown. If you
+increase the server or worker shutdown timeout beyond that default, export a
+longer `FORGE_DEV_SHUTDOWN_TIMEOUT` before starting the CLI; its Go duration
+must exceed the longest application drain.
 Generated Compose ports are bound to `127.0.0.1` so known development
 credentials and Mailpit are not exposed on other network interfaces.
 HTTP limits and timeouts are listed in `.env.example`. Enable
@@ -149,13 +154,17 @@ go run ./cmd/server
 Direct Go commands remain available for custom packages, flags, tags, targets,
 and output paths. `forge test` and `forge build` do not start PostgreSQL or
 Compose, apply migrations, select a test database, or change `.env`. `forge
-serve` watches Go, Forge view, SQL, module, environment, and manifest inputs. It
+dev` supervises the watched server, worker, and scheduler with labelled output
+and reports ready only after all three have started. It starts no external
+service and applies no migration. `forge serve` watches Go, Forge view, SQL,
+module, environment, and manifest inputs. It
 builds candidates outside the repository, proves `/health` on a private
 loopback address, and promotes only a healthy replacement behind one stable
 public address. Invalid source leaves the last-good server reachable and
-recovers after correction. Refresh the browser after a successful reload; the
-proxy does not inject scripts or rewrite responses. Frontend HMR and
-multi-process development orchestration remain separate future work. Candidate
+recovers after correction. Worker or scheduler source changes require restarting
+`forge dev`; their ordinary direct commands remain available. Refresh the
+browser after a successful reload; the proxy does not inject scripts or rewrite
+responses. Frontend HMR remains separate future work. Candidate
 promotion proves `/health` liveness, while `/ready` continues to reflect the
 database and exact migration state; run `forge migrate` explicitly after SQL
 changes.
