@@ -148,7 +148,7 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.16.0 source. Fresh applications
+The command surface below is included in the v0.17.0 source. Fresh applications
 use format 11 and pin the immutable public v0.14.2 runtime.
 
 ```text
@@ -271,6 +271,8 @@ environment diagnosis remain separate milestones.
 ## Framework packages
 
 - `forge`: application lifecycle and graceful shutdown
+- `asset`: bounded immutable embedded files, canonical URLs, strong validators,
+  byte ranges, and deterministic media policy through standard `http.Handler`
 - `httpx`: routing, JSON binding, errors, middleware, and `net/http` adapters
 - `config`: typed environment and optional dotenv loading
 - `validation`: fluent validation without reflection
