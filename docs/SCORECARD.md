@@ -1,3 +1,68 @@
+# v0.15 unified development workflow scorecard
+
+Status: **in progress** — 2026-09-10
+
+Target:
+
+> From a fresh format-11 application with its explicit services and migrations
+> already configured, run one `forge dev` command to start the watched HTTP
+> server, durable queue worker, and recurring scheduler; receive process-labelled
+> output and one truthful all-ready signal; exercise HTTP and scheduled work; and
+> stop every owned process tree together. Keep infrastructure, migrations,
+> configuration, source, and every production process independently inspectable
+> and runnable through their existing commands.
+
+The smallest complete workflow is intentionally format 11 only. Earlier project
+formats do not contain the same three-process application contract. `forge dev`
+composes the existing development server, worker, and scheduler; it does not
+create a combined runtime or a production supervisor.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| One command starts the complete generated application | candidate | Exact no-argument `forge dev` validation starts only the watched server, `go run ./cmd/worker`, and `go run ./cmd/scheduler` from a format-11 project; older, future, malformed, and non-project invocations fail before spawning work |
+| Readiness is truthful and output remains usable | candidate | Every stdout/stderr line is atomically labelled by service, partial and concurrent writes cannot interleave prefixes, and the single stack-ready message appears only after the existing server, worker, and scheduler startup signals have all been forwarded |
+| Failure is fail-fast and attributable | candidate | A startup failure, clean premature exit, or later unexpected exit identifies the service, retains the underlying cause, cancels and reaps both peers, and never prints a false ready signal |
+| Cancellation owns the whole tree | candidate | Ctrl-C/SIGTERM cancels one shared context, waits for all three services, returns successfully, and leaves no server listener, Go wrapper, worker, scheduler, or descendant alive on Linux or Windows |
+| Existing development guarantees remain intact | candidate | `forge serve` retains last-good view/Go compilation, private liveness promotion, recovery after invalid edits, one stable public address, and its current direct `go run ./cmd/server` escape hatch under `forge dev` |
+| Side effects remain explicit | candidate | The command does not start Compose/PostgreSQL/Mailpit, apply migrations, mutate `.env`, generate application resources or ORM source, open a browser, respawn crashes, or conceal missing configuration; only the existing managed view compilation/publication behavior remains |
+| Production remains conventional | candidate | Generated `cmd/server`, `cmd/worker`, and `cmd/scheduler` stay independent ordinary Go entrypoints; the existing `forge serve`, `queue:work`, and `schedule:work` commands and direct `go run`/`go build` paths remain exact escape hatches |
+| Fresh application journey is end to end | candidate | A fresh no-replace format-11 application with PostgreSQL materializes a registered scheduled job, executes and acknowledges its durable effect, serves HTTP, survives and recovers from an invalid view edit through the server path, then shuts down cleanly from one `forge dev` invocation |
+| The milestone passes twice without regression | candidate | Framework race/vet/build, released-format compatibility, current scaffold, generated PostgreSQL workflow, native Windows process tests, and independent adversarial review pass twice on the final revision |
+
+## Runnable baseline — 2026-09-10
+
+- Public v0.14.3 is fixed at merge `f1550c0`; its merged-main and tag CI runs
+  passed the Linux/PostgreSQL and native Windows matrices, and the public Go
+  proxy resolves the exact lightweight unsigned tag and checksums.
+- A clean branch from `origin/main` starts with independent `forge serve`,
+  `forge queue:work`, and `forge schedule:work` commands. The generated guide
+  requires separate terminals, and there is no `forge dev` command or aggregate
+  process lifecycle.
+- `forge serve` already owns cross-platform descendant cleanup, last-good server
+  replacement, and an explicit startup line. Generated worker and scheduler
+  processes already emit stable structured startup events. The new workflow can
+  compose these contracts without changing application runtime packages,
+  project format, or database schema.
+
+## Explicit non-goals
+
+- Starting or configuring Docker Compose, PostgreSQL, Mailpit, or any other
+  external service; applying migrations; changing `.env`; or repairing missing
+  dependencies.
+- Browser LiveReload/HMR, response rewriting, frontend asset compilation, Node,
+  npm, Tailwind, or a production asset manifest. Browser reload is the next
+  independent development-loop boundary after this process workflow.
+- Production supervision, daemonization, crash restart, a TUI, persisted logs,
+  Procfile/process discovery, arbitrary user-defined processes, or remote
+  development.
+- Hot replacement of worker or scheduler processes. The watched HTTP server
+  keeps its accepted last-good reload behavior; background-process source or
+  registry changes require restarting the single `forge dev` command.
+- A new project format, generated runtime abstraction, service container,
+  reflection, process discovery, or changes to queue/schedule delivery semantics.
+
 # v0.14.2–v0.14.3 schedule integration hardening scorecard
 
 Status: **accepted** — 2026-09-10
