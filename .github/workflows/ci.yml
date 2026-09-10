@@ -82,7 +82,7 @@ jobs:
           cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.13.1'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.14.0'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.13.0' go.mod

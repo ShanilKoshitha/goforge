@@ -1,3 +1,109 @@
+# v0.14 durable recurring schedules scorecard
+
+Status: **in progress** — 2026-09-09
+
+Target:
+
+> From a fresh application, explicitly bind a typed application job to a
+> five-field recurring schedule, migrate durable PostgreSQL schedule state,
+> inspect it, materialize a due occurrence once across competing scheduler
+> processes, and execute it with the existing queue worker. Time zones, DST,
+> missed runs, overlap, crash atomicity, and definition changes must have
+> written conservative behavior while the registry, payload, SQL, processes,
+> and direct database/queue escape hatches remain ordinary inspectable Go.
+
+The intended workflow is:
+
+```text
+forge new reportboard --module example.com/reportboard
+cd reportboard
+forge make:job RebuildSearchIndex
+# Bind RebuildSearchIndexDefinition in internal/schedules/registry.go.
+forge migrate
+forge schedule:list
+forge schedule:run
+forge schedule:work
+forge queue:work
+```
+
+The scheduler only materializes typed jobs into the existing durable queue. A
+separate queue worker executes them. Fresh applications move to project format
+11 only after the new schedule runtime is available from a public immutable
+module tag.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Schedule definitions are explicit and exact | in progress | An application-owned registry binds a validated, versioned schedule name and five-field cron expression to one typed job definition and payload factory without reflection, scanning, or persisted application schema |
+| Civil-time behavior is deterministic | in progress | UTC and IANA zones, DOM/DOW semantics, leap dates, spring-forward gaps, fall-back repeated minutes, and strictly increasing occurrences pass fixed-clock tests |
+| Durable materialization is atomic | in progress | PostgreSQL row locking plus the existing transactional dispatcher commit the job and cursor together; cancellation, enqueue failure, state failure, panic, and process death commit neither half |
+| Multiple scheduler processes are safe | in progress | Concurrent runners coordinate per schedule without a global leader; one occurrence creates at most one queue row while unrelated schedule rows can progress independently |
+| Missed-run and overlap policy are bounded | in progress | Missed occurrences coalesce to the latest occurrence inside a bounded grace window, older windows record a skip, and the default active-job deduplication policy suppresses overlap while advancing the cursor |
+| Definition drift fails closed | in progress | A canonical declarative fingerprint is stored durably; a same-name mismatch stops without rewriting state or dispatching, dormant rows absent from the explicit registry never run, and changed-registry deployment boundaries are explicit |
+| Operational commands form one inspectable workflow | in progress | `schedule:list`, one-shot `schedule:run`, daemon `schedule:work`, direct `go run ./cmd/scheduler`, deterministic output, signal cancellation, and bounded configuration all work from outside the source directory |
+| Fresh and existing applications remain coherent | in progress | Format 11 includes visible registry, scheduler binary, config, migrations, and docs; formats 8–10 retain compatible commands; format 10 belongs-to remains supported; server, worker, scheduler, console, views, and ORM all compile |
+| Escape hatches stay complete | in progress | Public registry, scheduler, store/coordinator, observer, and PostgreSQL primitives are usable directly; application teams can replace cron registration, payload factories, process wiring, SQL adapter, or the entire scheduler |
+| The milestone passes twice without regression | in progress | Full framework race/vet/build, fresh generated application, competing-process PostgreSQL acceptance, native Windows CLI coverage, and independent architecture/adversarial review pass twice on the final revision |
+
+## Runnable baseline — 2026-09-09
+
+- `main` merge `a189fc2` passes Linux/PostgreSQL and native Windows in
+  [CI run 34380649800](https://github.com/ShanilKoshitha/goforge/actions/runs/34380649800).
+  A clean worktree at that commit passes `go test ./... -count=1`, `go vet
+  ./...`, and a Windows CLI build after its isolated public module cache is
+  populated.
+- Lightweight public tag `v0.13.1` resolves to that exact merge, installs as
+  `forge 0.13.1`, and generates a no-replace format-10 application that passes
+  required belongs-to generation, module verification, tests, and build.
+- Durable one-off typed jobs already provide PostgreSQL enqueue, active-job
+  deduplication, delayed/absolute dispatch, transactional `Dispatcher.Using`,
+  fenced workers, retries, failures, observers, administration, and direct
+  store/SQL escape hatches.
+- Recurrence is absent: there is no cron parser, explicit schedule registry,
+  durable occurrence cursor, missed-run/overlap contract, scheduler process,
+  or schedule command surface.
+- The implementation is intentionally staged. The runtime/PostgreSQL contract
+  lands first while fresh apps remain format 10, then an immutable v0.14.0 tag
+  allows the format-11 scaffold to pin resolvable public code in a
+  checksum-bearing v0.14.1 CLI release.
+
+## Stage A runtime bridge evidence — 2026-09-09
+
+- The explicit runtime, PostgreSQL adapter, direct operations guide, and
+  v0.14.0 bridge version are committed as `678adf7`, `ded8dcf`, `c3d8e78`, and
+  `a913230` after the contract commit `c7fa178`.
+- `go test ./... -count=1` passed twice on the final local revision. Focused
+  `go test -race ./schedule/... ./job -count=2`, `go vet ./...`, module tidy,
+  whitespace, and a Windows CLI build reporting `forge 0.14.0` also passed.
+- That CLI generated a fresh format-10 application pinned to public v0.13.0
+  with no `replace`. Module verification and tidy-diff, generated `forge test`,
+  `go vet ./...`, `forge build`, and the worker build all passed.
+- An independent adversarial review found no P0. It found and closed unsafe
+  mixed-registry replacement guidance and UUID-only schedule job IDs. The
+  final contract documents the scheduler-only replacement window, while the
+  adapter now persists bounded opaque IDs and tests a custom queue-store ID.
+- The live PostgreSQL suite covers 16 competing transactions, restart state,
+  row independence, current-minute initialization, misfire coalescing and
+  expiry, overlap suppression, drift, cancellation, state conflict, backend
+  termination, dormant rows, opaque IDs, and schema constraints. Local
+  PostgreSQL credentials did not match the test role, so CI remains the
+  authoritative live execution gate before merge.
+
+## Explicit non-goals for v0.14
+
+- Database-authored, dynamic, or per-tenant schedules.
+- Seconds fields, cron macros, RRULE, holiday/business calendars, or arbitrary
+  catch-up and replay.
+- Overlapping scheduled jobs, exactly-once handler effects, chains, batches,
+  DAGs, dashboards, or a scheduler web UI.
+- Alternate Redis, cloud-queue, or Kubernetes scheduler adapters.
+- Runtime package scanning, annotations, reflection, server embedding, or a
+  generated schedule metadata file.
+- Mixed-registry rolling replacement or an automatic durable retirement
+  protocol; removals and replacements use a scheduler-only maintenance window.
+- A `make:schedule` generator, unified `forge dev`, or frontend asset/HMR work.
+
 # v0.13 required belongs-to resource generation scorecard
 
 Status: **accepted** — 2026-09-09

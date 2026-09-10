@@ -889,3 +889,78 @@ failure.
 Reason: the scaffold must pin an immutable public module whose checksums already
 exist. The two-step release keeps each tag reproducible and proves generated
 applications do not depend on the framework checkout.
+
+## D036 — Recurring schedules are explicit durable job materializers
+
+**Status:** accepted for v0.14 implementation
+
+Recurring schedules are code-owned definitions in an ordinary application
+registry. Each definition has a stable versioned name, a strict five-field cron
+expression, an IANA time zone, a bounded misfire grace, a typed job definition,
+and a deterministic payload factory. The framework performs no package
+scanning, reflection, annotation discovery, or interpretation of a persisted
+application schema.
+
+A separate scheduler process evaluates definitions and materializes typed jobs
+into the existing durable queue; it never executes handler effects and is not
+embedded in the HTTP server or queue worker. PostgreSQL stores one cursor row
+per schedule. Competing processes coordinate with short per-row transactions
+and `FOR UPDATE SKIP LOCKED`, so unrelated schedules can progress without a
+global leader. Dispatch through `job.Dispatcher.Using(tx)` and cursor advance
+commit atomically. A crash, cancellation, encoding failure, enqueue failure, or
+state-update failure therefore leaves the occurrence available for retry.
+
+Cron uses one-minute resolution. Day-of-month and day-of-week use traditional
+cron OR semantics when both are restricted. Civil time is evaluated in the
+declared location: nonexistent spring-forward minutes do not occur, while both
+distinct instants in a fall-back repeated minute are eligible. A newly observed
+schedule may materialize the current civil-minute occurrence when it is inside
+the grace window, but does not replay older history.
+
+Missed occurrences coalesce to the latest occurrence inside the inclusive
+grace window; if none remains eligible, the scheduler records a skip and moves
+the cursor after database time. The default and only v0.14 overlap policy uses
+the existing active-job unique key `goforge:schedule:<schedule-name>`. A queued,
+leased, or retrying prior job suppresses the next materialization, records that
+outcome, and still advances the occurrence cursor. Queue delivery and handler
+effects remain at least once, not exactly once.
+
+The durable row stores a SHA-256 fingerprint of every declarative behavioral
+input, including canonical cron, location, job name and policy, queue, payload
+strategy, grace, and overlap policy. Static payload fingerprints also include
+their canonical encoded bytes. Dynamic factories use a distinct strategy
+marker and rely on the versioned schedule name as their deployment contract. A
+same-name fingerprint mismatch fails closed without dispatch or automatic state
+rewrite. Rows missing from the explicit registry remain inspectable but inert.
+Changing a deployed schedule requires a new versioned name in v0.14; automatic
+in-place replacement is deferred because mixed scheduler releases must not
+alternate between definitions.
+
+Scheduler releases with identical registries may overlap, and a purely
+additive registry change is safe because older processes cannot see the new
+definition. Removing or replacing a definition is different: an old process
+can continue materializing the removed name while a new process materializes
+its replacement. v0.14 therefore requires a scheduler-only maintenance window
+for removals and replacements: stop every old scheduler, deploy the changed
+registry, then start the new schedulers. HTTP servers and queue workers do not
+need to stop. A durable retirement protocol for mixed-registry rolling deploys
+is deferred rather than implied by the per-row coordination guarantee.
+
+The release is split to preserve a compileable public scaffold at every main
+commit. First, the schedule runtime and PostgreSQL adapter merge while fresh
+applications remain format 10; lightweight tag v0.14.0 then makes that package
+public. Second, the checksum-bearing v0.14.1 CLI moves fresh applications to
+format 11 and pins v0.14.0. This avoids generating imports that do not yet exist
+in the scaffold's public module dependency.
+
+Database-authored or runtime-generated schedules, per-tenant definitions,
+seconds/macros/RRULE, arbitrary catch-up, overlap, occurrence history,
+dashboards, alternate stores, runtime discovery, HTTP-server embedding,
+durable mixed-registry retirement, and unified development orchestration
+remain outside this milestone.
+
+Reason: delayed jobs alone do not provide the operational contract developers
+expect from Laravel, Symfony, Rails, or Spring. A small durable materializer
+composes the queue and transaction seams GoForge already owns while keeping
+every definition, payload, process, and database boundary visible and
+replaceable.

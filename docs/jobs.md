@@ -171,7 +171,9 @@ PostgreSQL adapter also exposes claim and fenced mutation primitives for custom
 worker runtimes. Direct `database/sql`, custom stores, and custom workers can be
 used without changing the HTTP framework.
 
-Recurring schedules are intentionally separate. Cron parsing, time zones and
-DST, missed-run policy, overlap locks, occurrence deduplication, and scheduler
-leadership form the next operational contract; one-off delayed jobs are fully
-supported here.
+Recurring schedules remain a separate process and package rather than hidden
+worker behavior. They materialize typed jobs through this same transactional
+dispatcher and let the existing queue worker execute them. See
+[Durable recurring schedules](schedules.md) for cron, civil-time, misfire,
+overlap, drift, and PostgreSQL coordination semantics. One-off delayed jobs
+remain fully supported without the scheduler.

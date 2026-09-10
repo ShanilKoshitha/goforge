@@ -19,11 +19,12 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.13.1 is PostgreSQL-first and accepted against its written milestone
-scorecard. It includes explicit database wiring, parallel JSON and
-server-rendered authentication, database-backed sessions, CSRF-protected HTML
-forms, production middleware, embedded migrations, owner-scoped JSON and HTML
-CRUD generation, a reflection-free typed ORM, a static Go-model parser,
+GoForge v0.14.0 is PostgreSQL-first and under acceptance against its written
+recurring-schedule milestone scorecard. It includes explicit database wiring,
+parallel JSON and server-rendered authentication, database-backed sessions,
+CSRF-protected HTML forms, production middleware, embedded migrations,
+owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
+static Go-model parser,
 deterministic mapping generation, explicit eager-loaded relationships, and
 ORM-backed fresh scaffolds/resources. Its positioned `.forge.html` compiler adds
 static components, strict props and slots, control directives, page-local
@@ -64,13 +65,21 @@ and form input, eager-loaded repositories, bounded browser choices, Forge
 views, and generated tests. Missing and cross-owner targets are deliberately
 indistinguishable, while direct SQL and handwritten relationship code remain
 complete escape hatches.
+The v0.14 runtime adds explicit versioned recurring schedules that atomically
+materialize typed jobs through PostgreSQL. It defines strict five-field cron,
+IANA civil time and DST behavior, bounded misfire coalescing, conservative
+active-job overlap suppression, fail-closed definition fingerprints,
+competing-process row coordination, read-only inspection, and payload-free
+observers.
+Fresh scaffolds intentionally remain format 10 until the public v0.14.0 module
+can be pinned by the format-11 patch release.
 
 ## Install and try it
 
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.13.1
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -124,7 +133,9 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.13.1 CLI.
+The command surface below is included in the v0.14.0 CLI. The bridge release
+keeps fresh applications on format 10 while making the schedule runtime public;
+generated `schedule:*` commands follow in the format-11 patch release.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
