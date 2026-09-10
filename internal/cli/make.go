@@ -40,7 +40,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	if err := requireProjectFormatRange(1, 10); err != nil {
+	if err := requireProjectFormatRange(1, currentProjectFormat); err != nil {
 		return err
 	}
 	lock, err := acquireGeneratorLock(ctx)
@@ -83,7 +83,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 }
 
 func makeComponent(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
-	if err := requireProjectFormatRange(5, 10); err != nil {
+	if err := requireProjectFormatRange(5, currentProjectFormat); err != nil {
 		return err
 	}
 	componentName, err := snake(name)

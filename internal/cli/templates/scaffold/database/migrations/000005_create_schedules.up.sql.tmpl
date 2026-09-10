@@ -1,0 +1,65 @@
+CREATE TABLE goforge_schedules (
+    name text PRIMARY KEY CHECK (
+        octet_length(name) BETWEEN 1 AND 128
+        AND name ~ '^[a-z][a-z0-9._-]*\.v[1-9][0-9]*$'
+    ),
+    fingerprint text NOT NULL CHECK (
+        octet_length(fingerprint) = 64
+        AND fingerprint ~ '^[0-9a-f]{64}$'
+    ),
+    cron_expression text NOT NULL CHECK (octet_length(cron_expression) BETWEEN 1 AND 256),
+    time_zone text NOT NULL CHECK (octet_length(time_zone) BETWEEN 1 AND 128),
+    job_name text NOT NULL CHECK (
+        octet_length(job_name) BETWEEN 1 AND 128
+        AND job_name ~ '^[a-z][a-z0-9._-]*\.v[1-9][0-9]*$'
+    ),
+    queue text NOT NULL CHECK (
+        octet_length(queue) BETWEEN 1 AND 64
+        AND queue ~ '^[a-z][a-z0-9._-]*$'
+    ),
+    misfire_grace_ms bigint NOT NULL CHECK (misfire_grace_ms BETWEEN 60000 AND 31536000000),
+    overlap_policy text NOT NULL CHECK (overlap_policy = 'forbid'),
+    next_run_at timestamptz NOT NULL,
+    last_evaluated_at timestamptz,
+    last_cursor_at timestamptz,
+    last_occurrence_at timestamptz,
+    last_job_id text CHECK (
+        last_job_id IS NULL
+        OR octet_length(last_job_id) BETWEEN 1 AND 1024
+    ),
+    last_outcome text CHECK (
+        last_outcome IS NULL
+        OR last_outcome IN ('enqueued', 'overlap_suppressed', 'misfire_skipped')
+    ),
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    CHECK (updated_at >= created_at),
+    CHECK (
+        (
+            last_outcome IS NULL
+            AND last_evaluated_at IS NULL
+            AND last_cursor_at IS NULL
+            AND last_occurrence_at IS NULL
+            AND last_job_id IS NULL
+        )
+        OR
+        (
+            last_outcome = 'misfire_skipped'
+            AND last_evaluated_at IS NOT NULL
+            AND last_cursor_at IS NOT NULL
+            AND last_occurrence_at IS NULL
+            AND last_job_id IS NULL
+        )
+        OR
+        (
+            last_outcome IN ('enqueued', 'overlap_suppressed')
+            AND last_evaluated_at IS NOT NULL
+            AND last_cursor_at IS NOT NULL
+            AND last_occurrence_at IS NOT NULL
+            AND last_job_id IS NOT NULL
+        )
+    )
+);
+
+CREATE INDEX goforge_schedules_due_idx
+    ON goforge_schedules (next_run_at, name);

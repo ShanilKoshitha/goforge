@@ -69,8 +69,83 @@ func TestMigrateRunsGeneratedConsole(t *testing.T) {
 	}
 }
 
+func TestScheduleCommandsDelegateForCurrentFormat(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: 11\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(directory)
+	sequence := &processSequence{}
+
+	for _, args := range [][]string{
+		{"schedule:work"},
+		{"schedule:run"},
+		{"schedule:list"},
+	} {
+		if err := run(context.Background(), args, nil, io.Discard, io.Discard, sequence); err != nil {
+			t.Fatalf("run(%v): %v", args, err)
+		}
+	}
+
+	want := []processCall{
+		{name: "go", args: []string{"run", "./cmd/scheduler"}},
+		{name: "go", args: []string{"run", "./cmd/scheduler", "--once"}},
+		{name: "go", args: []string{"run", "./cmd/console", "schedule:list"}},
+	}
+	if !reflect.DeepEqual(sequence.calls, want) {
+		t.Fatalf("schedule process calls = %#v, want %#v", sequence.calls, want)
+	}
+}
+
+func TestScheduleCommandsRequireNoArguments(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: 11\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(directory)
+	process := &recordedProcess{}
+
+	for _, test := range []struct {
+		args  []string
+		usage string
+	}{
+		{args: []string{"schedule:work", "--once"}, usage: "usage: forge schedule:work"},
+		{args: []string{"schedule:run", "extra"}, usage: "usage: forge schedule:run"},
+		{args: []string{"schedule:list", "extra"}, usage: "usage: forge schedule:list"},
+	} {
+		err := run(context.Background(), test.args, nil, io.Discard, io.Discard, process)
+		if err == nil || err.Error() != test.usage {
+			t.Errorf("run(%v): error = %v, want %q", test.args, err, test.usage)
+		}
+	}
+	if process.called {
+		t.Fatal("invalid schedule command spawned a process")
+	}
+}
+
+func TestScheduleCommandsRequireFormatEleven(t *testing.T) {
+	for _, version := range []string{"10", "12"} {
+		t.Run(version, func(t *testing.T) {
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(directory)
+			process := &recordedProcess{}
+
+			err := run(context.Background(), []string{"schedule:work"}, nil, io.Discard, io.Discard, process)
+			if err == nil || !strings.Contains(err.Error(), "format") {
+				t.Fatalf("format %s error = %v", version, err)
+			}
+			if process.called {
+				t.Fatal("unsupported schedule project spawned a process")
+			}
+		})
+	}
+}
+
 func TestQueueCommandsDelegateForSupportedFormats(t *testing.T) {
-	for _, version := range []string{"6", "7", "8", "9", "10"} {
+	for _, version := range []string{"6", "7", "8", "9", "10", "11"} {
 		t.Run(version, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {
@@ -110,7 +185,7 @@ func TestQueueCommandsDelegateForSupportedFormats(t *testing.T) {
 }
 
 func TestQueueCommandsRefuseOtherProjectFormatsBeforeSpawning(t *testing.T) {
-	for _, version := range []string{"5", "11"} {
+	for _, version := range []string{"5", "12"} {
 		t.Run(version, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {
@@ -310,7 +385,7 @@ func TestHelpListsProjectCommands(t *testing.T) {
 	if err := run(context.Background(), []string{"help"}, strings.NewReader(""), &output, io.Discard, &recordedProcess{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"forge serve", "forge test", "forge build", "forge migrate", "forge views:compile [--check]", "forge make:component", "forge make:job", "forge queue:work", "forge queue:failed", "forge queue:retry", "forge queue:forget <id>"} {
+	for _, command := range []string{"forge serve", "forge test", "forge build", "forge migrate", "forge views:compile [--check]", "forge make:component", "forge make:job", "forge queue:work", "forge queue:failed", "forge queue:retry", "forge queue:forget <id>", "forge schedule:work", "forge schedule:run", "forge schedule:list"} {
 		if !strings.Contains(output.String(), command) {
 			t.Errorf("help does not list %q", command)
 		}

@@ -137,6 +137,37 @@ func LoadDatabase() (DatabaseConfig, error) {
 	return settings, environment.Err()
 }
 
+type SchedulerConfig struct {
+	DatabaseURL              string
+	SchedulePollInterval     time.Duration
+	ScheduleOperationTimeout time.Duration
+}
+
+// LoadScheduler reads only settings required by the recurring scheduler.
+func LoadScheduler() (SchedulerConfig, error) {
+	environment, err := reader()
+	if err != nil {
+		return SchedulerConfig{}, err
+	}
+	settings := SchedulerConfig{
+		DatabaseURL:              environment.Required("DATABASE_URL"),
+		SchedulePollInterval:     environment.Duration("SCHEDULE_POLL_INTERVAL", 15*time.Second),
+		ScheduleOperationTimeout: environment.Duration("SCHEDULE_OP_TIMEOUT", 5*time.Second),
+	}
+	return settings, errors.Join(environment.Err(), settings.validate())
+}
+
+func (settings SchedulerConfig) validate() error {
+	var problems []error
+	if settings.SchedulePollInterval < time.Second || settings.SchedulePollInterval > time.Minute {
+		problems = append(problems, errors.New("SCHEDULE_POLL_INTERVAL must be between 1s and 1m"))
+	}
+	if settings.ScheduleOperationTimeout < 100*time.Millisecond || settings.ScheduleOperationTimeout > time.Minute {
+		problems = append(problems, errors.New("SCHEDULE_OP_TIMEOUT must be between 100ms and 1m"))
+	}
+	return errors.Join(problems...)
+}
+
 type WorkerConfig struct {
 	Environment            string
 	DatabaseURL            string

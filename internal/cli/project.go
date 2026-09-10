@@ -11,19 +11,7 @@ import (
 	modmodule "golang.org/x/mod/module"
 )
 
-func requireProjectFormat(supported int) error {
-	version, err := projectFormat()
-	if err != nil {
-		return err
-	}
-	if version < supported {
-		return fmt.Errorf("project format version %d cannot be changed by this CLI; upgrade the project to format %d first", version, supported)
-	}
-	if version > supported {
-		return fmt.Errorf("project format version %d is newer than this CLI supports (format %d); upgrade the GoForge CLI", version, supported)
-	}
-	return nil
-}
+const currentProjectFormat = 11
 
 func requireProjectFormatRange(minimum, maximum int) error {
 	version, err := projectFormat()

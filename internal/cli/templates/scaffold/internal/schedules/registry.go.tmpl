@@ -1,0 +1,32 @@
+// Package schedules owns the application's explicit recurring schedule registry.
+package schedules
+
+import (
+	"fmt"
+
+	"github.com/ShanilKoshitha/goforge/schedule"
+)
+
+// NewRegistry wires every application-owned schedule. Definitions are normal
+// Go values: add them here with schedule.Register and keep incompatible changes
+// explicit by advancing names such as reports.daily.v1 to reports.daily.v2.
+func NewRegistry() (*schedule.Registry, error) {
+	registry := schedule.NewRegistry()
+	if err := registerApplicationSchedules(registry); err != nil {
+		return nil, fmt.Errorf("register application schedules: %w", err)
+	}
+	return registry, nil
+}
+
+func registerApplicationSchedules(registry *schedule.Registry) error {
+	// Example after importing [[.Module]]/internal/jobs and defining a typed
+	// job in application code:
+	//
+	// dailyReport := schedule.MustDefine(
+	//     "reports.daily.v1", "0 6 * * *", jobs.BuildReportDefinition,
+	//     schedule.Static(jobs.BuildReport{Scope: "all"}),
+	//     schedule.TimeZone("America/Halifax"),
+	// )
+	// return schedule.Register(registry, dailyReport)
+	return nil
+}

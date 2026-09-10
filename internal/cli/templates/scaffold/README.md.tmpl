@@ -11,6 +11,7 @@ cd issueboard
 forge make:resource Issue
 forge make:job SendWelcome
 forge migrate
+forge schedule:list
 forge test
 forge build
 # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
@@ -62,6 +63,28 @@ production worker with `go build -trimpath -o bin/worker ./cmd/worker`.
 `JOB_CANCELLATION_TIMEOUT` bounds how long a handler may ignore cancellation;
 after that deadline the worker stops heartbeating and exits so another worker
 can reclaim the fenced lease.
+
+Recurring schedules are explicit application code in
+`internal/schedules/registry.go`. Bind a versioned name such as
+`reports.daily.v1` to an existing typed job with `schedule.MustDefine`, then
+register that definition there. Apply the generated schedule migration with
+`forge migrate`, inspect definitions and durable cursors with
+`forge schedule:list`, evaluate once with `forge schedule:run`, and run the
+dedicated production process with `forge schedule:work`. The scheduler only
+materializes jobs; `forge queue:work` remains responsible for executing their
+handlers. `SCHEDULE_POLL_INTERVAL` defaults to 15 seconds and
+`SCHEDULE_OP_TIMEOUT` bounds each durable evaluation at 5 seconds. Build the
+ordinary process directly with
+`go build -trimpath -o bin/scheduler ./cmd/scheduler`.
+
+Schedule definitions, registry, process wiring, and PostgreSQL migration are
+all replaceable application-owned files. Run `go run ./cmd/scheduler` or
+`go run ./cmd/scheduler --once` when the CLI wrappers do not fit. Identical or
+purely additive registries may overlap during deployment. Before removing or
+replacing a schedule, stop every old scheduler, deploy the changed registry,
+and then start the new schedulers; the HTTP server and queue workers may remain
+running. Do not run an old `.v1` and replacement `.v2` registry together,
+because they intentionally have distinct durable rows and deduplication keys.
 
 Password recovery is ready at `/forgot-password` and
 `POST /auth/password/forgot`; reset links finish at `/reset-password` or
@@ -152,6 +175,7 @@ outdated password hash without revoking sessions. Run `go test ./...` and build 
 custom production binary with `go build -trimpath -o bin/app ./cmd/server`, or
 use the opinionated `forge test` and `forge build` workflow described above.
 
-Inspect command implementations in `cmd/server`, `cmd/worker`, `cmd/console`, and `cmd/views`,
+Inspect command implementations in `cmd/server`, `cmd/worker`, `cmd/scheduler`,
+`cmd/console`, and `cmd/views`,
 the complete human-owned route table in `routes/routes.go`, and generated
 resource wiring in `routes/resources_gen.go`.

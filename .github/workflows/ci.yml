@@ -82,14 +82,14 @@ jobs:
           cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.14.0'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.14.1'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.13.0' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.14.0' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.13.0 h1:ky4g5QeWdG2M3rZdeYd7pkD+8Cz1dVHHWlqewm/SMcw=' go.sum
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.13.0/go.mod h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=' go.sum
-          grep -q '^version: 10$' forge.yaml
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.14.0 h1:Dt5aHth+6iG5ODwUL8mLGL0ye6piP1klyYoGgZ3TE7k=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.14.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
+          grep -q '^version: 11$' forge.yaml
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           "$RUNNER_TEMP/forge" make:resource TypedTicket \
             --field title:string \
@@ -109,6 +109,7 @@ jobs:
           go vet ./...
           "$RUNNER_TEMP/forge" build
           go build ./cmd/worker
+          go build ./cmd/scheduler
           test -x bin/app
           APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 "$RUNNER_TEMP/forge" serve >"$RUNNER_TEMP/current-serve.log" 2>&1 &
           serve_pid=$!
@@ -127,7 +128,7 @@ jobs:
           wait "$serve_pid"
           trap - EXIT
       - name: Generated PostgreSQL applications
-        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow)$' -count=2 -v
+        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow)$' -count=2 -v
 
   windows:
     runs-on: windows-latest

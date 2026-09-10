@@ -61,6 +61,24 @@ database-authored application schema. `Registry.Definitions` and
 `Registry.Names` return
 stable name order for tests and operational output.
 
+Fresh format-11 applications provide the application-owned registration point
+at `internal/schedules/registry.go`. A definition's typed job must also remain
+in `internal/jobs/registry_gen.go`, because the scheduler only materializes the
+job and the separate worker registry decides which job types may be claimed.
+
+After applying the generated migration, the opinionated commands are:
+
+```sh
+forge schedule:list # inspect definitions and durable cursor state
+forge schedule:run  # evaluate once and exit
+forge schedule:work # evaluate immediately, then poll until signalled
+forge queue:work    # execute the materialized jobs in a separate process
+```
+
+Their exact direct-Go escape hatches are `go run ./cmd/console schedule:list`,
+`go run ./cmd/scheduler --once`, `go run ./cmd/scheduler`, and
+`go run ./cmd/worker`.
+
 ## Run the scheduler directly
 
 The application owns its database, queue adapter, dispatcher, registry, and
@@ -180,11 +198,11 @@ audit timestamps for initialized rows, and also fails closed on drift.
 
 ## v0.14 release boundary
 
-The v0.14.0 runtime release intentionally leaves fresh projects on format 10
-and their existing v0.13.0 framework pin. This makes the new public package
-immutable before any generated application imports it. The following patch
-release moves fresh applications to format 11 with application-owned scheduler
-wiring, migration, registry, configuration, and `forge schedule:*` commands.
+The lightweight unsigned v0.14.0 runtime tag first fixed the public schedule
+packages while fresh projects remained on format 10 and the existing v0.13.0
+framework pin. The v0.14.1 CLI then moves fresh applications to format 11 with
+application-owned scheduler wiring, migration, registry, configuration, and
+`forge schedule:*` commands while pinning that immutable v0.14.0 dependency.
 
 This two-stage release prevents `main` from ever generating imports that are
 not available from the scaffold's public module dependency.

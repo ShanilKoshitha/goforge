@@ -13,9 +13,20 @@ import (
 )
 
 func TestMakeResourceBelongsToGeneratesInspectableOwnerSafeSlice(t *testing.T) {
+	for _, version := range []string{"10", "11"} {
+		t.Run("format_"+version, func(t *testing.T) {
+			testMakeResourceBelongsToGeneratesInspectableOwnerSafeSlice(t, version)
+		})
+	}
+}
+
+func testMakeResourceBelongsToGeneratesInspectableOwnerSafeSlice(t *testing.T, version string) {
 	root := projectRoot(t)
-	directory := filepath.Join(t.TempDir(), "relationshipboard")
+	directory := filepath.Join(t.TempDir(), "format-"+version+"-relationshipboard")
 	if err := createProject(newOptions{directory: directory, module: "example.com/relationshipboard", replace: root}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(directory)
@@ -88,7 +99,7 @@ func TestMakeResourceBelongsToGeneratesInspectableOwnerSafeSlice(t *testing.T) {
 	}
 }
 
-func TestMakeResourceBelongsToRequiresFormatTenWithoutWrites(t *testing.T) {
+func TestMakeResourceBelongsToRequiresFormatTenOrNewerWithoutWrites(t *testing.T) {
 	for _, version := range []string{"8", "9"} {
 		t.Run(version, func(t *testing.T) {
 			root := projectRoot(t)
@@ -117,7 +128,7 @@ func TestMakeResourceBelongsToRequiresFormatTenWithoutWrites(t *testing.T) {
 			before := snapshotRelationshipProject(t, directory)
 
 			err := Run([]string{"make:resource", "Issue", "--belongs-to", "category:Category"}, &output, &output)
-			if err == nil || !strings.Contains(err.Error(), "requires project format 10") {
+			if err == nil || !strings.Contains(err.Error(), "requires project format 10 or newer") {
 				t.Fatalf("relationship format error = %v", err)
 			}
 			assertRelationshipProjectUnchanged(t, directory, before)
