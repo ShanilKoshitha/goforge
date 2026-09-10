@@ -68,6 +68,28 @@ module tag.
   allows the format-11 scaffold to pin resolvable public code in a
   checksum-bearing v0.14.1 CLI release.
 
+## Stage A runtime bridge evidence — 2026-09-09
+
+- The explicit runtime, PostgreSQL adapter, direct operations guide, and
+  v0.14.0 bridge version are committed as `678adf7`, `ded8dcf`, `c3d8e78`, and
+  `a913230` after the contract commit `c7fa178`.
+- `go test ./... -count=1` passed twice on the final local revision. Focused
+  `go test -race ./schedule/... ./job -count=2`, `go vet ./...`, module tidy,
+  whitespace, and a Windows CLI build reporting `forge 0.14.0` also passed.
+- That CLI generated a fresh format-10 application pinned to public v0.13.0
+  with no `replace`. Module verification and tidy-diff, generated `forge test`,
+  `go vet ./...`, `forge build`, and the worker build all passed.
+- An independent adversarial review found no P0. It found and closed unsafe
+  mixed-registry replacement guidance and UUID-only schedule job IDs. The
+  final contract documents the scheduler-only replacement window, while the
+  adapter now persists bounded opaque IDs and tests a custom queue-store ID.
+- The live PostgreSQL suite covers 16 competing transactions, restart state,
+  row independence, current-minute initialization, misfire coalescing and
+  expiry, overlap suppression, drift, cancellation, state conflict, backend
+  termination, dormant rows, opaque IDs, and schema constraints. Local
+  PostgreSQL credentials did not match the test role, so CI remains the
+  authoritative live execution gate before merge.
+
 ## Explicit non-goals for v0.14
 
 - Database-authored, dynamic, or per-tenant schedules.
