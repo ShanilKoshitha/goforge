@@ -19,9 +19,8 @@ Its contract is simple:
 
 ## Status
 
-GoForge's current v0.16.0 candidate is PostgreSQL-first and is being evaluated
-against its written browser LiveReload scorecard. It includes explicit database
-wiring,
+GoForge v0.16.0 is PostgreSQL-first and accepted against its written browser
+LiveReload scorecard. It includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -82,7 +81,7 @@ and deterministic password-recovery equalization acceptance without runtime
 discovery.
 The v0.15 CLI composes the watched server, durable worker, and recurring
 scheduler behind one labelled, truthful development lifecycle. The v0.16
-candidate closes the server-rendered browser loop with a randomized same-origin
+release closes the server-rendered browser loop with a randomized same-origin
 client and committed-generation SSE while keeping all reload machinery outside
 generated and production application code.
 
@@ -91,7 +90,7 @@ generated and production application code.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.15.0
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.16.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d

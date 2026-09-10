@@ -1,6 +1,6 @@
 # v0.16 browser LiveReload scorecard
 
-Status: **in progress** — 2026-09-10
+Status: **accepted** — 2026-09-10
 
 Target:
 
@@ -22,14 +22,14 @@ page reload, not HMR or an asset pipeline.
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| The generated browser loop closes automatically | candidate | A fresh format-11 page fetched through literal `forge serve` and `forge dev` contains one development-only external client; a committed view or Go edit produces one reload event and the next page contains the accepted content |
-| Reload truth follows promotion truth | candidate | Initial startup, build/compile failure, unhealthy candidate, stale candidate, failed target swap, rollback, and last-good serving emit no reload; notification occurs only after target promotion, old-candidate cleanup, and compiled-view commit all succeed |
-| Response rewriting is narrow and representation-safe | candidate | Only successful full `text/html` browser documents with identity encoding and bounded bodies are injected; HEAD, partial/range, attachment, compressed, oversized, fragmentary, and non-HTML responses retain exact bodies and representation headers |
-| CSP and application semantics remain authoritative | candidate | The client is an external same-origin script compatible with the generated CSP; existing CSP, cookies, status, and unrelated headers remain unchanged, while rewritten development documents discard invalidated validators and become `no-store`; no inline script or policy weakening is used |
-| The event edge is bounded and race-safe | candidate | A cryptographically random unguessable path prevents application-route collisions; exact GET endpoints, subscriber limits, missed-generation recovery, concurrent clients, heartbeats, disconnect cleanup, proxy shutdown, and malformed/wrong-method requests are deterministic and tested |
-| Production remains conventional | candidate | Generated source, routes, templates, runtime packages, and production binaries contain no reload endpoint, watcher, injected client, or hidden lifecycle; `go run ./cmd/server` and direct handler/proxy replacement remain exact escape hatches |
-| Existing development guarantees remain intact | candidate | Stable public address, private health promotion, in-flight request target pinning, last-good view/Go recovery, process labelling, aggregate readiness, and cross-platform tree cleanup continue to pass under `forge serve` and `forge dev` |
-| The milestone passes twice without regression | candidate | Framework race/vet/build, compatibility, current scaffold, fresh generated PostgreSQL browser journey, native Windows tests, and independent adversarial review pass twice on the final revision |
+| The generated browser loop closes automatically | passing | A fresh format-11 page fetched through literal `forge serve` and `forge dev` contains one development-only external client; a committed view or Go edit produces one reload event and the next page contains the accepted content |
+| Reload truth follows promotion truth | passing | Initial startup, build/compile failure, unhealthy candidate, stale candidate, failed target swap, rollback, and last-good serving emit no reload; notification occurs only after target promotion, old-candidate cleanup, and compiled-view commit all succeed |
+| Response rewriting is narrow and representation-safe | passing | Only successful full `text/html` browser documents with identity encoding and bounded bodies are injected; HEAD, partial/range, attachment, compressed, oversized, fragmentary, and non-HTML responses retain exact bodies and representation headers |
+| CSP and application semantics remain authoritative | passing | The client is an external same-origin script compatible with the generated CSP; existing CSP, cookies, status, and unrelated headers remain unchanged, while rewritten development documents discard invalidated validators and become `no-store`; no inline script or policy weakening is used |
+| The event edge is bounded and race-safe | passing | A cryptographically random unguessable path prevents application-route collisions; exact GET endpoints, subscriber limits, missed-generation recovery, concurrent clients, heartbeats, disconnect cleanup, proxy shutdown, and malformed/wrong-method requests are deterministic and tested |
+| Production remains conventional | passing | Generated source, routes, templates, runtime packages, and production binaries contain no reload endpoint, watcher, injected client, or hidden lifecycle; `go run ./cmd/server` and direct handler/proxy replacement remain exact escape hatches |
+| Existing development guarantees remain intact | passing | Stable public address, private health promotion, in-flight request target pinning, last-good view/Go recovery, process labelling, aggregate readiness, and cross-platform tree cleanup continue to pass under `forge serve` and `forge dev` |
+| The milestone passes twice without regression | passing | Framework race/vet/build, compatibility, current scaffold, fresh generated PostgreSQL browser journey, native Windows tests, and independent adversarial review pass twice on the final revision |
 
 ## Runnable baseline — 2026-09-10
 
@@ -44,7 +44,7 @@ page reload, not HMR or an asset pipeline.
   compiled-view commit. Failed edits keep the last-good server but require a
   manual browser refresh after the later successful repair.
 
-## Candidate evidence — 2026-09-10
+## Accepted evidence — 2026-09-10
 
 - The complete framework suite passes on the final implementation tree. Focused
   LiveReload, development-proxy, promotion-supervisor, generated-workflow, and
@@ -58,10 +58,12 @@ page reload, not HMR or an asset pipeline.
 - Supervisor tests prove no notification for initial, failed, unhealthy, stale,
   crashed, reverted, or failed-commit candidates and exact cleanup, compiled-view
   commit, then one reload ordering for an accepted promotion.
-- The gated fresh PostgreSQL journey now exercises initial client discovery,
+- The fresh PostgreSQL journey exercises initial client discovery,
   valid-edit notification and accepted HTML, invalid-edit silence with the
   byte-identical last-good page, repair notification, and active-SSE Ctrl-C
-  shutdown. Its two live CI runs remain the release gate.
+  shutdown. Push workflow `34515521526` passed Linux/PostgreSQL in 13m59s and
+  Windows in 6m37s; pull-request workflow `34515548278` independently passed
+  Linux/PostgreSQL in 13m53s and Windows in 6m04s.
 - Independent adversarial review initially found transformation opt-out,
   streaming/trailer, idle deadline, large-view length, and duplicate-marker
   defects. Each now has a regression test; the final re-review reports no
