@@ -88,6 +88,13 @@ their schedule journey. No project-format or database migration boundary changes
 - Independent repaired-head review found no P0–P3 actionable findings and
   verified that the commits contain only Shanil authorship with no co-author,
   sign-off, or assistant-related trailers.
+- The documentation-only final-head push run 34489329926 exposed an older
+  development-supervisor test race: the test mutated source after proxy
+  creation but before initial startup was committed, so its intended promotion
+  crash never occurred. Duplicate run 34489335374 passed. The regression test
+  now waits for the existing committed-startup readiness message before either
+  candidate-exit scenario; both scenarios pass 1,000 ordinary iterations and
+  100 race-instrumented iterations.
 
 ## Explicit non-goals
 
