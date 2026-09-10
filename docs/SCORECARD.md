@@ -1,6 +1,14 @@
 # v0.17 embedded production assets scorecard
 
-Status: **candidate** — 2026-09-10
+Status: **staged** — runtime bridge candidate on 2026-09-10; format-12 adoption
+follows only after the v0.17.0 module is publicly resolvable.
+
+Release boundary: v0.17.0 adds and verifies the backward-compatible public
+`asset` package while retaining the format-11 scaffold and its public v0.14.2
+pin. The format-12 scaffold, commands, watcher integration, and end-to-end
+acceptance criteria below are intentionally deferred to the next patch release.
+This prevents a merged generator from producing applications that depend on an
+unpublished framework version.
 
 Target:
 

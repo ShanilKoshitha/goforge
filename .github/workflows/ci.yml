@@ -104,7 +104,7 @@ jobs:
           go build ./cmd/scheduler
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.16.0'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.17.0'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.14.2' go.mod

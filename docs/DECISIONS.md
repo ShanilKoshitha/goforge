@@ -1106,7 +1106,7 @@ the framework's security and conventional-Go promises.
 
 ## D040 — Production assets are embedded inputs with stable revalidated URLs
 
-**Status:** accepted for v0.17 implementation
+**Status:** accepted design; staged across the v0.17 release series
 
 Format-12 applications own opaque frontend files below
 `resources/assets/files`. Ordinary `go:embed` includes those exact bytes in the
@@ -1119,11 +1119,12 @@ once at startup.
 
 The first production URL contract is stable `/assets/<logical-path>` with a
 strong content ETag and `Cache-Control: public, max-age=0, must-revalidate`.
-This deliberately chooses deployment correctness over premature cache
-immutability. A binary that serves only its current content hash cannot safely
-use immutable fingerprint URLs: old HTML may reach a new instance and new HTML
-may reach an old instance during a rolling deployment. Fingerprints require a
-separate retained-generation and publication contract.
+This deliberately chooses availability and honest cache validation over
+premature cache immutability. It prevents missing current-only fingerprint
+files, but stable paths alone do not guarantee that HTML and assets come from
+the same generation during a rolling deployment. Operators must keep asset
+changes backward compatible or use deployment stickiness until GoForge has a
+retained-generation publication contract.
 
 Asset lookup and serving reject non-canonical paths, dotfiles, case-fold
 collisions, unsupported active media types, irregular files, and bounded-size
@@ -1142,10 +1143,11 @@ LiveReload generation.
 
 Format-12 applications also own `cmd/assets`, a read-only executable that loads
 the same embedded set. `forge assets:check`, `forge test`, and `forge build`
-delegate to it so the opinionated production build never publishes a binary
-with an invalid inventory. This is validation, not an asset compiler: it writes
-nothing, and direct `go build` plus fail-closed application startup remain the
-ordinary Go escape path.
+delegate to it so quiescent invalid source fails before publication; the build
+also refuses a source set that changes during its transaction. Application
+startup remains the final fail-closed boundary. This is validation, not an
+asset compiler: it writes nothing, and direct `go build` plus fail-closed
+application startup remain the ordinary Go escape path.
 
 `forge dev` now accepts both formats 11 and 12 because the server, worker, and
 scheduler process contract is unchanged; format 12 only adds embedded inputs to
