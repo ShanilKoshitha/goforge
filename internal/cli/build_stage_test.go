@@ -15,6 +15,7 @@ func TestStageProjectSourceCopiesInputsAndExcludesToolOutputs(t *testing.T) {
 	writeStageFile(t, root, "public/dist/app.js", "compiled")
 	writeStageFile(t, root, "node_modules/package/index.js", "dependency")
 	writeStageFile(t, root, "bin/app", "old build")
+	writeStageFile(t, root, ".git", "gitdir: ../worktrees/app\n")
 
 	staged, err := stageProjectSource(context.Background(), root)
 	if err != nil {
@@ -26,10 +27,49 @@ func TestStageProjectSourceCopiesInputsAndExcludesToolOutputs(t *testing.T) {
 			t.Errorf("staged input %s: %v", name, err)
 		}
 	}
-	for _, name := range []string{"node_modules/package/index.js", "bin/app"} {
+	for _, name := range []string{"node_modules/package/index.js", "bin/app", ".git"} {
 		if _, err := os.Stat(filepath.Join(staged, filepath.FromSlash(name))); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("excluded staged path %s: %v", name, err)
 		}
+	}
+}
+
+func TestStagedSourceExclusionsApplyToDirectoriesFilesAndLinks(t *testing.T) {
+	for _, test := range []struct {
+		relative string
+		name     string
+		want     bool
+	}{
+		{relative: ".git", name: ".git", want: true},
+		{relative: "node_modules", name: "node_modules", want: true},
+		{relative: "web/node_modules", name: "node_modules", want: true},
+		{relative: "bin", name: "bin", want: true},
+		{relative: "internal/bin", name: "bin", want: false},
+		{relative: "public/dist", name: "dist", want: false},
+	} {
+		if got := excludedStagedSourceEntry(test.relative, test.name); got != test.want {
+			t.Errorf("excludedStagedSourceEntry(%q, %q) = %v, want %v", test.relative, test.name, got, test.want)
+		}
+	}
+}
+
+func TestStageProjectSourceDoesNotFollowUnrelatedSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(target, []byte("notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "notes-link.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	staged, err := stageProjectSource(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(staged)
+	if _, err := os.Stat(filepath.Join(staged, "notes-link.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staged symlink = %v", err)
 	}
 }
 

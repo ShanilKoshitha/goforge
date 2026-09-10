@@ -140,8 +140,11 @@ There is no asset compile command because v0.17 performs no transformations.
 at application startup. The opinionated `forge build` additionally copies the
 application into a private temporary source tree, revalidates that exact copy,
 and compiles only the validated copy before publication. Tool output, VCS/cache
-directories, and `node_modules` are excluded; keep Node-produced browser output
-in an application directory such as `public/dist` when using this gate.
+directories, `node_modules`, and symlinks are excluded; keep Node-produced
+browser output in an application directory such as `public/dist` when using
+this format-12 gate. Formats 4–11 retain their in-place build behavior. Use the
+direct Go command for a format-12 monorepo that relies on relative external
+replacements, an implicit parent workspace, or symlink traversal.
 Replace the application package or route with ordinary
 `net/http`, a CDN, or a Node-backed pipeline when those tradeoffs fit.
 

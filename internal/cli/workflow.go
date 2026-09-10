@@ -42,13 +42,16 @@ func runProjectBuild(
 	if err != nil {
 		return err
 	}
-	stagedRoot, err := stageProjectSource(ctx, ".")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(stagedRoot)
-	if err := checkStagedProjectArtifacts(ctx, stdin, stdout, stderr, processes, stagedRoot, format); err != nil {
-		return err
+	stagedRoot := ""
+	if format >= 12 {
+		stagedRoot, err = stageProjectSource(ctx, ".")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(stagedRoot)
+		if err := checkStagedProjectArtifacts(ctx, stdin, stdout, stderr, processes, stagedRoot, format); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		return fmt.Errorf("create build output directory: %w", err)
@@ -71,12 +74,15 @@ func runProjectBuild(
 		return fmt.Errorf("prepare temporary build artifact: %w", err)
 	}
 	defer os.Remove(temporaryPath)
-	absoluteTemporaryPath, err := filepath.Abs(temporaryPath)
-	if err != nil {
-		return fmt.Errorf("resolve temporary build artifact: %w", err)
+	buildArgs := []string{"build", "-trimpath", "-o", temporaryPath, "./cmd/server"}
+	if stagedRoot != "" {
+		absoluteTemporaryPath, err := filepath.Abs(temporaryPath)
+		if err != nil {
+			return fmt.Errorf("resolve temporary build artifact: %w", err)
+		}
+		buildArgs = []string{"-C", stagedRoot, "build", "-trimpath", "-o", absoluteTemporaryPath, "./cmd/server"}
 	}
-
-	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "-C", stagedRoot, "build", "-trimpath", "-o", absoluteTemporaryPath, "./cmd/server"); err != nil {
+	if err := processes.Run(ctx, stdin, stdout, stderr, "go", buildArgs...); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {

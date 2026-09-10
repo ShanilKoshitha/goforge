@@ -36,10 +36,20 @@ func stageProjectSource(ctx context.Context, root string) (stagedRoot string, er
 			return nil
 		}
 		relative = filepath.ToSlash(relative)
-		if entry.IsDir() {
-			if excludedStagedSourceDirectory(relative, entry.Name()) {
+		if excludedStagedSourceEntry(relative, entry.Name()) {
+			if entry.IsDir() {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		// Go source and go:embed inputs are regular files. Do not follow
+		// repository symlinks into mutable or external trees; direct go build
+		// remains the escape hatch for repositories that intentionally rely on
+		// symlink traversal.
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if entry.IsDir() {
 			return os.MkdirAll(filepath.Join(stagedRoot, filepath.FromSlash(relative)), 0o755)
 		}
 		info, infoErr := entry.Info()
@@ -64,7 +74,7 @@ func stageProjectSource(ctx context.Context, root string) (stagedRoot string, er
 	return stagedRoot, nil
 }
 
-func excludedStagedSourceDirectory(relative, name string) bool {
+func excludedStagedSourceEntry(relative, name string) bool {
 	if name == ".git" || name == "node_modules" {
 		return true
 	}
