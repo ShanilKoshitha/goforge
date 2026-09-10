@@ -56,6 +56,23 @@ old HTML across rolling deployments unless prior generations are retained.
 - v0.16 explicitly excludes static-file conventions, production assets,
   manifests, fingerprints, transforms, and Node integration.
 
+## Candidate verification — 2026-09-10
+
+- Final candidate revision `7e20f5c` passes `go test ./... -count=1` in
+  180.039 seconds and `go test -race ./... -count=1` in 235.847 seconds;
+  `go vet ./...` also passes.
+- The complete CLI suite creates and inspects a fresh format-12 application,
+  checks the application-owned asset inventory, builds the isolated validated
+  source tree, exercises the exact routed GET/HEAD/range/method semantics, and
+  proves that a missing required asset fails without replacing the last binary.
+- Watcher regressions cover unchanged bounded-asset caching, periodic content
+  revalidation even when an edit preserves size and modification time,
+  immediate non-asset content detection, cheap metadata tracking beyond the
+  default asset bounds, and exclusion of the asset root from formats 4–11.
+- Independent adversarial review is clean at P0–P2 after the watcher fixes.
+  Remote Linux/PostgreSQL and native Windows matrices remain required before
+  this candidate can be accepted or tagged v0.17.1.
+
 ## Explicit non-goals
 
 - Bundling, minification, transpilation, dependency graph or CSS `url()`
