@@ -165,7 +165,7 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err := os.Remove(cssPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := Run([]string{"build"}, &checkOutput, &checkOutput); err == nil || !strings.Contains(err.Error(), "required application asset") {
+	if err := Run([]string{"build"}, &checkOutput, &checkOutput); err == nil || !strings.Contains(checkOutput.String(), "required application asset") {
 		t.Fatalf("build accepted a missing template asset: %v\n%s", err, checkOutput.String())
 	}
 	if current, err := os.ReadFile(buildPath); err != nil || !bytes.Equal(current, lastGoodBuild) {
