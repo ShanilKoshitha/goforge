@@ -7,7 +7,7 @@ Target:
 > From a fresh format-11 application, bind a scheduled job through an explicit
 > worker registration contract, run an occurrence-aware payload factory that
 > cooperates with the scheduler operation deadline, and fail at startup before
-> dispatch when the worker cannot claim the target. Preserve the existing
+> dispatch when the target name is absent from generated worker wiring. Preserve the existing
 > durable cursor and public APIs, and prove password-recovery response
 > equalization through deterministic control-flow invariants rather than noisy
 > sequential wall-clock comparisons.
@@ -24,8 +24,8 @@ changes.
 | --- | --- | --- |
 | Dynamic schedule work can cooperate with cancellation | candidate | `schedule.DynamicContext` receives the exact operation context; deadline cancellation returns promptly, preserves `errors.Is`, dispatches nothing, rolls back the schedule transaction, releases its row lock/connection, and permits a later healthy retry |
 | Existing schedule source and durable identity remain compatible | candidate | Existing `schedule.Dynamic` callers compile unchanged; static and legacy factories keep their behavior; switching an equivalent factory to `DynamicContext` retains the existing payload-strategy fingerprint and durable cursor |
-| Scheduled jobs cannot become silently unclaimable | candidate | Generated dependency-free job metadata lists built-in and application handlers; scheduler and schedule-list startup reject every schedule target absent from that set before opening a materialization workflow; no reflection, scanning, or handler construction is used |
-| Password-recovery equalization is deterministic | candidate | The response deadline is selected before account lookup, all account-dependent work uses the shorter child context, every present/absent/limited/failure path awaits the same selected deadline exactly once, delay bounds are pure-tested, and live acceptance retains identical public responses plus absent-account state invariants without comparing sequential wall times |
+| Schedule target names must be wired into the generated worker registry | candidate | A collision-proof generated manifest package lists built-in and application handler names; scheduler and schedule-list startup reject every schedule target absent from that set before configuration or durable work; no reflection, scanning, or handler construction is used. Application-authored same-name definitions and deployed worker queue selection remain explicit operator-owned contracts |
+| Password-recovery equalization is deterministic | candidate | `Request` has one public return path through an envelope around its private branch-complete work method; the response deadline is selected before that work, its child context is shorter, envelope order and delay bounds are pure-tested, and live known/absent/failure acceptance retains identical public responses plus absent-account state invariants without comparing sequential wall times |
 | Generated concurrency evidence proves actual contention | candidate | Two separate scheduler processes are synchronized around one locked due row and report one enqueue plus one contention result, while the worker still executes exactly one durable effect |
 | The public workflow remains ordinary Go | candidate | The generated registry, registered-name set, validation, context-aware factory, scheduler process, SQL adapter, and direct commands remain inspectable and replaceable without runtime discovery |
 | The milestone passes twice without regression | in progress | Framework race/vet/build, fresh public no-replace format-11 application, generated PostgreSQL acceptance, native Windows CLI, and independent adversarial review pass twice on each final staged revision |

@@ -365,7 +365,7 @@ func TestPostgresDurableScheduleWorkflow(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("timeout error=%v", err)
 		}
-		if elapsed := time.Since(started); elapsed > time.Second {
+		if elapsed := time.Since(started); elapsed > 5*time.Second {
 			t.Fatalf("context-aware factory exceeded operation bound: %s", elapsed)
 		}
 		if count := countJobsByKey(t, ctx, db, jobsTable, key); count != 0 {

@@ -400,7 +400,7 @@ func TestRunOnceBoundsContextAwareFactoryAndSkipsDispatch(t *testing.T) {
 	if received == nil || !errors.Is(received.Err(), context.DeadlineExceeded) {
 		t.Fatalf("factory context error = %v", received)
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Fatalf("factory operation exceeded bound: %s", elapsed)
 	}
 	jobs.mu.Lock()

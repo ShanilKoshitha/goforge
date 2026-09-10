@@ -987,24 +987,28 @@ blocking or I/O-capable factories use `DynamicContext`. A hard limit regardless
 of application cooperation would require process isolation or a two-phase
 reservation design and is outside this compatibility hardening milestone.
 
-Generated job wiring exposes a dependency-free, generated set of registered
-job names. The schedule registry validates every definition's target against
-that set when the scheduler or schedule-list command starts. The set is derived
-from the same generator metadata that emits handler registration, including
-built-ins, so no handler dependencies are constructed and no packages are
-scanned or reflected. Unknown targets fail before durable evaluation instead of
-being inserted into a queue that no worker can claim.
+Generated job wiring exposes a dependency-free set of registered job names from
+a dedicated generated manifest package. Keeping that API outside the existing
+`jobs` package avoids retroactively reserving identifiers in format-11 projects.
+The schedule registry validates every definition's target name against that set
+when the scheduler or schedule-list command starts. The set is derived from the
+same generator metadata that emits handler registration, including built-ins,
+so no handler dependencies are constructed and no packages are scanned or
+reflected. An absent target name fails before durable evaluation. This check
+does not claim to identify a manually shadowed same-name definition or prove
+that deployed workers select every configured queue; those remain visible
+application and deployment contracts.
 
 Password-recovery acceptance no longer compares two sequential HTTP wall
-times. Each request selects one absolute response deadline before account
-lookup, runs every account-dependent path inside the shorter work context, and
-awaits the selected deadline exactly once. Pure tests exhaust the jitter-to-
-deadline bounds and injected control-flow tests prove present, absent, limited,
-and failed work share the envelope. Live PostgreSQL acceptance continues to
-prove identical public responses and headers, successful durable delivery, no
-state for absent accounts, and bounded forced database failure. Relaxing the
-old timing threshold or repeatedly sampling CI latency is not accepted evidence
-of enumeration resistance.
+times. `Request` has one public return path through an envelope around its
+private, branch-complete work method. Each request therefore selects one
+absolute response deadline before account-dependent work, runs that work inside
+the shorter child context, and awaits the selected deadline once after it
+returns. Pure tests exhaust the jitter bounds and prove exact select-work-wait
+ordering; live PostgreSQL acceptance proves identical known, absent, and forced
+failure responses and headers, successful durable delivery, and no state for
+absent accounts. Relaxing the old timing threshold or repeatedly sampling CI
+latency is not accepted evidence of enumeration resistance.
 
 Publication remains compile-safe. v0.14.2 publishes the backward-compatible
 runtime factory seam and deterministic acceptance first. v0.14.3 then pins that
@@ -1012,8 +1016,8 @@ immutable module from fresh format-11 applications, uses `DynamicContext` in
 the generated journey, and activates dependency-free target validation. Neither
 stage changes project format or database schema.
 
-Reason: an operation timeout that application code cannot observe, a scheduled
-job that no worker can claim, and a flaky security stopwatch all weaken the
+Reason: an operation timeout that application code cannot observe, a schedule
+target absent from generated worker wiring, and a flaky security stopwatch all weaken the
 north-star promise of production-shaped defaults. Explicit typed context,
 generated metadata, and deterministic invariants close those gaps without
 runtime magic or hidden state.
