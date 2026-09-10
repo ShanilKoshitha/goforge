@@ -19,8 +19,8 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.14.3 is PostgreSQL-first and accepted against its written
-schedule-integration hardening scorecard. It includes explicit database wiring,
+GoForge v0.15.0 is PostgreSQL-first and accepted against its written unified
+development-workflow scorecard. It includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -73,7 +73,7 @@ competing-process row coordination, read-only inspection, and payload-free
 observers.
 Fresh format-11 scaffolds own the schedule registry, PostgreSQL migration,
 isolated configuration, scheduler process, inspection command, and direct Go
-escape hatches. The v0.14.3 source pins the immutable public v0.14.2 runtime
+escape hatches. The v0.15.0 source pins the immutable public v0.14.2 runtime
 and demonstrates its cancellation-aware dynamic schedule factory.
 The v0.14.2 runtime adds cancellation-aware dynamic schedule factories,
 dependency-free validation between generated schedule and worker registries,
@@ -85,17 +85,14 @@ discovery.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.3
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.15.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
 forge make:resource Issue
 forge migrate
 # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
-forge serve
-# In separate terminals when needed:
-forge schedule:work
-forge queue:work
+forge dev
 ```
 
 For framework development from this checkout:

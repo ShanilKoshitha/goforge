@@ -1,6 +1,6 @@
 # v0.15 unified development workflow scorecard
 
-Status: **in progress** — 2026-09-10
+Status: **accepted** — 2026-09-10
 
 Target:
 
@@ -21,15 +21,30 @@ create a combined runtime or a production supervisor.
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| One command starts the complete generated application | candidate | Exact no-argument `forge dev` validation starts only the watched server, `go run ./cmd/worker`, and `go run ./cmd/scheduler` from a format-11 project; older, future, malformed, and non-project invocations fail before spawning work |
-| Readiness is truthful and output remains usable | candidate | Every stdout/stderr line is atomically labelled by service, partial and concurrent writes cannot interleave prefixes, and the single stack-ready message appears only after the existing server, worker, and scheduler startup signals have all been forwarded |
-| Failure is fail-fast and attributable | candidate | A startup failure, clean premature exit, or later unexpected exit identifies the service, retains the underlying cause, cancels and reaps both peers, and never prints a false ready signal |
-| Cancellation owns the whole tree | candidate | Ctrl-C/SIGTERM cancels one shared context, waits for all three services within an outer grace that exceeds generated defaults and is explicitly configurable for longer application drains, returns successfully, and leaves no server listener, Go wrapper, worker, scheduler, or descendant alive on Linux or Windows |
-| Existing development guarantees remain intact | candidate | `forge serve` retains last-good view/Go compilation, private liveness promotion, recovery after invalid edits, one stable public address, and its current direct `go run ./cmd/server` escape hatch under `forge dev` |
-| Side effects remain explicit | candidate | The command does not start Compose/PostgreSQL/Mailpit, apply migrations, mutate `.env`, generate application resources or ORM source, open a browser, respawn crashes, or conceal missing configuration; only the existing managed view compilation/publication behavior remains |
-| Production remains conventional | candidate | Generated `cmd/server`, `cmd/worker`, and `cmd/scheduler` stay independent ordinary Go entrypoints; the existing `forge serve`, `queue:work`, and `schedule:work` commands and direct `go run`/`go build` paths remain exact escape hatches |
-| Fresh application journey is end to end | candidate | A fresh no-replace format-11 application with PostgreSQL materializes a registered scheduled job, executes and acknowledges its durable effect, serves HTTP, survives and recovers from an invalid view edit through the server path, then shuts down cleanly from one `forge dev` invocation |
-| The milestone passes twice without regression | candidate | Framework race/vet/build, released-format compatibility, current scaffold, generated PostgreSQL workflow, native Windows process tests, and independent adversarial review pass twice on the final revision |
+| One command starts the complete generated application | passing | Exact no-argument `forge dev` validation starts only the watched server, `go run ./cmd/worker`, and `go run ./cmd/scheduler` from a format-11 project; older, future, malformed, and non-project invocations fail before spawning work |
+| Readiness is truthful and output remains usable | passing | Every stdout/stderr line is atomically labelled by service, partial and concurrent writes cannot interleave prefixes, and the single stack-ready message appears only after the existing server, worker, and scheduler startup signals have all been forwarded |
+| Failure is fail-fast and attributable | passing | A startup failure, clean premature exit, or later unexpected exit identifies the service, retains the underlying cause, cancels and reaps both peers, and never prints a false ready signal |
+| Cancellation owns the whole tree | passing | Ctrl-C/SIGTERM cancels one shared context, waits for all three services within an outer grace that exceeds generated defaults and is explicitly configurable for longer application drains, returns successfully, and leaves no server listener, Go wrapper, worker, scheduler, or descendant alive on Linux or Windows |
+| Existing development guarantees remain intact | passing | `forge serve` retains last-good view/Go compilation, private liveness promotion, recovery after invalid edits, one stable public address, and its current direct `go run ./cmd/server` escape hatch under `forge dev` |
+| Side effects remain explicit | passing | The command does not start Compose/PostgreSQL/Mailpit, apply migrations, mutate `.env`, generate application resources or ORM source, open a browser, respawn crashes, or conceal missing configuration; only the existing managed view compilation/publication behavior remains |
+| Production remains conventional | passing | Generated `cmd/server`, `cmd/worker`, and `cmd/scheduler` stay independent ordinary Go entrypoints; the existing `forge serve`, `queue:work`, and `schedule:work` commands and direct `go run`/`go build` paths remain exact escape hatches |
+| Fresh application journey is end to end | passing | A fresh no-replace format-11 application with PostgreSQL materializes a registered scheduled job, executes and acknowledges its durable effect, serves HTTP, survives and recovers from an invalid view edit through the server path, then shuts down cleanly from one `forge dev` invocation |
+| The milestone passes twice without regression | passing | Framework race/vet/build, released-format compatibility, current scaffold, generated PostgreSQL workflow, native Windows process tests, and independent adversarial review pass twice on the final revision |
+
+## Accepted evidence — 2026-09-10
+
+- Implementation revision `7961c2a` passed the complete local framework suite
+  twice, vet, Linux cross-compilation, repeated native Windows/race process
+  tests, and a fresh no-replace format-11 application's verify, zero-diff tidy,
+  tests, vet, and server/worker/scheduler/console builds.
+- GitHub push run `34505278948` and pull-request run `34505331431` independently
+  passed the full Linux/PostgreSQL and native Windows matrices. Each live matrix
+  ran the generated PostgreSQL journeys twice, including `forge dev` schedule
+  materialization, worker effect, HTTP/view recovery, signal shutdown, and port
+  release.
+- Two independent adversarial reviews found no remaining P0/P1 issue after the
+  canonical readiness, bounded output, attributable failure, and configurable
+  descendant-aware shutdown repairs.
 
 ## Runnable baseline — 2026-09-10
 

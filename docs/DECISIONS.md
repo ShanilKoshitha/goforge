@@ -1025,7 +1025,7 @@ without runtime magic or hidden state.
 
 ## D038 — `forge dev` composes the explicit format-11 processes
 
-**Status:** accepted for v0.15 implementation
+**Status:** accepted in v0.15.0
 
 `forge dev` is an exact, no-argument format-11 development workflow. It runs the
 accepted `forge serve` loop in-process and starts the application-owned worker
