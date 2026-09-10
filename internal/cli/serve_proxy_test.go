@@ -128,6 +128,87 @@ func TestServeProxyInjectsLiveReloadAndPublishesCommittedGeneration(t *testing.T
 	}
 }
 
+func TestServeProxyLeavesTrailersAndStreamedHTMLUntouched(t *testing.T) {
+	t.Run("trailers", func(t *testing.T) {
+		backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			response.Header().Set("Trailer", "Digest")
+			_, _ = io.WriteString(response, "<html><body>trailed</body></html>")
+			response.Header().Set("Digest", "sha-256=upstream")
+		}))
+		defer backend.Close()
+		proxy := newTestServeProxy(t, backend.URL)
+
+		response := requestServeProxyResponse(t, proxy, "/")
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := string(body), "<html><body>trailed</body></html>"; got != want || strings.Contains(got, proxy.reload.ScriptPath()) {
+			t.Fatalf("trailed response body = %q, want %q", got, want)
+		}
+		if response.Trailer.Get("Digest") != "sha-256=upstream" {
+			t.Fatalf("application trailer changed: %v", response.Trailer)
+		}
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		defer func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		}()
+		backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(response, "<html><body>stream-")
+			response.(http.Flusher).Flush()
+			close(started)
+			<-release
+			_, _ = io.WriteString(response, "finished</body></html>")
+		}))
+		defer backend.Close()
+		proxy := newTestServeProxy(t, backend.URL)
+
+		response := requestServeProxyResponse(t, proxy, "/")
+		defer response.Body.Close()
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("backend did not flush streamed HTML")
+		}
+		prefix := make([]byte, len("<html><body>stream-"))
+		read := make(chan error, 1)
+		go func() {
+			_, err := io.ReadFull(response.Body, prefix)
+			read <- err
+		}()
+		select {
+		case err := <-read:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("development proxy buffered streamed HTML")
+		}
+		if got, want := string(prefix), "<html><body>stream-"; got != want {
+			t.Fatalf("stream prefix = %q, want %q", got, want)
+		}
+		close(release)
+		remainder, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := string(remainder), "finished</body></html>"; got != want || strings.Contains(got, proxy.reload.ScriptPath()) {
+			t.Fatalf("stream remainder = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestServeProxyReportsAddressCollision(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

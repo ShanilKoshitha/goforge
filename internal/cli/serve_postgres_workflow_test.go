@@ -391,7 +391,12 @@ func waitForDevelopmentLiveReloadShutdown(t *testing.T, subscription development
 func developmentResponse(t *testing.T, baseURL string) string {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
-	response, err := client.Get(baseURL + "/")
+	request, err := http.NewRequest(http.MethodGet, baseURL+"/", nil)
+	if err != nil {
+		t.Fatalf("create development welcome request: %v", err)
+	}
+	request.Header.Set("Sec-Fetch-Dest", "document")
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("request development welcome page: %v", err)
 	}
@@ -411,7 +416,12 @@ func waitForDevelopmentResponse(t *testing.T, baseURL, marker string, output *sy
 	deadline := time.Now().Add(30 * time.Second)
 	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
-		response, err := client.Get(baseURL + "/")
+		request, requestErr := http.NewRequest(http.MethodGet, baseURL+"/", nil)
+		if requestErr != nil {
+			t.Fatalf("create development welcome request: %v", requestErr)
+		}
+		request.Header.Set("Sec-Fetch-Dest", "document")
+		response, err := client.Do(request)
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
 			_ = response.Body.Close()

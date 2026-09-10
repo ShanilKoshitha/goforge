@@ -97,7 +97,8 @@ func TestServeLiveReloadScriptIsExternalSameOriginClient(t *testing.T) {
 	reload.Handler(nil).ServeHTTP(response, httptest.NewRequest(http.MethodGet, reload.ScriptPath(), nil))
 	body := response.Body.String()
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/javascript; charset=utf-8" ||
-		response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Access-Control-Allow-Origin") != "" {
+		response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" ||
+		response.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatalf("unexpected script response: status=%d headers=%v", response.Code, response.Header())
 	}
 	for _, required := range []string{
@@ -143,6 +144,11 @@ func TestServeLiveReloadEndpointsRequireGETAndValidSince(t *testing.T) {
 			t.Errorf("query %q: status=%d, want 400", rawQuery, response.Code)
 		}
 	}
+	future := httptest.NewRecorder()
+	reload.Handler(nil).ServeHTTP(future, httptest.NewRequest(http.MethodGet, reload.EventsPath()+"?since=1", nil))
+	if future.Code != http.StatusBadRequest {
+		t.Fatalf("future generation status = %d, want 400", future.Code)
+	}
 }
 
 func TestServeLiveReloadMissedGenerationRespondsImmediately(t *testing.T) {
@@ -152,10 +158,10 @@ func TestServeLiveReloadMissedGenerationRespondsImmediately(t *testing.T) {
 	response := httptest.NewRecorder()
 	reload.Handler(nil).ServeHTTP(response, httptest.NewRequest(http.MethodGet, reload.EventsPath()+"?since=0", nil))
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/event-stream; charset=utf-8" ||
-		response.Header().Get("Access-Control-Allow-Origin") != "" {
+		response.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" || response.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatalf("unexpected missed-generation response: status=%d headers=%v", response.Code, response.Header())
 	}
-	if got, want := response.Body.String(), "event: reload\ndata: 2\n\n"; got != want {
+	if got, want := response.Body.String(), "id: 2\nevent: reload\ndata: 2\n\n"; got != want {
 		t.Fatalf("event body = %q, want %q", got, want)
 	}
 	if count := testServeLiveReloadSubscriberCount(reload); count != 0 {
@@ -188,7 +194,7 @@ func TestServeLiveReloadNotifiesConcurrentSubscribersOnce(t *testing.T) {
 		if err != nil {
 			t.Fatalf("client %d: %v", index, err)
 		}
-		if got, want := string(body), ": connected\n\nevent: reload\ndata: 1\n\n"; got != want {
+		if got, want := string(body), ": connected\n\nid: 1\nevent: reload\ndata: 1\n\n"; got != want {
 			t.Errorf("client %d body = %q, want %q", index, got, want)
 		}
 	}
@@ -285,7 +291,7 @@ func TestServeLiveReloadInjectsEligibleDocumentAndPreservesApplicationSemantics(
 		ProtoMinor:       1,
 		Body:             original,
 		ContentLength:    51,
-		TransferEncoding: []string{"chunked"},
+		TransferEncoding: nil,
 		Request:          request,
 		Header: http.Header{
 			"Content-Type":            {"text/html; charset=utf-8"},
@@ -297,6 +303,9 @@ func TestServeLiveReloadInjectsEligibleDocumentAndPreservesApplicationSemantics(
 			"Set-Cookie":              {"one=1; HttpOnly", "two=2; Secure"},
 			"X-Application":           {"kept"},
 			"ETag":                    {`"old"`},
+			"Age":                     {"20"},
+			"Expires":                 {"Wed, 10 Sep 2025 10:01:00 GMT"},
+			"Content-MD5":             {"old"},
 			"Last-Modified":           {"Wed, 10 Sep 2025 10:00:00 GMT"},
 			"Accept-Ranges":           {"bytes"},
 			"Digest":                  {"sha-256=old"},
@@ -333,7 +342,7 @@ func TestServeLiveReloadInjectsEligibleDocumentAndPreservesApplicationSemantics(
 		response.Header.Get("Content-Disposition") != "inline; filename=page.html" || response.Header.Get("Content-Encoding") != "identity" {
 		t.Errorf("application headers changed: %v", response.Header)
 	}
-	for _, removed := range []string{"ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "Digest"} {
+	for _, removed := range []string{"ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "Digest", "Age", "Expires", "Content-MD5"} {
 		if response.Header.Get(removed) != "" {
 			t.Errorf("invalidated header %s remains %q", removed, response.Header.Get(removed))
 		}
@@ -343,7 +352,7 @@ func TestServeLiveReloadInjectsEligibleDocumentAndPreservesApplicationSemantics(
 func TestServeLiveReloadInjectsBeforeTerminalHTMLWhenBodyCloseIsOmitted(t *testing.T) {
 	reload := newTestServeLiveReload(t)
 	response := testServeLiveReloadResponse("<html><main>hello</main></HTML \t>")
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request := testServeLiveReloadDocumentRequest(http.MethodGet, "/")
 	if err := reload.Inject(request, response); err != nil {
 		t.Fatal(err)
 	}
@@ -389,10 +398,33 @@ func TestServeLiveReloadMetadataExclusionsAreNeverReadOrChanged(t *testing.T) {
 		}},
 		{name: "range request", method: http.MethodGet, mutate: func(request *http.Request, _ *http.Response) { request.Header.Set("Range", "bytes=0-10") }},
 		{name: "range response", method: http.MethodGet, mutate: func(_ *http.Request, response *http.Response) { response.Header.Set("Content-Range", "bytes 0-10/20") }},
+		{name: "missing destination", method: http.MethodGet, mutate: func(request *http.Request, _ *http.Response) { request.Header.Del("Sec-Fetch-Dest") }},
+		{name: "non-document", method: http.MethodGet, mutate: func(request *http.Request, _ *http.Response) { request.Header.Set("Sec-Fetch-Dest", "empty") }},
+		{name: "unknown length", method: http.MethodGet, mutate: func(_ *http.Request, response *http.Response) {
+			response.ContentLength = -1
+			response.Header.Del("Content-Length")
+		}},
+		{name: "chunked stream", method: http.MethodGet, mutate: func(_ *http.Request, response *http.Response) {
+			response.ContentLength = -1
+			response.Header.Del("Content-Length")
+			response.TransferEncoding = []string{"chunked"}
+		}},
+		{name: "trailers", method: http.MethodGet, mutate: func(_ *http.Request, response *http.Response) {
+			response.Trailer = http.Header{"Digest": {"sha-256=stale"}}
+		}},
+		{name: "response no-transform", method: http.MethodGet, mutate: func(_ *http.Request, response *http.Response) {
+			response.Header["Cache-Control"] = []string{"private", "max-age=0, No-Transform"}
+		}},
+		{name: "request no-transform", method: http.MethodGet, mutate: func(request *http.Request, _ *http.Response) {
+			request.Header.Set("Cache-Control", "no-cache, no-transform")
+		}},
+		{name: "non-UTF-8", method: http.MethodGet, mutate: func(_ *http.Request, response *http.Response) {
+			response.Header.Set("Content-Type", "text/html; charset=iso-8859-1")
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(test.method, "/", nil)
+			request := testServeLiveReloadDocumentRequest(test.method, "/")
 			spy := &trackingReadCloser{Reader: strings.NewReader("<html><body>unchanged</body></html>")}
 			response := testServeLiveReloadResponseWithBody(spy)
 			if test.mutate != nil {
@@ -424,7 +456,7 @@ func TestServeLiveReloadFragmentAndOversizeAreReconstructedExactly(t *testing.T)
 		response := testServeLiveReloadResponse(body)
 		headers := response.Header.Clone()
 		length := response.ContentLength
-		if err := reload.Inject(httptest.NewRequest(http.MethodGet, "/", nil), response); err != nil {
+		if err := reload.Inject(testServeLiveReloadDocumentRequest(http.MethodGet, "/"), response); err != nil {
 			t.Fatal(err)
 		}
 		got, err := io.ReadAll(response.Body)
@@ -438,12 +470,29 @@ func TestServeLiveReloadFragmentAndOversizeAreReconstructedExactly(t *testing.T)
 
 	exact := strings.Repeat("x", serveLiveReloadMaxDocumentBytes-len("</html>")) + "</html>"
 	response := testServeLiveReloadResponse(exact)
-	if err := reload.Inject(httptest.NewRequest(http.MethodGet, "/", nil), response); err != nil {
+	if err := reload.Inject(testServeLiveReloadDocumentRequest(http.MethodGet, "/"), response); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := io.ReadAll(response.Body)
 	if len(got) <= serveLiveReloadMaxDocumentBytes || !strings.Contains(string(got), reload.ScriptPath()) {
 		t.Fatalf("exactly bounded document was not injected: length=%d", len(got))
+	}
+}
+
+func TestServeLiveReloadDoesNotInjectDuplicateClient(t *testing.T) {
+	reload := newTestServeLiveReload(t)
+	body := `<html><body>kept<script data-goforge-generation="7"></script></body></html>`
+	response := testServeLiveReloadResponse(body)
+	headers := response.Header.Clone()
+	if err := reload.Inject(testServeLiveReloadDocumentRequest(http.MethodGet, "/"), response); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body || !equalServeLiveReloadHeaders(response.Header, headers) {
+		t.Fatalf("duplicate client response changed: body=%q headers=%v", got, response.Header)
 	}
 }
 
@@ -453,7 +502,7 @@ func TestServeLiveReloadReadAndCloseErrorsLeaveSafeOriginalRepresentation(t *tes
 	staged := &stagedErrorBody{first: []byte("<html><bo"), rest: []byte("dy>safe</body></html>"), err: readFailure}
 	response := testServeLiveReloadResponseWithBody(staged)
 	headers := response.Header.Clone()
-	if err := reload.Inject(httptest.NewRequest(http.MethodGet, "/", nil), response); !errors.Is(err, readFailure) {
+	if err := reload.Inject(testServeLiveReloadDocumentRequest(http.MethodGet, "/"), response); !errors.Is(err, readFailure) {
 		t.Fatalf("read error = %v, want %v", err, readFailure)
 	}
 	body, err := io.ReadAll(response.Body)
@@ -472,12 +521,12 @@ func TestServeLiveReloadReadAndCloseErrorsLeaveSafeOriginalRepresentation(t *tes
 	closing := &trackingReadCloser{Reader: strings.NewReader("<html><body>safe</body></html>"), closeErr: closeFailure}
 	response = testServeLiveReloadResponseWithBody(closing)
 	headers = response.Header.Clone()
-	if err := reload.Inject(httptest.NewRequest(http.MethodGet, "/", nil), response); !errors.Is(err, closeFailure) {
-		t.Fatalf("close error = %v, want %v", err, closeFailure)
+	if err := reload.Inject(testServeLiveReloadDocumentRequest(http.MethodGet, "/"), response); err != nil {
+		t.Fatalf("close error turned a complete response into a proxy error: %v", err)
 	}
 	body, err = io.ReadAll(response.Body)
-	if err != nil || string(body) != "<html><body>safe</body></html>" || !equalServeLiveReloadHeaders(response.Header, headers) {
-		t.Fatalf("close failure changed representation: body=%q err=%v headers=%v", body, err, response.Header)
+	if err != nil || !strings.Contains(string(body), reload.ScriptPath()) || equalServeLiveReloadHeaders(response.Header, headers) {
+		t.Fatalf("complete response was not safely injected after close failure: body=%q err=%v headers=%v", body, err, response.Header)
 	}
 }
 
@@ -494,13 +543,20 @@ func newTestServeLiveReload(t *testing.T) *serveLiveReload {
 func stampedServeLiveReloadRequest(t *testing.T, reload *serveLiveReload, method, target string) *http.Request {
 	t.Helper()
 	var result *http.Request
+	request := testServeLiveReloadDocumentRequest(method, target)
 	reload.Handler(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		result = request
-	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, target, nil))
+	})).ServeHTTP(httptest.NewRecorder(), request)
 	if result == nil {
 		t.Fatal("application request was not forwarded")
 	}
 	return result
+}
+
+func testServeLiveReloadDocumentRequest(method, target string) *http.Request {
+	request := httptest.NewRequest(method, target, nil)
+	request.Header.Set("Sec-Fetch-Dest", "document")
+	return request
 }
 
 func testServeLiveReloadSubscriberCount(reload *serveLiveReload) int {

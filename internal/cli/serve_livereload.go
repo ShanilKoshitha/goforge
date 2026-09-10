@@ -23,6 +23,7 @@ const (
 	serveLiveReloadMaxDocumentBytes  = 1 << 20
 	serveLiveReloadMaxSubscribers    = 64
 	serveLiveReloadHeartbeatInterval = 15 * time.Second
+	serveLiveReloadWriteTimeout      = 2 * time.Second
 )
 
 type serveLiveReloadGenerationKey struct{}
@@ -173,20 +174,24 @@ func exactServeLiveReloadPath(target *url.URL, expected string) bool {
 }
 
 func (reload *serveLiveReload) serveScript(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
 	if request.Method != http.MethodGet {
 		response.Header().Set("Allow", http.MethodGet)
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-	response.Header().Set("X-Content-Type-Options", "nosniff")
 	response.Header().Set("Content-Length", strconv.Itoa(len(reload.script)))
 	response.WriteHeader(http.StatusOK)
 	_, _ = response.Write(reload.script)
 }
 
 func (reload *serveLiveReload) serveEvents(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
 	if request.Method != http.MethodGet {
 		response.Header().Set("Allow", http.MethodGet)
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
@@ -215,15 +220,15 @@ func (reload *serveLiveReload) serveEvents(response http.ResponseWriter, request
 		defer reload.unsubscribe(subscriber)
 	}
 
-	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	response.Header().Set("X-Content-Type-Options", "nosniff")
 	response.WriteHeader(http.StatusOK)
 	if subscriber == nil {
+		setServeLiveReloadWriteDeadline(response)
 		writeServeLiveReloadEvent(response, current)
 		flusher.Flush()
 		return
 	}
+	setServeLiveReloadWriteDeadline(response)
 	_, _ = io.WriteString(response, ": connected\n\n")
 	flusher.Flush()
 
@@ -232,10 +237,12 @@ func (reload *serveLiveReload) serveEvents(response http.ResponseWriter, request
 	for {
 		select {
 		case generation := <-subscriber:
+			setServeLiveReloadWriteDeadline(response)
 			writeServeLiveReloadEvent(response, generation)
 			flusher.Flush()
 			return
 		case <-heartbeat.C:
+			setServeLiveReloadWriteDeadline(response)
 			if _, err := io.WriteString(response, ": heartbeat\n\n"); err != nil {
 				return
 			}
@@ -278,7 +285,10 @@ func (reload *serveLiveReload) subscribe(since uint64) (chan uint64, uint64, int
 	if reload.closed {
 		return nil, reload.generation, http.StatusServiceUnavailable
 	}
-	if since != reload.generation {
+	if since > reload.generation {
+		return nil, reload.generation, http.StatusBadRequest
+	}
+	if since < reload.generation {
 		return nil, reload.generation, http.StatusOK
 	}
 	if len(reload.subscribers) >= reload.maxSubscribers {
@@ -296,7 +306,11 @@ func (reload *serveLiveReload) unsubscribe(subscriber chan uint64) {
 }
 
 func writeServeLiveReloadEvent(response io.Writer, generation uint64) {
-	_, _ = fmt.Fprintf(response, "event: reload\ndata: %d\n\n", generation)
+	_, _ = fmt.Fprintf(response, "id: %d\nevent: reload\ndata: %d\n\n", generation, generation)
+}
+
+func setServeLiveReloadWriteDeadline(response http.ResponseWriter) {
+	_ = http.NewResponseController(response).SetWriteDeadline(time.Now().Add(serveLiveReloadWriteTimeout))
 }
 
 // ModifyResponse is the direct httputil.ReverseProxy hook.
@@ -325,6 +339,10 @@ func (reload *serveLiveReload) Inject(request *http.Request, response *http.Resp
 		response.Body = prependServeLiveReloadBody(body, original)
 		return nil
 	}
+	if bytes.Contains(bytes.ToLower(body), []byte("data-goforge-generation=")) {
+		response.Body = prependServeLiveReloadBody(body, original)
+		return nil
+	}
 	closing := findServeLiveReloadClosingTag(body)
 	if closing < 0 {
 		response.Body = prependServeLiveReloadBody(body, original)
@@ -340,10 +358,9 @@ func (reload *serveLiveReload) Inject(request *http.Request, response *http.Resp
 	injected = append(injected, body[:closing]...)
 	injected = append(injected, tag...)
 	injected = append(injected, body[closing:]...)
-	if err := original.Close(); err != nil {
-		response.Body = io.NopCloser(bytes.NewReader(body))
-		return fmt.Errorf("close HTML response for live reload: %w", err)
-	}
+	// EOF has already yielded the complete representation. A transport Close
+	// error must not turn that valid upstream response into ReverseProxy's 502.
+	_ = original.Close()
 
 	response.Body = io.NopCloser(bytes.NewReader(injected))
 	response.ContentLength = int64(len(injected))
@@ -352,11 +369,13 @@ func (reload *serveLiveReload) Inject(request *http.Request, response *http.Resp
 	response.Header.Set("Content-Length", strconv.Itoa(len(injected)))
 	for _, name := range []string{
 		"Accept-Ranges",
+		"Age",
 		"Content-Digest",
 		"Content-MD5",
 		"Content-Range",
 		"Digest",
 		"ETag",
+		"Expires",
 		"Last-Modified",
 		"Repr-Digest",
 	} {
@@ -367,18 +386,31 @@ func (reload *serveLiveReload) Inject(request *http.Request, response *http.Resp
 
 func eligibleServeLiveReloadResponse(request *http.Request, response *http.Response) bool {
 	if request == nil || response == nil || request.Method != http.MethodGet ||
-		response.StatusCode != http.StatusOK || response.Body == nil || response.Uncompressed {
+		response.StatusCode != http.StatusOK || response.Body == nil || response.Uncompressed ||
+		response.ContentLength < 0 || response.ContentLength > serveLiveReloadMaxDocumentBytes ||
+		len(response.TransferEncoding) != 0 || len(response.Trailer) != 0 {
+		return false
+	}
+	if destinations := request.Header.Values("Sec-Fetch-Dest"); len(destinations) != 1 || !strings.EqualFold(strings.TrimSpace(destinations[0]), "document") {
 		return false
 	}
 	if request.Header.Get("Range") != "" || response.Header.Get("Content-Range") != "" {
+		return false
+	}
+	if request.Header.Get("Upgrade") != "" || response.Header.Get("Upgrade") != "" ||
+		headerHasServeLiveReloadDirective(request.Header, "Cache-Control", "no-transform") ||
+		headerHasServeLiveReloadDirective(response.Header, "Cache-Control", "no-transform") {
 		return false
 	}
 	contentTypes := response.Header.Values("Content-Type")
 	if len(contentTypes) != 1 {
 		return false
 	}
-	mediaType, _, err := mime.ParseMediaType(contentTypes[0])
+	mediaType, parameters, err := mime.ParseMediaType(contentTypes[0])
 	if err != nil || !strings.EqualFold(mediaType, "text/html") {
+		return false
+	}
+	if charset, present := parameters["charset"]; present && !strings.EqualFold(strings.TrimSpace(charset), "utf-8") {
 		return false
 	}
 	encodings := response.Header.Values("Content-Encoding")
@@ -396,6 +428,18 @@ func eligibleServeLiveReloadResponse(request *http.Request, response *http.Respo
 		}
 	}
 	return true
+}
+
+func headerHasServeLiveReloadDirective(header http.Header, name, directive string) bool {
+	for _, value := range header.Values(name) {
+		for _, item := range strings.Split(value, ",") {
+			token := strings.TrimSpace(strings.SplitN(item, "=", 2)[0])
+			if strings.EqualFold(token, directive) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func findServeLiveReloadClosingTag(body []byte) int {
