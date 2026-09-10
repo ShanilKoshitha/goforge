@@ -104,13 +104,13 @@ jobs:
           go build ./cmd/scheduler
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.14.2'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.14.3'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.14.0' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.14.2' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.14.0 h1:Dt5aHth+6iG5ODwUL8mLGL0ye6piP1klyYoGgZ3TE7k=' go.sum
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.14.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.14.2 h1:HIjhuU2nsE17gLc6C537lmILYB5aRkfs2dWlXFEuLYA=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.14.2/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
           grep -q '^version: 11$' forge.yaml
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           "$RUNNER_TEMP/forge" make:resource TypedTicket \
