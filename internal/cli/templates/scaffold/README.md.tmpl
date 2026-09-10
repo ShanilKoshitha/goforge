@@ -183,6 +183,9 @@ Application-owned production assets live below `resources/assets/files` and
 are embedded as exact bytes by the ordinary `resources/assets` Go package. The
 default layout references `app.css` and `app.js` through the Forge `asset`
 function. Their explicit handler is mounted in `routes/routes.go`.
+The editable `assets.Required` list declares every logical name that must exist
+for application views, so `forge assets:check`, startup, and the build gate fail
+closed when a required file is missing.
 
 `forge serve` and `forge dev` compile a valid asset edit into the same
 last-good candidate server and trigger one browser reload only after promotion.
@@ -192,7 +195,10 @@ require no asset compiler or generated manifest.
 
 Default asset URLs are stable and return strong content ETags with
 `Cache-Control: public, max-age=0, must-revalidate`. They do not claim immutable
-fingerprints that could break old HTML during a rolling deployment. The default
+fingerprints that could break old HTML during a rolling deployment. Stable
+paths preserve availability but do not pair exact HTML and asset generations
+across instances; keep changes backward compatible during a roll or use
+deployment stickiness until retained generations are available. The default
 allowlist covers common CSS, JavaScript, image, font, JSON, WebAssembly files
 while refusing active HTML, SVG, and XML. Replace `resources/assets`, pass
 another standard `http.Handler`, or mount external storage when the application

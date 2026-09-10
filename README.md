@@ -90,9 +90,10 @@ client and committed-generation SSE while keeping all reload machinery outside
 generated and production application code. The v0.17 candidate gives fresh
 applications an ordinary embedded CSS/JavaScript package, explicit route and
 Forge `asset` helper. Direct Go builds contain the exact application-owned
-bytes; stable URLs use strong ETags and mandatory revalidation so rolling
-deployments remain correct without a hidden asset build or retained-generation
-claim.
+bytes; stable URLs use strong ETags and mandatory revalidation without a hidden
+asset build. Rolling deployments must keep same-path asset changes backward
+compatible or use stickiness until retained generations provide exact HTML and
+asset version consistency.
 
 ## Install and try it
 

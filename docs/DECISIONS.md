@@ -1141,11 +1141,12 @@ candidates preserve the last-good server and do not notify the browser; a
 successful asset replacement emits the same single committed LiveReload
 generation.
 
-Format-12 applications will also own `cmd/assets`, a read-only executable that
-loads the same embedded set. `forge assets:check`, `forge test`, and `forge
-build` will delegate to it so quiescent invalid source fails before publication;
-the build will also refuse a source set that changes during its transaction.
-Application startup remains the final fail-closed boundary. This is validation,
+Format-12 applications also own `cmd/assets`, a read-only executable that loads
+the same embedded set. `forge assets:check`, `forge test`, and `forge build`
+delegate to it so a quiescent invalid source set fails before publication. The
+application-owned required-name list catches view dependencies, and the build
+refuses publication when any application source changes between validation and
+compilation. Startup remains the final fail-closed boundary. This is validation,
 not an asset compiler: it writes nothing, and direct `go build` plus fail-closed
 application startup remain the ordinary Go escape path.
 

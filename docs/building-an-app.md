@@ -95,7 +95,7 @@ Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 `/issues`; handlers do not silently switch behavior based on content negotiation.
 
-Fresh format-10 and format-11 JSON resource indexes are bounded and paginated. `GET /issues`
+Fresh format-10 through format-12 JSON resource indexes are bounded and paginated. `GET /issues`
 defaults to `page=1&per_page=20`; each parameter must appear at most once and be
 a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
 The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,
@@ -122,19 +122,24 @@ Fresh format-12 applications keep opaque production inputs in
 `resources/assets/files`. The visible `resources/assets` package embeds the
 exact bytes, validates a bounded inventory at startup, resolves logical names,
 and supplies the standard `http.Handler` mounted in `routes/routes.go`. The
-default layout calls `asset "app.css"` and `asset "app.js"`; unknown names fail
-rendering before a partial response is committed.
+default layout calls `asset "app.css"` and `asset "app.js"`; those names are
+declared in the application-owned `assets.Required` list so the build gate and
+startup fail before serving a binary with a missing required asset.
 
 The default stable `/assets/<logical-name>` URLs use strong SHA-256 ETags and
 `Cache-Control: public, max-age=0, must-revalidate`, with GET, HEAD, conditional,
 and byte-range semantics. Stable revalidation is deliberate: current-only
 fingerprinted URLs can break old HTML across rolling deployments unless prior
-asset generations are retained. A future retained-publication contract may add
-immutable fingerprints without weakening this deployment guarantee.
+asset generations are retained. Stable paths preserve availability, not exact
+generation consistency: keep asset changes backward compatible across a roll
+or use deployment stickiness. A future retained-publication contract may add
+immutable fingerprints with exact HTML/asset version pairing.
 
 There is no asset compile command because v0.17 performs no transformations.
-`go build ./cmd/server` is the complete production path and cannot embed stale
-generated output. Replace the application package or route with ordinary
+`go build ./cmd/server` is the complete direct production path and fails closed
+at application startup. The opinionated `forge build` additionally refuses to
+publish if application sources change between validation and compilation.
+Replace the application package or route with ordinary
 `net/http`, a CDN, or a Node-backed pipeline when those tradeoffs fit.
 
 ## Test and build

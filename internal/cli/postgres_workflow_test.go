@@ -907,6 +907,16 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 		stopCommandProcess(t, shutdownServer, false)
 		t.Fatalf("production binary did not render without source working directory: %d: %s", response.StatusCode, body)
 	}
+	wantAsset, err := os.ReadFile(filepath.Join(directory, "resources", "assets", "files", "app.css"))
+	if err != nil {
+		stopCommandProcess(t, shutdownServer, false)
+		t.Fatal(err)
+	}
+	response, body = requestBrowser(t, standaloneClient, http.MethodGet, "http://"+shutdownAddress+"/assets/app.css", nil)
+	if response.StatusCode != http.StatusOK || body != string(wantAsset) || response.Header.Get("ETag") == "" {
+		stopCommandProcess(t, shutdownServer, false)
+		t.Fatalf("production binary asset mismatch: status=%d etag=%q body=%q", response.StatusCode, response.Header.Get("ETag"), body)
+	}
 	stopCommandProcess(t, shutdownServer, true)
 
 	if elapsed := time.Since(started); elapsed >= 10*time.Minute {
