@@ -271,8 +271,13 @@ func takeSourceSnapshotWith(root string, includeAll bool) (sourceSnapshot, error
 			if isRootSourceFile(relative) {
 				return fmt.Errorf("source path %s is not a regular file", relative)
 			}
-			if _, excluded := excludedSourceDirectories[entry.Name()]; excluded && !strings.HasPrefix(relative, assetSourceRoot) {
+			if includeAll && isBuildOutputDirectory(relative) {
 				return filepath.SkipDir
+			}
+			if !includeAll {
+				if _, excluded := excludedSourceDirectories[entry.Name()]; excluded && !strings.HasPrefix(relative, assetSourceRoot) {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}
@@ -524,6 +529,18 @@ func isWatchedSourcePath(relative string) bool {
 func isRootSourceFile(relative string) bool {
 	switch relative {
 	case "forge.yaml", "go.mod", "go.sum", ".env":
+		return true
+	default:
+		return false
+	}
+}
+
+func isBuildOutputDirectory(relative string) bool {
+	if strings.Contains(relative, "/") {
+		return false
+	}
+	switch relative {
+	case ".git", ".cache", ".tmp", "tmp", "bin":
 		return true
 	default:
 		return false
