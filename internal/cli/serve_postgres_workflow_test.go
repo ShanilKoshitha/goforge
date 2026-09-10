@@ -160,6 +160,7 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	if strings.Contains(viewV3Body, "view-v2") {
 		t.Fatalf("repaired view retained stale content: %s", viewV3Body)
 	}
+	viewV3Reload := openDevelopmentLiveReload(t, baseURL, liveReloadEvents, viewV3Generation)
 	viewV3Artifact, err := os.ReadFile(generatedPath)
 	if err != nil {
 		t.Fatalf("read repaired compiled views: %v", err)
@@ -181,6 +182,13 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 		t.Fatalf("include nested view: %v", err)
 	}
 	viewV4Body := waitForDevelopmentResponse(t, baseURL, "nested-view-v4", &serveOutput)
+	viewV4Generation := nextDevelopmentLiveReloadGeneration(t, viewV3Generation)
+	waitForDevelopmentLiveReload(t, viewV3Reload, viewV4Generation)
+	viewV4Body = developmentResponse(t, baseURL)
+	if !strings.Contains(viewV4Body, "nested-view-v4") {
+		t.Fatalf("LiveReload generation %s did not expose its nested view: %s", viewV4Generation, viewV4Body)
+	}
+	assertDevelopmentLiveReloadPage(t, viewV4Body, liveReloadScript, viewV4Generation)
 	viewV4Artifact, err := os.ReadFile(generatedPath)
 	if err != nil {
 		t.Fatalf("read nested compiled views: %v", err)
