@@ -47,6 +47,7 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"internal/jobs/dependencies.go",
 		"internal/jobs/dispatcher.go",
 		"internal/jobs/registry_gen.go",
+		"internal/jobmanifest/manifest_gen.go",
 		"internal/schedules/registry.go",
 		"internal/jobs/deliver_mail.go",
 		".forge/jobs.json",

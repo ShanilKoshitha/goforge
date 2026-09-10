@@ -21,6 +21,7 @@ import (
 	"[[.Module]]/database/migrations"
 	"[[.Module]]/internal/config"
 	appdatabase "[[.Module]]/internal/database"
+	"[[.Module]]/internal/jobmanifest"
 	"[[.Module]]/internal/schedules"
 )
 
@@ -34,6 +35,20 @@ func main() {
 func run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: go run ./cmd/console <migrate|queue:failed|queue:retry|queue:forget|schedule:list>")
+	}
+	var scheduleRegistry *schedule.Registry
+	if args[0] == "schedule:list" {
+		if len(args) != 1 {
+			return errors.New("usage: go run ./cmd/console schedule:list")
+		}
+		var err error
+		scheduleRegistry, err = schedules.NewRegistry()
+		if err != nil {
+			return fmt.Errorf("build schedule registry: %w", err)
+		}
+		if err := jobmanifest.ValidateScheduledTargets(scheduleRegistry); err != nil {
+			return err
+		}
 	}
 	settings, err := config.LoadDatabase()
 	if err != nil {
@@ -71,18 +86,11 @@ func run(args []string) error {
 		}
 		return runQueueCommand(ctx, store, args)
 	case "schedule:list":
-		if len(args) != 1 {
-			return errors.New("usage: go run ./cmd/console schedule:list")
-		}
-		registry, err := schedules.NewRegistry()
-		if err != nil {
-			return fmt.Errorf("build schedule registry: %w", err)
-		}
 		store, err := schedulepostgres.New(db)
 		if err != nil {
 			return fmt.Errorf("build schedule store: %w", err)
 		}
-		return listSchedules(ctx, store, registry.Definitions())
+		return listSchedules(ctx, store, scheduleRegistry.Definitions())
 	default:
 		return fmt.Errorf("unknown console command %q", args[0])
 	}

@@ -207,6 +207,139 @@ func TestMakeJobRejectsFormatNineBuiltinDeclarationsBeforeWrites(t *testing.T) {
 	}
 }
 
+func TestFormatElevenJobGenerationPublishesSeparateDeterministicTargetManifest(t *testing.T) {
+	directory := jobProject(t, "11")
+	t.Chdir(directory)
+	for _, name := range []string{"ZuluWork", "AlphaWork"} {
+		if err := makeJob(name, &bytes.Buffer{}); err != nil {
+			t.Fatalf("make %s: %v", name, err)
+		}
+	}
+	registry, err := os.ReadFile(filepath.FromSlash(generatedJobRegistryPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryContents := string(registry)
+	if strings.Contains(registryContents, "RegisteredJobNames") || strings.Contains(registryContents, "ValidateScheduledTargets") {
+		t.Fatalf("job registry package gained manifest declarations:\n%s", registryContents)
+	}
+	manifest, err := os.ReadFile(filepath.FromSlash(generatedJobManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestContents := string(manifest)
+	for _, want := range []string{
+		"func RegisteredJobNames() []string",
+		"func ValidateScheduledTargets(registry *schedule.Registry) error",
+		"jobs.CleanupMailDefinition.Name()",
+		"jobs.DeliverMailDefinition.Name()",
+		"jobs.AlphaWorkDefinition.Name()",
+		"jobs.ZuluWorkDefinition.Name()",
+		"sort.Strings(names)",
+		"does not validate payload identity or deployment queue topology",
+	} {
+		if !strings.Contains(manifestContents, want) {
+			t.Errorf("format-11 manifest omits %q:\n%s", want, manifestContents)
+		}
+	}
+	if strings.Index(manifestContents, "jobs.AlphaWorkDefinition.Name()") > strings.Index(manifestContents, "jobs.ZuluWorkDefinition.Name()") {
+		t.Fatalf("generated target manifest is not deterministic:\n%s", manifestContents)
+	}
+}
+
+func TestPreV0142FormatElevenJobNamesRemainValid(t *testing.T) {
+	directory := jobProject(t, "11")
+	t.Chdir(directory)
+	for _, name := range []string{"RegisteredJobNamesJob", "ValidateScheduledTargetsJob"} {
+		if err := makeJob(name, &bytes.Buffer{}); err != nil {
+			t.Fatalf("make formerly colliding job %s: %v", name, err)
+		}
+	}
+	if err := os.Remove(filepath.FromSlash(generatedJobManifestPath)); err != nil {
+		t.Fatalf("simulate pre-v0.14.2 format-11 state: %v", err)
+	}
+	if err := makeJob("SubsequentWork", &bytes.Buffer{}); err != nil {
+		t.Fatalf("generate from pre-v0.14.2 format-11 state: %v", err)
+	}
+	manifest, err := os.ReadFile(filepath.FromSlash(generatedJobManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"jobs.RegisteredJobNamesDefinition.Name()",
+		"jobs.ValidateScheduledTargetsDefinition.Name()",
+		"jobs.SubsequentWorkDefinition.Name()",
+	} {
+		if !strings.Contains(string(manifest), want) {
+			t.Errorf("regenerated manifest omitted preexisting target %q:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestFormatsSixThroughTenDoNotGainJobManifest(t *testing.T) {
+	for _, format := range []string{"6", "7", "8", "9", "10"} {
+		t.Run(format, func(t *testing.T) {
+			directory := jobProject(t, format)
+			t.Chdir(directory)
+			if err := makeJob("OrdinaryWork", &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.FromSlash(generatedJobManifestPath)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("format %s generated a format-11 manifest: %v", format, err)
+			}
+		})
+	}
+}
+
+func TestFormatElevenMakeJobRollsBackRegistryManifestAndMetadata(t *testing.T) {
+	for failureAt := 1; failureAt <= 3; failureAt++ {
+		t.Run(strconv.Itoa(failureAt), func(t *testing.T) {
+			directory := jobProject(t, "11")
+			t.Chdir(directory)
+			manifest, err := generatedJobManifest("example.com/jobs", jobState{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(filepath.FromSlash(generatedJobManifestPath)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.FromSlash(generatedJobManifestPath), []byte(manifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			registryBefore, _ := os.ReadFile(filepath.FromSlash(generatedJobRegistryPath))
+			manifestBefore, _ := os.ReadFile(filepath.FromSlash(generatedJobManifestPath))
+			stateBefore, _ := os.ReadFile(filepath.FromSlash(jobStatePath))
+			sentinel := errors.New("injected format-11 managed write failure")
+			calls := 0
+			managed := func(path string, content []byte) error {
+				calls++
+				if calls == failureAt {
+					if err := writeManagedFile(path, []byte("incomplete\n")); err != nil {
+						return err
+					}
+					return sentinel
+				}
+				return writeManagedFile(path, content)
+			}
+			err = makeJobWithWriters("AtomicWork", &bytes.Buffer{}, writeExclusive, managed)
+			if !errors.Is(err, sentinel) {
+				t.Fatalf("rollback error = %v", err)
+			}
+			registryAfter, _ := os.ReadFile(filepath.FromSlash(generatedJobRegistryPath))
+			manifestAfter, _ := os.ReadFile(filepath.FromSlash(generatedJobManifestPath))
+			stateAfter, _ := os.ReadFile(filepath.FromSlash(jobStatePath))
+			if !bytes.Equal(registryBefore, registryAfter) || !bytes.Equal(manifestBefore, manifestAfter) || !bytes.Equal(stateBefore, stateAfter) {
+				t.Fatal("failed format-11 generation did not restore registry, manifest, and metadata")
+			}
+			for _, path := range []string{"internal/jobs/atomic_work.go", "internal/jobs/atomic_work_test.go"} {
+				if _, err := os.Stat(filepath.FromSlash(path)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("rollback left %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
 func TestMakeJobRejectsCorruptMetadataWithoutWrites(t *testing.T) {
 	directory := jobProject(t, "6")
 	t.Chdir(directory)

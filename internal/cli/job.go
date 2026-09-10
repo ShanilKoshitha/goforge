@@ -15,6 +15,7 @@ import (
 
 const (
 	generatedJobRegistryPath = "internal/jobs/registry_gen.go"
+	generatedJobManifestPath = "internal/jobmanifest/manifest_gen.go"
 	jobStatePath             = ".forge/jobs.json"
 )
 
@@ -74,6 +75,13 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	if err != nil {
 		return err
 	}
+	var manifest string
+	if format >= 11 {
+		manifest, err = generatedJobManifest(module, next)
+		if err != nil {
+			return err
+		}
+	}
 	encodedState, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode job metadata: %w", err)
@@ -84,6 +92,14 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	if err != nil {
 		return fmt.Errorf("read generated job registry: %w", err)
 	}
+	var oldManifest []byte
+	manifestMissing := true
+	if format >= 11 {
+		oldManifest, manifestMissing, err = readOptionalGeneratedFile(generatedJobManifestPath)
+		if err != nil {
+			return fmt.Errorf("read generated job manifest: %w", err)
+		}
+	}
 	oldState, stateMissing, err := readOptionalGeneratedFile(jobStatePath)
 	if err != nil {
 		return fmt.Errorf("read job metadata: %w", err)
@@ -92,7 +108,11 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	if err != nil {
 		return err
 	}
-	for _, path := range []string{generatedJobRegistryPath, jobStatePath} {
+	managedPaths := []string{generatedJobRegistryPath, jobStatePath}
+	if format >= 11 {
+		managedPaths = []string{generatedJobRegistryPath, generatedJobManifestPath, jobStatePath}
+	}
+	for _, path := range managedPaths {
 		directories, err := missingParentDirectories([]plannedFile{{path: filepath.FromSlash(path)}})
 		if err != nil {
 			return err
@@ -102,6 +122,7 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 
 	var created []string
 	registryChanged := false
+	manifestChanged := false
 	stateChanged := false
 	rollback := func(cause error) error {
 		for index := len(created) - 1; index >= 0; index-- {
@@ -109,11 +130,14 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 				cause = errors.Join(cause, fmt.Errorf("remove incomplete job %s: %w", filepath.ToSlash(created[index]), err))
 			}
 		}
-		if registryChanged {
-			cause = errors.Join(cause, restoreOptionalManagedFile(generatedJobRegistryPath, oldRegistry, registryMissing, managed))
-		}
 		if stateChanged {
 			cause = errors.Join(cause, restoreOptionalManagedFile(jobStatePath, oldState, stateMissing, managed))
+		}
+		if manifestChanged {
+			cause = errors.Join(cause, restoreOptionalManagedFile(generatedJobManifestPath, oldManifest, manifestMissing, managed))
+		}
+		if registryChanged {
+			cause = errors.Join(cause, restoreOptionalManagedFile(generatedJobRegistryPath, oldRegistry, registryMissing, managed))
 		}
 		for _, directory := range uniqueDeepestDirectories(createdDirectories) {
 			entries, err := os.ReadDir(directory)
@@ -136,7 +160,7 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 		}
 		created = append(created, file.path)
 	}
-	for _, path := range []string{generatedJobRegistryPath, jobStatePath} {
+	for _, path := range managedPaths {
 		if err := os.MkdirAll(filepath.Dir(filepath.FromSlash(path)), 0o755); err != nil {
 			return rollback(fmt.Errorf("create generated job parent: %w", err))
 		}
@@ -144,6 +168,12 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 	registryChanged = true
 	if err := managed(filepath.FromSlash(generatedJobRegistryPath), []byte(registry)); err != nil {
 		return rollback(fmt.Errorf("write generated job registry: %w", err))
+	}
+	if format >= 11 {
+		manifestChanged = true
+		if err := managed(filepath.FromSlash(generatedJobManifestPath), []byte(manifest)); err != nil {
+			return rollback(fmt.Errorf("write generated job manifest: %w", err))
+		}
 	}
 	stateChanged = true
 	if err := managed(filepath.FromSlash(jobStatePath), encodedState); err != nil {
@@ -154,6 +184,9 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 		fmt.Fprintf(stdout, "created %s\n", filepath.ToSlash(file.path))
 	}
 	fmt.Fprintln(stdout, "updated internal/jobs/registry_gen.go")
+	if format >= 11 {
+		fmt.Fprintln(stdout, "updated internal/jobmanifest/manifest_gen.go")
+	}
 	return nil
 }
 
@@ -297,6 +330,14 @@ func generatedJobRegistryForFormat(module string, state jobState, format int) (s
 		Jobs     []jobSpec
 		Builtins bool
 	}{Module: module, Jobs: state.Jobs, Builtins: format >= 9})
+}
+
+func generatedJobManifest(module string, state jobState) (string, error) {
+	return renderTemplate("templates/job/manifest_gen.go.tmpl", generatedJobManifestPath, struct {
+		Module   string
+		Jobs     []jobSpec
+		Builtins bool
+	}{Module: module, Jobs: state.Jobs, Builtins: true})
 }
 
 func readOptionalGeneratedFile(path string) ([]byte, bool, error) {

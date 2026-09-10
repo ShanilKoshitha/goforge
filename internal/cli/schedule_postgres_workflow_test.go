@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,12 +118,18 @@ func TestGeneratedSchedulePostgresWorkflow(t *testing.T) {
 		"MAIL_SMTP_TIMEOUT":        "1s",
 		"MAIL_OUTBOX_KEY":          base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x73}, 32)),
 		"SCHEDULE_POLL_INTERVAL":   "1s",
-		"SCHEDULE_OP_TIMEOUT":      "5s",
+		"SCHEDULE_OP_TIMEOUT":      "60s",
 	})
 	if output, err := generatedCommand(directory, applicationEnvironment, forgeBinary, "migrate"); err != nil {
 		t.Fatalf("migrate generated schedule application: %v\n%s", err, output)
 	} else if !strings.Contains(output, "000005_create_schedules") || !strings.Contains(output, "900001_schedule_effect") {
 		t.Fatalf("schedule migrations were not applied:\n%s", output)
+	}
+	var definitionFingerprint string
+	if output, err := generatedCommand(directory, applicationEnvironment, forgeBinary, "schedule:list"); err != nil {
+		t.Fatalf("list code-owned schedule before materialization: %v\n%s", err, output)
+	} else {
+		definitionFingerprint = scheduleAcceptanceFingerprint(t, output)
 	}
 	for _, gate := range [][]string{{"test", "./..."}, {"test", "-race", "./..."}, {"vet", "./..."}} {
 		if output, err := generatedCommand(directory, applicationEnvironment, "go", gate...); err != nil {
@@ -135,73 +142,136 @@ func TestGeneratedSchedulePostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(directory, applicationEnvironment, "go", "build", "-o", workerBinary, "./cmd/worker"); err != nil {
 		t.Fatalf("build generated worker: %v\n%s", err, output)
 	}
+	runDirectory := filepath.Join(scratch, "outside-source-cwd")
+	if err := os.MkdirAll(runDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	invalidEnvironment := jobAcceptanceEnvironment(applicationEnvironment, map[string]string{
+		"DATABASE_URL":                  "postgres://invalid:invalid@127.0.0.1:1/invalid?sslmode=disable",
+		"GOFORGE_TEST_INVALID_SCHEDULE": "1",
+	})
+	if output, err := generatedCommand(runDirectory, invalidEnvironment, schedulerBinary, "--once"); err == nil {
+		t.Fatalf("scheduler accepted a target name absent from the generated job registry:\n%s", output)
+	} else if !strings.Contains(output, "acceptance.missing-handler.v1 -> acceptance.unregistered-job.v1") || strings.Contains(output, "connect") {
+		t.Fatalf("scheduler did not reject the missing handler before database setup:\n%s", output)
+	}
+	if output, err := generatedCommand(directory, invalidEnvironment, forgeBinary, "schedule:list"); err == nil {
+		t.Fatalf("schedule:list accepted a target name absent from the generated job registry:\n%s", output)
+	} else if !strings.Contains(output, "acceptance.missing-handler.v1 -> acceptance.unregistered-job.v1") || strings.Contains(output, "connect") {
+		t.Fatalf("schedule:list did not share pre-database target validation:\n%s", output)
+	}
 
 	db, err := sql.Open("pgx", isolationURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	launchMinute := scheduleAcceptanceSafeDatabaseMinute(t, db)
-	runDirectory := filepath.Join(scratch, "outside-source-cwd")
-	if err := os.MkdirAll(runDirectory, 0o755); err != nil {
-		t.Fatal(err)
+	seedMinute := scheduleAcceptanceDatabaseMinute(t, db)
+	if _, err := db.ExecContext(context.Background(), `
+		INSERT INTO goforge_schedules
+			(name, fingerprint, cron_expression, time_zone, job_name, queue,
+			 misfire_grace_ms, overlap_policy, next_run_at, created_at, updated_at)
+		VALUES ($1, $2, '* * * * *', 'UTC', $3, 'default', 900000, 'forbid', $4, clock_timestamp(), clock_timestamp())`,
+		scheduleAcceptanceName, definitionFingerprint, scheduleAcceptanceJobName, seedMinute,
+	); err != nil {
+		t.Fatalf("seed due schedule cursor: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `
+		CREATE FUNCTION block_schedule_acceptance_enqueue() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.dedup_key = 'goforge:schedule:acceptance.every-minute.v1' THEN
+				PERFORM pg_advisory_xact_lock(hashtext(NEW.dedup_key));
+			END IF;
+			RETURN NEW;
+		END
+		$$ LANGUAGE plpgsql`); err != nil {
+		t.Fatalf("install scheduler overlap barrier function: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `CREATE TRIGGER block_schedule_acceptance_enqueue
+		BEFORE INSERT ON goforge_jobs
+		FOR EACH ROW EXECUTE FUNCTION block_schedule_acceptance_enqueue()`); err != nil {
+		t.Fatalf("install scheduler overlap barrier trigger: %v", err)
+	}
+	barrier, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("begin scheduler overlap barrier: %v", err)
+	}
+	barrierOpen := true
+	t.Cleanup(func() {
+		if barrierOpen {
+			_ = barrier.Rollback()
+		}
+	})
+	if _, err := barrier.ExecContext(context.Background(), "SELECT pg_advisory_xact_lock(hashtext($1))", "goforge:schedule:"+scheduleAcceptanceName); err != nil {
+		t.Fatalf("hold scheduler overlap barrier: %v", err)
 	}
 
 	type processResult struct {
 		output string
 		err    error
 	}
-	commands := make([]*exec.Cmd, 0, 2)
-	outputs := make([]*bytes.Buffer, 0, 2)
-	for range 2 {
+	startScheduler := func(name string, environment []string) (*exec.Cmd, <-chan processResult) {
+		t.Helper()
 		command := exec.Command(schedulerBinary, "--once")
 		command.Dir = runDirectory
-		command.Env = applicationEnvironment
+		command.Env = environment
 		configureCommandProcess(command)
 		output := &bytes.Buffer{}
 		command.Stdout, command.Stderr = output, output
 		if err := command.Start(); err != nil {
-			for _, started := range commands {
-				stopCommandProcess(t, started, false)
-			}
-			t.Fatalf("start competing generated scheduler: %v", err)
+			t.Fatalf("start %s generated scheduler: %v", name, err)
 		}
-		commands = append(commands, command)
-		outputs = append(outputs, output)
-	}
-	results := make(chan processResult, len(commands))
-	for index, command := range commands {
-		go func(command *exec.Cmd, output *bytes.Buffer) {
+		t.Cleanup(func() {
+			if command.Process != nil {
+				_ = command.Process.Kill()
+			}
+		})
+		result := make(chan processResult, 1)
+		go func() {
 			err := command.Wait()
-			results <- processResult{output: output.String(), err: err}
-		}(command, outputs[index])
+			result <- processResult{output: output.String(), err: err}
+		}()
+		return command, result
 	}
-	combinedOutput := ""
-	var processErrors []string
-	oneShotDeadline := time.NewTimer(15 * time.Second)
-	defer oneShotDeadline.Stop()
-	for completed := 0; completed < len(commands); completed++ {
+	waitScheduler := func(name string, command *exec.Cmd, result <-chan processResult) processResult {
+		t.Helper()
 		select {
-		case result := <-results:
-			combinedOutput += result.output
-			if result.err != nil {
-				processErrors = append(processErrors, result.err.Error())
-			}
-		case <-oneShotDeadline.C:
-			for _, command := range commands {
-				if command.Process != nil {
-					_ = command.Process.Kill()
-				}
-			}
-			for remaining := completed; remaining < len(commands); remaining++ {
-				result := <-results
-				combinedOutput += result.output
-			}
-			t.Fatalf("competing generated schedulers did not exit within 15s\n%s", combinedOutput)
+		case completed := <-result:
+			return completed
+		case <-time.After(15 * time.Second):
+			_ = command.Process.Kill()
+			completed := <-result
+			t.Fatalf("%s generated scheduler did not exit within 15s\n%s", name, completed.output)
+			return processResult{}
 		}
 	}
-	if len(processErrors) != 0 {
-		t.Fatalf("competing generated scheduler failed: %s\n%s", strings.Join(processErrors, "; "), combinedOutput)
+	contenderAEnvironment := jobAcceptanceEnvironment(applicationEnvironment, map[string]string{
+		"DATABASE_URL": scheduleAcceptanceApplicationURL(t, isolationURL, "goforge_schedule_contender_a"),
+	})
+	contenderA, contenderAResult := startScheduler("first competing", contenderAEnvironment)
+	jobAcceptanceEventually(t, 10*time.Second, func() (bool, string) {
+		waiting := jobAcceptanceCount(t, db, `
+			SELECT COUNT(*) FROM pg_stat_activity
+			WHERE application_name = 'goforge_schedule_contender_a'
+			  AND wait_event_type = 'Lock' AND lower(wait_event) = 'advisory'`)
+		return waiting == 1, fmt.Sprintf("first scheduler advisory waiters=%d", waiting)
+	})
+	contenderB, contenderBResult := startScheduler("second competing", applicationEnvironment)
+	second := waitScheduler("second competing", contenderB, contenderBResult)
+	if second.err != nil || !strings.Contains(second.output, scheduleAcceptanceName+"\tcontended\t-\t-") {
+		t.Fatalf("second scheduler did not report durable contention: %v\n%s", second.err, second.output)
+	}
+	if err := barrier.Commit(); err != nil {
+		t.Fatalf("release scheduler overlap barrier: %v", err)
+	}
+	barrierOpen = false
+	first := waitScheduler("first competing", contenderA, contenderAResult)
+	if first.err != nil || !strings.Contains(first.output, scheduleAcceptanceName+"\tenqueued\t") {
+		t.Fatalf("first scheduler did not enqueue after overlap barrier release: %v\n%s", first.err, first.output)
+	}
+	combinedOutput := first.output + second.output
+	if enqueued, contended := strings.Count(combinedOutput, "\tenqueued\t"), strings.Count(combinedOutput, "\tcontended\t"); enqueued != 1 || contended != 1 {
+		t.Fatalf("competing outcomes enqueued=%d contended=%d, want exactly one each\n%s", enqueued, contended, combinedOutput)
 	}
 
 	var occurrenceAt, evaluatedAt, nextRunAt time.Time
@@ -216,11 +286,11 @@ func TestGeneratedSchedulePostgresWorkflow(t *testing.T) {
 	occurrenceAt = occurrenceAt.UTC()
 	evaluatedAt = evaluatedAt.UTC()
 	nextRunAt = nextRunAt.UTC()
-	if !occurrenceAt.Equal(launchMinute) || !occurrenceAt.Equal(evaluatedAt.Truncate(time.Minute)) {
-		t.Fatalf("schedule did not materialize the guarded current database minute: launch=%s occurrence=%s evaluated=%s\n%s",
-			launchMinute.Format(time.RFC3339), occurrenceAt.Format(time.RFC3339), evaluatedAt.Format(time.RFC3339Nano), combinedOutput)
+	if !occurrenceAt.Equal(evaluatedAt.Truncate(time.Minute)) {
+		t.Fatalf("schedule occurrence does not match its evaluated database minute: seed=%s occurrence=%s evaluated=%s\n%s",
+			seedMinute.Format(time.RFC3339), occurrenceAt.Format(time.RFC3339), evaluatedAt.Format(time.RFC3339Nano), combinedOutput)
 	}
-	if !nextRunAt.Equal(launchMinute.Add(time.Minute)) || lastOutcome != "enqueued" || lastJobID == "" {
+	if !nextRunAt.Equal(occurrenceAt.Add(time.Minute)) || lastOutcome != "enqueued" || lastJobID == "" {
 		t.Fatalf("durable schedule state next=%s outcome=%q job=%q, want next minute and one enqueue\n%s",
 			nextRunAt.Format(time.RFC3339), lastOutcome, lastJobID, combinedOutput)
 	}
@@ -243,9 +313,9 @@ func TestGeneratedSchedulePostgresWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse scheduled payload occurrence %q: %v", payloadTime, err)
 	}
-	if queuedID != lastJobID || businessKey != scheduleAcceptanceBusinessKey || !parsedPayloadTime.Equal(launchMinute) {
+	if queuedID != lastJobID || businessKey != scheduleAcceptanceBusinessKey || !parsedPayloadTime.Equal(occurrenceAt) {
 		t.Fatalf("scheduled payload id=%q key=%q at=%s, cursor id=%q minute=%s",
-			queuedID, businessKey, parsedPayloadTime.Format(time.RFC3339Nano), lastJobID, launchMinute.Format(time.RFC3339))
+			queuedID, businessKey, parsedPayloadTime.Format(time.RFC3339Nano), lastJobID, occurrenceAt.Format(time.RFC3339))
 	}
 	if got := jobAcceptanceCount(t, db, "SELECT COUNT(*) FROM schedule_effects"); got != 0 {
 		t.Fatalf("scheduler executed %d job effects directly; only a worker may run handlers", got)
@@ -285,9 +355,9 @@ func TestGeneratedSchedulePostgresWorkflow(t *testing.T) {
 	).Scan(&effectJobID, &effectAttempt, &effectScheduledAt); err != nil {
 		t.Fatalf("read application-owned scheduled effect: %v", err)
 	}
-	if effectJobID != queuedID || effectAttempt != 1 || !effectScheduledAt.UTC().Equal(launchMinute) {
+	if effectJobID != queuedID || effectAttempt != 1 || !effectScheduledAt.UTC().Equal(occurrenceAt) {
 		t.Fatalf("worker effect job=%q attempt=%d at=%s, want job=%q attempt=1 at=%s",
-			effectJobID, effectAttempt, effectScheduledAt.UTC().Format(time.RFC3339), queuedID, launchMinute.Format(time.RFC3339))
+			effectJobID, effectAttempt, effectScheduledAt.UTC().Format(time.RFC3339), queuedID, occurrenceAt.Format(time.RFC3339))
 	}
 	stopCommandProcess(t, worker, true)
 	workerRunning = false
@@ -318,25 +388,45 @@ func TestGeneratedSchedulePostgresWorkflow(t *testing.T) {
 	}
 }
 
-func scheduleAcceptanceSafeDatabaseMinute(t *testing.T, db *sql.DB) time.Time {
+func scheduleAcceptanceDatabaseMinute(t *testing.T, db *sql.DB) time.Time {
 	t.Helper()
-	deadline := time.Now().Add(65 * time.Second)
-	for time.Now().Before(deadline) {
-		queryContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		var now time.Time
-		err := db.QueryRowContext(queryContext, "SELECT clock_timestamp()").Scan(&now)
-		cancel()
-		if err != nil {
-			t.Fatalf("read PostgreSQL clock: %v", err)
-		}
-		now = now.UTC()
-		if second := now.Second(); second >= 5 && second <= 35 {
-			return now.Truncate(time.Minute)
-		}
-		time.Sleep(100 * time.Millisecond)
+	queryContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var now time.Time
+	if err := db.QueryRowContext(queryContext, "SELECT clock_timestamp()").Scan(&now); err != nil {
+		t.Fatalf("read PostgreSQL clock: %v", err)
 	}
-	t.Fatal("PostgreSQL clock did not enter the safe scheduler launch window")
-	return time.Time{}
+	return now.UTC().Truncate(time.Minute)
+}
+
+func scheduleAcceptanceFingerprint(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, scheduleAcceptanceName) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 0 {
+			fingerprint := fields[len(fields)-1]
+			if len(fingerprint) == 64 {
+				return fingerprint
+			}
+		}
+	}
+	t.Fatalf("schedule:list omitted a valid fingerprint for %s:\n%s", scheduleAcceptanceName, output)
+	return ""
+}
+
+func scheduleAcceptanceApplicationURL(t *testing.T, databaseURL, applicationName string) string {
+	t.Helper()
+	parsed, err := url.Parse(databaseURL)
+	if err != nil {
+		t.Fatalf("parse schedule acceptance database URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("application_name", applicationName)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 const (
@@ -407,7 +497,9 @@ const scheduleAcceptanceRegistrySource = `package schedules
 
 import (
 	"fmt"
+	"os"
 
+	"github.com/ShanilKoshitha/goforge/job"
 	"github.com/ShanilKoshitha/goforge/schedule"
 
 	"example.com/scheduleapp/internal/jobs"
@@ -425,10 +517,22 @@ var everyMinute = schedule.MustDefine(
 	}),
 )
 
+var missingHandler = schedule.MustDefine(
+	"acceptance.missing-handler.v1",
+	"* * * * *",
+	job.MustDefine[struct{}]("acceptance.unregistered-job.v1", job.Policy{}),
+	schedule.Static(struct{}{}),
+)
+
 func NewRegistry() (*schedule.Registry, error) {
 	registry := schedule.NewRegistry()
 	if err := schedule.Register(registry, everyMinute); err != nil {
 		return nil, fmt.Errorf("register application schedules: %w", err)
+	}
+	if os.Getenv("GOFORGE_TEST_INVALID_SCHEDULE") == "1" {
+		if err := schedule.Register(registry, missingHandler); err != nil {
+			return nil, fmt.Errorf("register invalid acceptance schedule: %w", err)
+		}
 	}
 	return registry, nil
 }
