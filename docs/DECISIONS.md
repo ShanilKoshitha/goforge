@@ -1063,3 +1063,43 @@ HTTP, durable jobs, and recurring schedules, but local development requires
 three manually coordinated terminals. A thin, fail-fast supervisor closes that
 workflow gap while preserving every direct Go escape hatch and avoiding new
 runtime magic.
+
+## D039 — Browser LiveReload belongs to the development proxy
+
+**Status:** accepted for v0.16 implementation
+
+`forge serve` and therefore `forge dev` add browser page reload at the stable
+development proxy. The generated application, framework runtime, production
+server, templates, and routes remain unaware of it. Direct
+`go run ./cmd/server` stays the exact byte-preserving escape hatch.
+
+The proxy owns a cryptographically random process-local path containing an
+external JavaScript client and an SSE endpoint. An eligible full `text/html`
+browser document receives one script element before its closing body. The
+external same-origin client works with the generated `default-src 'self'` CSP;
+the proxy does not add inline code, nonces, `unsafe-inline`, CORS, or weaker CSP
+directives. A deliberately stricter custom `script-src` or `connect-src` policy
+remains authoritative and may disable LiveReload until the application owner
+permits the same-origin development client.
+
+Injection is fail-closed. Only successful GET document responses with an exact
+HTML media type, identity encoding, no attachment/range semantics, a closing
+document element, and a bounded body are eligible. Other representations pass
+through unchanged. A rewritten page becomes `no-store`, receives a corrected
+content length, and loses representation validators that no longer describe its
+body; status, cookies, CSP, and unrelated application headers are preserved.
+
+Reload truth follows the existing publication transaction. Initial startup and
+candidate target swaps do not notify. The monotonic generation advances only
+after the candidate remains current, the previous process is cleaned up, and
+the compiled-view publication commits. A client supplies the page generation
+when opening SSE, so a promotion between page response and subscription causes
+an immediate reload rather than a missed event. Connections and subscribers are
+bounded, use heartbeats, terminate with request/proxy shutdown, and require the
+unguessable exact path without CORS.
+
+Reason: automatic browser refresh removes the last manual step from the current
+server-rendered edit loop. Keeping it at the already development-only proxy
+makes the behavior observable and replaceable without infecting production
+code, while strict response eligibility and same-origin external code preserve
+the framework's security and conventional-Go promises.

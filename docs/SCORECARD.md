@@ -1,3 +1,61 @@
+# v0.16 browser LiveReload scorecard
+
+Status: **in progress** — 2026-09-10
+
+Target:
+
+> From a fresh format-11 application, open a server-rendered browser page through
+> `forge serve` or `forge dev`, make a valid Go or Forge-view edit, and have the
+> browser reload exactly once after the last-good candidate is fully committed.
+> Failed, stale, or reverted candidates must never reload the browser. Keep the
+> development mechanism outside generated and production application binaries,
+> preserve application security policy, and retain direct Go execution as the
+> complete no-rewrite escape hatch.
+
+The smallest complete workflow extends the existing development proxy only.
+The proxy injects one external same-origin client into eligible full HTML
+documents and exposes randomized process-local script/event paths. Successful
+promotion advances a monotonic generation observed through bounded SSE. This is
+page reload, not HMR or an asset pipeline.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| The generated browser loop closes automatically | candidate | A fresh format-11 page fetched through literal `forge serve` and `forge dev` contains one development-only external client; a committed view or Go edit produces one reload event and the next page contains the accepted content |
+| Reload truth follows promotion truth | candidate | Initial startup, build/compile failure, unhealthy candidate, stale candidate, failed target swap, rollback, and last-good serving emit no reload; notification occurs only after target promotion, old-candidate cleanup, and compiled-view commit all succeed |
+| Response rewriting is narrow and representation-safe | candidate | Only successful full `text/html` browser documents with identity encoding and bounded bodies are injected; HEAD, partial/range, attachment, compressed, oversized, fragmentary, and non-HTML responses retain exact bodies and representation headers |
+| CSP and application semantics remain authoritative | candidate | The client is an external same-origin script compatible with the generated CSP; existing CSP, cookies, status, and unrelated headers remain unchanged, while rewritten development documents discard invalidated validators and become `no-store`; no inline script or policy weakening is used |
+| The event edge is bounded and race-safe | candidate | A cryptographically random unguessable path prevents application-route collisions; exact GET endpoints, subscriber limits, missed-generation recovery, concurrent clients, heartbeats, disconnect cleanup, proxy shutdown, and malformed/wrong-method requests are deterministic and tested |
+| Production remains conventional | candidate | Generated source, routes, templates, runtime packages, and production binaries contain no reload endpoint, watcher, injected client, or hidden lifecycle; `go run ./cmd/server` and direct handler/proxy replacement remain exact escape hatches |
+| Existing development guarantees remain intact | candidate | Stable public address, private health promotion, in-flight request target pinning, last-good view/Go recovery, process labelling, aggregate readiness, and cross-platform tree cleanup continue to pass under `forge serve` and `forge dev` |
+| The milestone passes twice without regression | candidate | Framework race/vet/build, compatibility, current scaffold, fresh generated PostgreSQL browser journey, native Windows tests, and independent adversarial review pass twice on the final revision |
+
+## Runnable baseline — 2026-09-10
+
+- Public v0.15.0 and `origin/main` are the same merge `ce69301`. Tag workflow
+  `34508599218` passed the full Linux/PostgreSQL matrix in 14m05s and native
+  Windows in 5m48s; public `go install` reports `forge 0.15.0`.
+- Focused merged-main proxy, development-supervisor, and generated-development
+  tests pass locally. The proxy currently forwards every application response
+  byte-for-byte and exposes no development route or browser notification.
+- `forge serve` already identifies the single safe publication boundary: after
+  a healthy target swap, stale-source checks, previous-candidate cleanup, and
+  compiled-view commit. Failed edits keep the last-good server but require a
+  manual browser refresh after the later successful repair.
+
+## Explicit non-goals
+
+- JavaScript/CSS compilation, bundling, minification, fingerprints, manifests,
+  npm/Node/Tailwind integration, static-file conventions, or production assets.
+- Hot module replacement, CSS-only replacement, component state preservation,
+  client hydration, framework-specific browser adapters, or browser automation.
+- WebSockets, a public runtime event API, generated application routes, template
+  directives, service workers, browser extensions, or production middleware.
+- Rewriting compressed, streamed, ranged, downloadable, fragmentary, or
+  unbounded responses; weakening or replacing an application CSP to force the
+  client to run under a deliberately restrictive custom policy.
+
 # v0.15 unified development workflow scorecard
 
 Status: **accepted** — 2026-09-10
