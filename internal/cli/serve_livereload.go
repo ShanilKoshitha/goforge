@@ -23,7 +23,7 @@ const (
 	serveLiveReloadMaxDocumentBytes  = 1 << 20
 	serveLiveReloadMaxSubscribers    = 64
 	serveLiveReloadHeartbeatInterval = 15 * time.Second
-	serveLiveReloadWriteTimeout      = 2 * time.Second
+	serveLiveReloadWriteTimeout      = time.Second
 )
 
 type serveLiveReloadGenerationKey struct{}
@@ -202,8 +202,7 @@ func (reload *serveLiveReload) serveEvents(response http.ResponseWriter, request
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	flusher, ok := response.(http.Flusher)
-	if !ok {
+	if _, ok := response.(http.Flusher); !ok {
 		http.Error(response, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
@@ -223,30 +222,34 @@ func (reload *serveLiveReload) serveEvents(response http.ResponseWriter, request
 	response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	response.WriteHeader(http.StatusOK)
 	if subscriber == nil {
-		setServeLiveReloadWriteDeadline(response)
-		writeServeLiveReloadEvent(response, current)
-		flusher.Flush()
+		flushServeLiveReload(response, func(writer io.Writer) error {
+			return writeServeLiveReloadEvent(writer, current)
+		})
 		return
 	}
-	setServeLiveReloadWriteDeadline(response)
-	_, _ = io.WriteString(response, ": connected\n\n")
-	flusher.Flush()
+	if !flushServeLiveReload(response, func(writer io.Writer) error {
+		_, err := io.WriteString(writer, ": connected\n\n")
+		return err
+	}) {
+		return
+	}
 
 	heartbeat := time.NewTicker(reload.heartbeatInterval)
 	defer heartbeat.Stop()
 	for {
 		select {
 		case generation := <-subscriber:
-			setServeLiveReloadWriteDeadline(response)
-			writeServeLiveReloadEvent(response, generation)
-			flusher.Flush()
+			flushServeLiveReload(response, func(writer io.Writer) error {
+				return writeServeLiveReloadEvent(writer, generation)
+			})
 			return
 		case <-heartbeat.C:
-			setServeLiveReloadWriteDeadline(response)
-			if _, err := io.WriteString(response, ": heartbeat\n\n"); err != nil {
+			if !flushServeLiveReload(response, func(writer io.Writer) error {
+				_, err := io.WriteString(writer, ": heartbeat\n\n")
+				return err
+			}) {
 				return
 			}
-			flusher.Flush()
 		case <-request.Context().Done():
 			return
 		case <-reload.done:
@@ -305,12 +308,25 @@ func (reload *serveLiveReload) unsubscribe(subscriber chan uint64) {
 	reload.mu.Unlock()
 }
 
-func writeServeLiveReloadEvent(response io.Writer, generation uint64) {
-	_, _ = fmt.Fprintf(response, "id: %d\nevent: reload\ndata: %d\n\n", generation, generation)
+func writeServeLiveReloadEvent(response io.Writer, generation uint64) error {
+	_, err := fmt.Fprintf(response, "id: %d\nevent: reload\ndata: %d\n\n", generation, generation)
+	return err
 }
 
-func setServeLiveReloadWriteDeadline(response http.ResponseWriter) {
-	_ = http.NewResponseController(response).SetWriteDeadline(time.Now().Add(serveLiveReloadWriteTimeout))
+func flushServeLiveReload(response http.ResponseWriter, write func(io.Writer) error) bool {
+	controller := http.NewResponseController(response)
+	if err := controller.SetWriteDeadline(time.Now().Add(serveLiveReloadWriteTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return false
+	}
+	defer func() {
+		// Deadlines are connection state. Clear ours after every bounded write so
+		// idle SSE time and a later keep-alive response remain unaffected.
+		_ = controller.SetWriteDeadline(time.Time{})
+	}()
+	if err := write(response); err != nil {
+		return false
+	}
+	return controller.Flush() == nil
 }
 
 // ModifyResponse is the direct httputil.ReverseProxy hook.
@@ -339,7 +355,7 @@ func (reload *serveLiveReload) Inject(request *http.Request, response *http.Resp
 		response.Body = prependServeLiveReloadBody(body, original)
 		return nil
 	}
-	if bytes.Contains(bytes.ToLower(body), []byte("data-goforge-generation=")) {
+	if bytes.Contains(body, []byte(`<script src="`+reload.scriptPath+`"`)) {
 		response.Body = prependServeLiveReloadBody(body, original)
 		return nil
 	}

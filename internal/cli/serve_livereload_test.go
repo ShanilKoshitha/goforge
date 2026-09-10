@@ -278,6 +278,40 @@ func TestServeLiveReloadHeartbeatsAndShutdown(t *testing.T) {
 	}
 }
 
+func TestServeLiveReloadClearsWriteDeadlineWhileSSEIsIdle(t *testing.T) {
+	reload := newTestServeLiveReload(t)
+	reload.heartbeatInterval = time.Hour
+	server := httptest.NewServer(reload.Handler(nil))
+	t.Cleanup(server.Close)
+
+	client := &http.Client{Timeout: 4 * time.Second}
+	response, err := client.Get(server.URL + reload.EventsPath() + "?since=0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The initial write deadline must not remain attached to the intentionally
+	// idle stream; the later committed event still has to be deliverable.
+	time.Sleep(serveLiveReloadWriteTimeout + 200*time.Millisecond)
+	reload.NotifyReload()
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read reload after idle deadline: %v", err)
+	}
+	if !strings.Contains(string(body), "id: 1\nevent: reload\ndata: 1\n\n") {
+		t.Fatalf("reload after idle deadline = %q", body)
+	}
+
+	clientResponse, err := client.Get(server.URL + reload.ScriptPath())
+	if err != nil {
+		t.Fatalf("reuse connection after SSE: %v", err)
+	}
+	_ = clientResponse.Body.Close()
+	if clientResponse.StatusCode != http.StatusOK {
+		t.Fatalf("reused connection status = %d", clientResponse.StatusCode)
+	}
+}
+
 func TestServeLiveReloadInjectsEligibleDocumentAndPreservesApplicationSemantics(t *testing.T) {
 	reload := newTestServeLiveReload(t)
 	request := stampedServeLiveReloadRequest(t, reload, http.MethodGet, "/app")
@@ -481,7 +515,7 @@ func TestServeLiveReloadFragmentAndOversizeAreReconstructedExactly(t *testing.T)
 
 func TestServeLiveReloadDoesNotInjectDuplicateClient(t *testing.T) {
 	reload := newTestServeLiveReload(t)
-	body := `<html><body>kept<script data-goforge-generation="7"></script></body></html>`
+	body := `<html><body>kept<script src="` + reload.ScriptPath() + `" data-goforge-generation="7" defer></script></body></html>`
 	response := testServeLiveReloadResponse(body)
 	headers := response.Header.Clone()
 	if err := reload.Inject(testServeLiveReloadDocumentRequest(http.MethodGet, "/"), response); err != nil {
@@ -493,6 +527,19 @@ func TestServeLiveReloadDoesNotInjectDuplicateClient(t *testing.T) {
 	}
 	if string(got) != body || !equalServeLiveReloadHeaders(response.Header, headers) {
 		t.Fatalf("duplicate client response changed: body=%q headers=%v", got, response.Header)
+	}
+
+	userContent := `<html><body><code>data-goforge-generation=</code></body></html>`
+	response = testServeLiveReloadResponse(userContent)
+	if err := reload.Inject(testServeLiveReloadDocumentRequest(http.MethodGet, "/"), response); err != nil {
+		t.Fatal(err)
+	}
+	got, err = io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), reload.ScriptPath()) {
+		t.Fatalf("ordinary marker-like user content suppressed injection: %s", got)
 	}
 }
 

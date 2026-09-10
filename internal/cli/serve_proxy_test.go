@@ -10,7 +10,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
+
+	"github.com/ShanilKoshitha/goforge/view"
 )
 
 func TestServeProxyRoutesWithoutRewritingRequestIdentity(t *testing.T) {
@@ -125,6 +128,36 @@ func TestServeProxyInjectsLiveReloadAndPublishesCommittedGeneration(t *testing.T
 	}
 	if !strings.Contains(string(acceptedBody), `data-goforge-generation="1"`) {
 		t.Fatalf("accepted page does not carry generation 1:\n%s", acceptedBody)
+	}
+}
+
+func TestServeProxyInjectsLargeBufferedFrameworkView(t *testing.T) {
+	engine, err := view.Parse(fstest.MapFS{
+		"page.html": {Data: []byte(`<html><body>{{.}}</body></html>`)},
+	}, nil, "*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat("rendered-page-", 2048)
+	backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		if err := engine.Render(response, http.StatusOK, "page.html", content); err != nil {
+			t.Errorf("render large framework view: %v", err)
+		}
+	}))
+	defer backend.Close()
+	proxy := newTestServeProxy(t, backend.URL)
+
+	response := requestServeProxyResponse(t, proxy, "/large")
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), content) || !strings.Contains(string(body), proxy.reload.ScriptPath()) {
+		t.Fatalf("large buffered framework view was not injected: length=%d", len(body))
+	}
+	if response.ContentLength != int64(len(body)) {
+		t.Fatalf("large injected Content-Length = %d, want %d", response.ContentLength, len(body))
 	}
 }
 
