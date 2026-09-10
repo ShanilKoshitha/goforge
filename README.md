@@ -100,7 +100,7 @@ asset version consistency.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.17.0
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.17.1
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d

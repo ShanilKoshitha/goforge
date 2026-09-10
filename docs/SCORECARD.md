@@ -1,14 +1,14 @@
 # v0.17 embedded production assets scorecard
 
-Status: **staged** — runtime bridge candidate on 2026-09-10; format-12 adoption
-follows only after the v0.17.0 module is publicly resolvable.
+Status: **candidate** — the v0.17.0 runtime bridge is public and resolvable;
+format-12 adoption is staged for v0.17.1 acceptance.
 
 Release boundary: v0.17.0 adds and verifies the backward-compatible public
 `asset` package while retaining the format-11 scaffold and its public v0.14.2
-pin. The format-12 scaffold, commands, watcher integration, and end-to-end
-acceptance criteria below are intentionally deferred to the next patch release.
-This prevents a merged generator from producing applications that depend on an
-unpublished framework version.
+pin. The v0.17.1 candidate now adopts format 12 against that published runtime,
+including official proxy checksums, commands, watcher integration, and the
+end-to-end acceptance criteria below. This prevents a merged generator from
+producing applications that depend on an unpublished framework version.
 
 Target:
 
@@ -43,9 +43,10 @@ old HTML across rolling deployments unless prior generations are retained.
 
 ## Runnable baseline — 2026-09-10
 
-- Public v0.16.0 and `origin/main` are merge `479fb2b`. Its main and tag
-  workflows passed the complete Linux/PostgreSQL and native Windows matrices,
-  and public `go install` reports `forge 0.16.0`.
+- Public v0.17.0 and `origin/main` are merge `f7f4c54`. Both pull-request
+  Linux/PostgreSQL and native Windows matrices passed twice. The public Go
+  proxy resolves the exact tag with module checksum
+  `h1:r3JWPwcB8YNNU9+22v4K3Bx6M7S8fbQ4HIB3rXRdlDY=`.
 - The merged framework suite passes from a clean worktree. Fresh format-11
   applications compile Blade/Twig-class Forge views and LiveReload accepted HTML
   edits, but the layout references no stylesheet or script, the application

@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.17.0\n" {
+	if output.String() != "forge 0.17.1\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -120,6 +120,18 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	}
 	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.17.0") {
 		t.Fatalf("scaffold does not pin GoForge v0.17.0:\n%s", moduleFile)
+	}
+	moduleSums, err := os.ReadFile(filepath.Join(directory, "go.sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"github.com/ShanilKoshitha/goforge v0.17.0 h1:r3JWPwcB8YNNU9+22v4K3Bx6M7S8fbQ4HIB3rXRdlDY=",
+		"github.com/ShanilKoshitha/goforge v0.17.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+	} {
+		if !strings.Contains(string(moduleSums), want) {
+			t.Errorf("scaffold is missing public runtime checksum %q", want)
+		}
 	}
 	requestPath, requestContent, err := requestFile("CreateUser")
 	if err != nil {
