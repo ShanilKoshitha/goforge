@@ -1,0 +1,54 @@
+package jobmanifest
+
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/ShanilKoshitha/goforge/job"
+	"github.com/ShanilKoshitha/goforge/schedule"
+
+	"[[.Module]]/internal/jobs"
+)
+
+func TestRegisteredJobNamesReportsGeneratedRegistryTargets(t *testing.T) {
+	names := RegisteredJobNames()
+	if !slices.IsSorted(names) {
+		t.Fatalf("registered job names are not sorted: %#v", names)
+	}
+	for _, name := range []string{jobs.CleanupMailDefinition.Name(), jobs.DeliverMailDefinition.Name()} {
+		if !slices.Contains(names, name) {
+			t.Errorf("generated registry target %q is missing from manifest %#v", name, names)
+		}
+	}
+}
+
+func TestValidateScheduledTargetsChecksGeneratedRegistryNames(t *testing.T) {
+	valid := schedule.NewRegistry()
+	schedule.MustRegister(valid, schedule.MustDefine(
+		"tests.valid.v1", "* * * * *", jobs.DeliverMailDefinition, schedule.Static(jobs.DeliverMail{}),
+	))
+	if err := ValidateScheduledTargets(valid); err != nil {
+		t.Fatalf("validate wired target name: %v", err)
+	}
+
+	missingOne := job.MustDefine[struct{}]("tests.missing-one.v1", job.Policy{})
+	missingTwo := job.MustDefine[struct{}]("tests.missing-two.v1", job.Policy{})
+	missing := schedule.NewRegistry()
+	schedule.MustRegister(missing, schedule.MustDefine("tests.alpha.v1", "* * * * *", missingOne, schedule.Static(struct{}{})))
+	schedule.MustRegister(missing, schedule.MustDefine("tests.zulu.v1", "* * * * *", missingTwo, schedule.Static(struct{}{})))
+	err := ValidateScheduledTargets(missing)
+	want := "tests.alpha.v1 -> tests.missing-one.v1, tests.zulu.v1 -> tests.missing-two.v1"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("missing target-name error = %v, want deterministic mappings %q", err, want)
+	}
+}
+
+func TestValidateScheduledTargetsRejectsNilAndAllowsEmptyRegistry(t *testing.T) {
+	if err := ValidateScheduledTargets(nil); err == nil || !strings.Contains(err.Error(), "schedule registry is required") {
+		t.Fatalf("nil registry error = %v", err)
+	}
+	if err := ValidateScheduledTargets(schedule.NewRegistry()); err != nil {
+		t.Fatalf("validate empty registry: %v", err)
+	}
+}

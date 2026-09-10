@@ -80,9 +80,31 @@ jobs:
           cmp "$RUNNER_TEMP/released-go.mod" go.mod
           cmp "$RUNNER_TEMP/released-go.sum" go.sum
           cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
+      - name: Public v0.14.1 format-11 upgrade compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format11-cli"
+          GOBIN="$RUNNER_TEMP/released-format11-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.1
+          "$RUNNER_TEMP/released-format11-cli/forge" new "$RUNNER_TEMP/released-format11-app" --module example.com/releasedformat11
+          cd "$RUNNER_TEMP/released-format11-app"
+          "$RUNNER_TEMP/released-format11-cli/forge" make:job RegisteredJobNamesJob
+          "$RUNNER_TEMP/released-format11-cli/forge" make:job ValidateScheduledTargetsJob
+          test ! -e internal/jobmanifest/manifest_gen.go
+          "$RUNNER_TEMP/forge" make:job SubsequentWork
+          grep -q '^version: 11$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.14.0' go.mod
+          grep -q 'jobs.RegisteredJobNamesDefinition.Name()' internal/jobmanifest/manifest_gen.go
+          grep -q 'jobs.ValidateScheduledTargetsDefinition.Name()' internal/jobmanifest/manifest_gen.go
+          grep -q 'jobs.SubsequentWorkDefinition.Name()' internal/jobmanifest/manifest_gen.go
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
+          go build ./cmd/worker
+          go build ./cmd/scheduler
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.14.1'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.14.2'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.14.0' go.mod

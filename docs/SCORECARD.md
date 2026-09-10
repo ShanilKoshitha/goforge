@@ -1,3 +1,67 @@
+# v0.14.2–v0.14.3 schedule integration hardening scorecard
+
+Status: **in progress** — 2026-09-10
+
+Target:
+
+> From a fresh format-11 application, bind a scheduled job through an explicit
+> worker registration contract, run an occurrence-aware payload factory that
+> cooperates with the scheduler operation deadline, and fail at startup before
+> dispatch when the target name is absent from generated worker wiring.
+> Preserve the existing durable cursor and public APIs, and prove password-recovery response
+> equalization through deterministic control-flow invariants rather than noisy
+> sequential wall-clock comparisons.
+
+The release remains staged. v0.14.2 publishes the backward-compatible runtime
+factory seam, deterministic security acceptance, and generated target-name
+validation that compiles against v0.14.0. v0.14.3 then pins the immutable new
+runtime from generated format-11 applications and adopts `DynamicContext` in
+their schedule journey. No project-format or database migration boundary changes.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Dynamic schedule work can cooperate with cancellation | candidate | `schedule.DynamicContext` receives the exact operation context; deadline cancellation returns promptly, preserves `errors.Is`, dispatches nothing, rolls back the schedule transaction, releases its row lock/connection, and permits a later healthy retry |
+| Existing schedule source and durable identity remain compatible | candidate | Existing `schedule.Dynamic` callers compile unchanged; static and legacy factories keep their behavior; switching an equivalent factory to `DynamicContext` retains the existing payload-strategy fingerprint and durable cursor |
+| Schedule target names must be wired into the generated worker registry | candidate | A collision-proof generated manifest package lists built-in and application job-definition target names from the generator metadata; scheduler and schedule-list startup reject every schedule target absent from that set before configuration or durable work; no reflection, scanning, or handler construction is used. Application-authored same-name definitions and deployed worker queue selection remain explicit operator-owned contracts |
+| Password-recovery equalization is deterministic | candidate | `Request` has one public return path through an envelope around its private branch-complete work method; the response deadline is selected before that work, its child context is shorter, envelope order and delay bounds are pure-tested, and live known/absent/failure acceptance retains identical public responses plus absent-account state invariants without comparing sequential wall times |
+| Generated concurrency evidence proves actual contention | candidate | Two separate scheduler processes are synchronized around one locked due row and report one enqueue plus one contention result, while the worker still executes exactly one durable effect |
+| The public workflow remains ordinary Go | candidate | The generated registry, registered-name set, validation, context-aware factory, scheduler process, SQL adapter, and direct commands remain inspectable and replaceable without runtime discovery |
+| The milestone passes twice without regression | in progress | Framework race/vet/build, fresh public no-replace format-11 application, generated PostgreSQL acceptance, native Windows CLI, and independent adversarial review pass twice on each final staged revision |
+
+## Runnable baseline — 2026-09-10
+
+- PR 16 merged at `2ad9216`; exact-head push and pull-request CI runs
+  34425850063 and 34425853148 passed Linux/PostgreSQL and native Windows.
+- Merged-main run 34426817857 passed, and lightweight unsigned public tag
+  `v0.14.1` points directly to that merge. Release run 34427762091 passed on
+  attempt 2.
+- The public Go proxy resolves v0.14.1 to `2ad9216` with module checksum
+  `h1:yId9EVdFJ7ZM6MXQFh7bZ3xQb2PT6c1qsS0fqohGirA=` and module-file checksum
+  `h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`. A clean public install
+  reports `forge 0.14.1` and generates a no-replace format-11 application that
+  passes tests, vet, and server, worker, scheduler, and console builds.
+- The first v0.14.1 tag attempt exposed the baseline defect: two sequential
+  password-recovery requests independently sample response jitter and absorb
+  unbounded runner scheduling noise, so their elapsed times differed by
+  507.4ms against a 500ms threshold even though every functional workflow
+  passed. A rerun passed; threshold relaxation is explicitly not acceptance.
+- Independent review also found that legacy dynamic factories cannot observe
+  the operation deadline, generated scheduler startup does not prove its job
+  targets have worker handlers, and the process-level concurrency journey does
+  not force or assert actual row contention.
+
+## Explicit non-goals
+
+- Preempting arbitrary Go callbacks that ignore context. Safe hard bounds for
+  uncooperative application code require process isolation or a different
+  reservation protocol; v0.14.2 instead provides the normal Go cancellation
+  contract and documents legacy `Dynamic` as prompt computation-only code.
+- A new project format, schema migration, automatic schedule retirement,
+  seconds-level cron, overlap, replay, dashboards, or unified development
+  orchestration.
+
 # v0.14 durable recurring schedules scorecard
 
 Status: **in progress** — 2026-09-09

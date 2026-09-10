@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.14.1\n" {
+	if output.String() != "forge 0.14.2\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -47,6 +47,7 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"internal/jobs/dependencies.go",
 		"internal/jobs/dispatcher.go",
 		"internal/jobs/registry_gen.go",
+		"internal/jobmanifest/manifest_gen.go",
 		"internal/schedules/registry.go",
 		"internal/jobs/deliver_mail.go",
 		".forge/jobs.json",

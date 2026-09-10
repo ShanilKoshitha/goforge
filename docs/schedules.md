@@ -30,23 +30,36 @@ var RebuildSearchNightly = schedule.MustDefine(
 is created. Mutating the original map, slice, or pointer later cannot change
 the scheduled payload or its fingerprint.
 
-Use an explicit dynamic factory when the payload depends on the occurrence:
+Use a context-aware dynamic factory when the payload depends on the occurrence
+or may perform blocking work:
 
 ```go
 var BuildDailyReport = schedule.MustDefine(
 	"reports.daily.v1",
 	"0 6 * * *",
 	BuildReportDefinition,
-	schedule.Dynamic(func(run schedule.Occurrence) (BuildReport, error) {
+	schedule.DynamicContext(func(ctx context.Context, run schedule.Occurrence) (BuildReport, error) {
+		if err := ctx.Err(); err != nil {
+			return BuildReport{}, err
+		}
 		return BuildReport{ScheduledAt: run.ScheduledAt}, nil
 	}),
 	schedule.TimeZone("America/Halifax"),
 )
 ```
 
-Dynamic function identity cannot be hashed reliably. Its implementation is
-therefore part of the versioned schedule-name contract. Change the name to
-`.v2` when the factory's behavior changes incompatibly.
+`DynamicContext` receives the scheduler's operation context. Code that blocks
+or performs I/O must honor its cancellation so the PostgreSQL transaction and
+row lock are released by the configured deadline. The legacy `Dynamic` API
+remains source-compatible for prompt computation-only factories; it cannot be
+preempted safely when application code ignores cancellation. GoForge does not
+hide such work in an abandoned goroutine.
+
+Dynamic function identity cannot be hashed reliably. Both APIs therefore share
+the existing dynamic payload strategy, and implementation remains part of the
+versioned schedule-name contract. Moving equivalent code from `Dynamic` to
+`DynamicContext` does not create definition drift. Change the schedule name to
+`.v2` when factory behavior changes incompatibly.
 
 Registration is an ordinary, explicit application function:
 
@@ -65,6 +78,13 @@ Fresh format-11 applications provide the application-owned registration point
 at `internal/schedules/registry.go`. A definition's typed job must also remain
 in `internal/jobs/registry_gen.go`, because the scheduler only materializes the
 job and the separate worker registry decides which job types may be claimed.
+The generated scheduler checks target names against the dependency-free
+`jobmanifest.RegisteredJobNames` manifest before loading configuration or
+opening the database, and reports every missing schedule-to-job mapping. This
+proves generated worker wiring by name; manually shadowing a definition with the
+same name or deploying workers without a scheduled queue remains an explicit
+application and operations responsibility. Teams replacing the generated
+worker entrypoint can replace this ordinary Go validation too.
 
 After applying the generated migration, the opinionated commands are:
 
@@ -206,3 +226,8 @@ application-owned scheduler wiring, migration, registry, configuration, and
 
 This two-stage release prevents `main` from ever generating imports that are
 not available from the scaffold's public module dependency.
+
+The v0.14.2 runtime bridge adds `DynamicContext` without changing project
+format, schema, fingerprints, or legacy callers. The following v0.14.3 CLI
+release pins that immutable runtime from generated applications and moves the
+generated acceptance journey to the cancellation-aware API.

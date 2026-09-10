@@ -379,6 +379,90 @@ func TestRunOnceBoundsStoreOperation(t *testing.T) {
 	}
 }
 
+func TestRunOnceBoundsContextAwareFactoryAndSkipsDispatch(t *testing.T) {
+	registry := schedule.NewRegistry()
+	var received context.Context
+	schedule.MustRegister(registry, scheduleDefinition(t, "tests.factory-timeout.v1", "* * * * *", schedule.DynamicContext(func(ctx context.Context, _ schedule.Occurrence) (testPayload, error) {
+		received = ctx
+		<-ctx.Done()
+		return testPayload{}, ctx.Err()
+	})))
+	jobs := &recordingJobStore{}
+	store := &callbackScheduleStore{
+		at:       time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC),
+		executor: inertExecutor{},
+	}
+	started := time.Now()
+	_, err := newTestScheduler(t, store, registry, jobs, schedule.Config{OperationTimeout: 100 * time.Millisecond}).RunOnce(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v", err)
+	}
+	if received == nil || !errors.Is(received.Err(), context.DeadlineExceeded) {
+		t.Fatalf("factory context error = %v", received)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("factory operation exceeded bound: %s", elapsed)
+	}
+	jobs.mu.Lock()
+	defer jobs.mu.Unlock()
+	if len(jobs.requests) != 0 {
+		t.Fatalf("timed-out factory dispatched %d jobs", len(jobs.requests))
+	}
+}
+
+func TestRunOnceChecksCancellationBeforeFactory(t *testing.T) {
+	registry := schedule.NewRegistry()
+	called := false
+	schedule.MustRegister(registry, scheduleDefinition(t, "tests.factory-pre-cancel.v1", "* * * * *", schedule.DynamicContext(func(context.Context, schedule.Occurrence) (testPayload, error) {
+		called = true
+		return testPayload{Value: "must not build"}, nil
+	})))
+	operationContext, cancelOperation := context.WithCancel(context.Background())
+	jobs := &recordingJobStore{}
+	store := &callbackScheduleStore{
+		at:         time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC),
+		executor:   inertExecutor{},
+		beforeCall: func(context.Context) { cancelOperation() },
+	}
+	_, err := newTestScheduler(t, store, registry, jobs, schedule.Config{}).RunOnce(operationContext)
+	cancelOperation()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v", err)
+	}
+	if called {
+		t.Fatal("canceled operation invoked payload factory")
+	}
+	jobs.mu.Lock()
+	defer jobs.mu.Unlock()
+	if len(jobs.requests) != 0 {
+		t.Fatalf("canceled operation dispatched %d jobs", len(jobs.requests))
+	}
+}
+
+func TestRunOnceChecksCancellationAfterFactoryBeforeDispatch(t *testing.T) {
+	registry := schedule.NewRegistry()
+	operationContext, cancelOperation := context.WithCancel(context.Background())
+	schedule.MustRegister(registry, scheduleDefinition(t, "tests.factory-cancel.v1", "* * * * *", schedule.DynamicContext(func(context.Context, schedule.Occurrence) (testPayload, error) {
+		cancelOperation()
+		return testPayload{Value: "must not dispatch"}, nil
+	})))
+	jobs := &recordingJobStore{}
+	store := &callbackScheduleStore{
+		at:       time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC),
+		executor: inertExecutor{},
+	}
+	_, err := newTestScheduler(t, store, registry, jobs, schedule.Config{}).RunOnce(operationContext)
+	cancelOperation()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v", err)
+	}
+	jobs.mu.Lock()
+	defer jobs.mu.Unlock()
+	if len(jobs.requests) != 0 {
+		t.Fatalf("canceled factory dispatched %d jobs", len(jobs.requests))
+	}
+}
+
 func TestRunExecutesImmediatelyAndCancellationIsNormal(t *testing.T) {
 	registry := schedule.NewRegistry()
 	schedule.MustRegister(registry, scheduleDefinition(t, "tests.run.v1", "* * * * *", schedule.Static(testPayload{})))

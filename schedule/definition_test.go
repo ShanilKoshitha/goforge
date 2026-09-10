@@ -76,6 +76,7 @@ func TestDefinitionRejectsInvalidContracts(t *testing.T) {
 		{name: "zero job", schedule: "reports.daily.v1", expression: "* * * * *", factory: validFactory},
 		{name: "zero factory", schedule: "reports.daily.v1", expression: "* * * * *", target: target},
 		{name: "nil dynamic", schedule: "reports.daily.v1", expression: "* * * * *", target: target, factory: schedule.Dynamic[testPayload](nil)},
+		{name: "nil dynamic context", schedule: "reports.daily.v1", expression: "* * * * *", target: target, factory: schedule.DynamicContext[testPayload](nil)},
 		{name: "nil option", schedule: "reports.daily.v1", expression: "* * * * *", target: target, factory: validFactory, options: []schedule.Option{nil}},
 		{name: "local zone", schedule: "reports.daily.v1", expression: "* * * * *", target: target, factory: validFactory, options: []schedule.Option{schedule.TimeZone("Local")}},
 		{name: "fixed zone", schedule: "reports.daily.v1", expression: "* * * * *", target: target, factory: validFactory, options: []schedule.Option{schedule.TimeZone("EST")}},
@@ -148,6 +149,12 @@ func TestDynamicFingerprintUsesVersionedStrategyMarkerNotFunctionIdentity(t *tes
 	}))
 	if first.Fingerprint() != second.Fingerprint() {
 		t.Fatal("dynamic function identity leaked into fingerprint")
+	}
+	contextual := schedule.MustDefine("reports.dynamic.v1", "* * * * *", target, schedule.DynamicContext(func(context.Context, schedule.Occurrence) (testPayload, error) {
+		return testPayload{Value: "contextual"}, nil
+	}))
+	if first.Fingerprint() != contextual.Fingerprint() {
+		t.Fatal("adopting DynamicContext changed the legacy dynamic fingerprint")
 	}
 }
 

@@ -193,10 +193,25 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 
 	forgotBody := func(email string) string { return fmt.Sprintf(`{"email":%q}`, email) }
 	knownJSONResponse := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 3 * time.Second}, http.MethodPost, baseURL+"/auth/password/forgot", forgotBody(knownEmail), "198.51.100.14")
+	absentBaselineTokens := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens`)
+	absentBaselineOutbox := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM mail_outbox`)
+	absentBaselineMailJobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.deliver.v1'`)
+	absentBaselineCleanupJobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.cleanup.v1'`)
 	unknownJSONResponse := recoveryAcceptanceMustJSON(t, &http.Client{Timeout: 3 * time.Second}, http.MethodPost, baseURL+"/auth/password/forgot", forgotBody(unknownEmail), "198.51.100.15")
 	recoveryAcceptanceAssertEquivalent(t, knownJSONResponse, unknownJSONResponse,
 		"Content-Type", "Cache-Control", "Referrer-Policy", "X-Robots-Tag")
-	recoveryAcceptanceAssertTimingParity(t, knownJSONResponse, unknownJSONResponse)
+	if tokens := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens`); tokens != absentBaselineTokens {
+		t.Fatalf("absent recovery request changed reset token count from %d to %d", absentBaselineTokens, tokens)
+	}
+	if outbox := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM mail_outbox`); outbox != absentBaselineOutbox {
+		t.Fatalf("absent recovery request changed outbox count from %d to %d", absentBaselineOutbox, outbox)
+	}
+	if jobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.deliver.v1'`); jobs != absentBaselineMailJobs {
+		t.Fatalf("absent recovery request changed mail job count from %d to %d", absentBaselineMailJobs, jobs)
+	}
+	if jobs := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM goforge_jobs WHERE name = 'goforge.mail.cleanup.v1'`); jobs != absentBaselineCleanupJobs {
+		t.Fatalf("absent recovery request changed cleanup job count from %d to %d", absentBaselineCleanupJobs, jobs)
+	}
 	if knownJSONResponse.Status != http.StatusAccepted || !strings.Contains(knownJSONResponse.Body, "If an account matches") {
 		t.Fatalf("JSON forgot response = %d: %s", knownJSONResponse.Status, knownJSONResponse.Body)
 	}
@@ -235,7 +250,6 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 	restoreSlowFailure()
 	recoveryAcceptanceAssertEquivalent(t, unknownJSONResponse, slowFailure,
 		"Content-Type", "Cache-Control", "Referrer-Policy", "X-Robots-Tag")
-	recoveryAcceptanceAssertTimingParity(t, unknownJSONResponse, slowFailure)
 	if count := jobAcceptanceCount(t, db, `SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = (SELECT id FROM users WHERE email = $1)`, slowFailureEmail); count != 0 {
 		t.Fatalf("slow account-dependent failure retained %d reset tokens", count)
 	}

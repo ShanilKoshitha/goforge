@@ -9,7 +9,8 @@ import (
 	"github.com/ShanilKoshitha/goforge/job"
 )
 
-// Config bounds scheduler polling and durable operations.
+// Config bounds scheduler polling, framework I/O, and callbacks that cooperate
+// with context cancellation. OperationTimeout cannot preempt arbitrary Go code.
 type Config struct {
 	PollInterval     time.Duration
 	OperationTimeout time.Duration

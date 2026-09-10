@@ -964,3 +964,61 @@ expect from Laravel, Symfony, Rails, or Spring. A small durable materializer
 composes the queue and transaction seams GoForge already owns while keeping
 every definition, payload, process, and database boundary visible and
 replaceable.
+
+## D037 — Schedule deadlines are cooperative and generated targets fail closed
+
+**Status:** accepted for v0.14.2–v0.14.3 hardening
+
+The scheduler adds `schedule.DynamicContext` while retaining the existing
+`schedule.Dynamic` API. Internally every payload builder receives the scheduler
+operation context. Static builders and legacy dynamic builders remain source
+compatible, while the new typed callback can stop database access or other
+blocking work when the operation deadline expires. The definition checks
+cancellation before and after payload construction and dispatches with the same
+context and transaction executor. Both dynamic APIs retain the existing
+`dynamic-factory-v1` fingerprint marker so adopting cancellation does not create
+false durable definition drift.
+
+GoForge does not run an uncooperative callback in an abandoned goroutine. That
+would release the database transaction while application work continued,
+permit side effects after rollback, and leak one goroutine per stuck callback.
+Legacy `Dynamic` is therefore retained for prompt computation-only factories;
+blocking or I/O-capable factories use `DynamicContext`. A hard limit regardless
+of application cooperation would require process isolation or a two-phase
+reservation design and is outside this compatibility hardening milestone.
+
+Generated job wiring exposes a dependency-free set of registered job names from
+a dedicated generated manifest package. Keeping that API outside the existing
+`jobs` package avoids retroactively reserving identifiers in format-11 projects.
+The schedule registry validates every definition's target name against that set
+when the scheduler or schedule-list command starts. The set is derived from the
+same generator metadata that emits handler registration, including built-ins,
+so no handler dependencies are constructed and no packages are scanned or
+reflected. An absent target name fails before durable evaluation. This check
+does not claim to identify a manually shadowed same-name definition or prove
+that deployed workers select every configured queue; those remain visible
+application and deployment contracts.
+
+Password-recovery acceptance no longer compares two sequential HTTP wall
+times. `Request` has one public return path through an envelope around its
+private, branch-complete work method. Each request therefore selects one
+absolute response deadline before account-dependent work, runs that work inside
+the shorter child context, and awaits the selected deadline once after it
+returns. Pure tests exhaust the jitter bounds and prove exact select-work-wait
+ordering; live PostgreSQL acceptance proves identical known, absent, and forced
+failure responses and headers, successful durable delivery, and no state for
+absent accounts. Relaxing the old timing threshold or repeatedly sampling CI
+latency is not accepted evidence of enumeration resistance.
+
+Publication remains compile-safe. v0.14.2 publishes the backward-compatible
+runtime factory seam, deterministic recovery acceptance, and dependency-free
+target-name validation, which uses APIs already present in the scaffold's
+v0.14.0 dependency. v0.14.3 then pins the immutable v0.14.2 module from fresh
+format-11 applications and uses `DynamicContext` in the generated journey.
+Neither stage changes project format or database schema.
+
+Reason: an operation timeout that application code cannot observe, a schedule
+target absent from generated worker wiring, and a flaky security stopwatch all
+weaken the north-star promise of production-shaped defaults. Explicit typed
+context, generated metadata, and deterministic invariants close those gaps
+without runtime magic or hidden state.

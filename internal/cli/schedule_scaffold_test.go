@@ -48,11 +48,24 @@ func TestFormatElevenScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"config.LoadScheduler()", "jobpostgres.New(db)", "job.NewDispatcher(queueStore, db",
 		"schedulepostgres.New(db)", "schedules.NewRegistry()", "schedule.NewScheduler(",
+		"jobmanifest.ValidateScheduledTargets(registry)",
 		"runner.RunOnce(ctx)", "runner.Run(ctx)", "signal.NotifyContext", `"event", "scheduler_started"`,
 	} {
 		if !strings.Contains(scheduler, want) {
 			t.Errorf("generated scheduler omits %q", want)
 		}
+	}
+	if validation, configuration := strings.Index(scheduler, "jobmanifest.ValidateScheduledTargets(registry)"), strings.Index(scheduler, "config.LoadScheduler()"); validation < 0 || configuration < 0 || validation > configuration {
+		t.Fatal("generated scheduler must validate scheduled target names before configuration or database setup")
+	}
+	jobManifest := files["internal/jobmanifest/manifest_gen.go"]
+	for _, want := range []string{"func RegisteredJobNames() []string", "func ValidateScheduledTargets(", "jobs.CleanupMailDefinition.Name()", "jobs.DeliverMailDefinition.Name()", "does not validate payload identity or deployment queue topology"} {
+		if !strings.Contains(jobManifest, want) {
+			t.Errorf("generated job manifest omits %q", want)
+		}
+	}
+	if strings.Contains(files["internal/jobs/registry_gen.go"], "RegisteredJobNames") || strings.Contains(files["internal/jobs/registry_gen.go"], "ValidateScheduledTargets") {
+		t.Fatal("generated job registry package must not reserve schedule-validation declarations")
 	}
 	registry := files["internal/schedules/registry.go"]
 	if !strings.Contains(registry, "reports.daily.v1") || !strings.Contains(registry, "schedule.Register") {
@@ -62,10 +75,13 @@ func TestFormatElevenScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 		t.Fatal("schedule registry must not discover definitions at runtime")
 	}
 	console := files["cmd/console/main.go"]
-	for _, want := range []string{"schedule:list", "store.List(ctx, definitions)", "FINGERPRINT"} {
+	for _, want := range []string{"schedule:list", "jobmanifest.ValidateScheduledTargets(scheduleRegistry)", "store.List(ctx, definitions)", "FINGERPRINT"} {
 		if !strings.Contains(console, want) {
 			t.Errorf("generated console omits schedule inspection contract %q", want)
 		}
+	}
+	if validation, configuration := strings.Index(console, "jobmanifest.ValidateScheduledTargets(scheduleRegistry)"), strings.Index(console, "config.LoadDatabase()"); validation < 0 || configuration < 0 || validation > configuration {
+		t.Fatal("schedule:list must validate scheduled target names before configuration or database setup")
 	}
 	config := files["internal/config/config.go"]
 	for _, want := range []string{
