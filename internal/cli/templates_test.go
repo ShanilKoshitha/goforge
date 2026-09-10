@@ -72,7 +72,7 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		}
 	}
 	readme := files["README.md"]
-	for _, guidance := range []string{"APP_ENABLE_HSTS", "always uses HTTPS", "TRUSTED_PROXIES", "comma-separated CIDR", "forwarding headers are ignored", "SESSION_IDLE_LIFETIME", "SESSION_ABSOLUTE_LIFETIME", "/settings/security", "forge dev", "worker", "scheduler"} {
+	for _, guidance := range []string{"APP_ENABLE_HSTS", "always uses HTTPS", "TRUSTED_PROXIES", "comma-separated CIDR", "forwarding headers are ignored", "SESSION_IDLE_LIFETIME", "SESSION_ABSOLUTE_LIFETIME", "/settings/security", "forge dev", "FORGE_DEV_SHUTDOWN_TIMEOUT", "worker", "scheduler"} {
 		if !strings.Contains(readme, guidance) {
 			t.Errorf("generated README omits deployment guidance %q", guidance)
 		}

@@ -30,6 +30,10 @@ worker. Mailpit is available at `http://localhost:8025`. Never use
 `APP_ENV=local` in a
 deployed process because it disables secure cookies. Replace the local database
 URL, rotate both secrets, and configure TLS-protected SMTP before deployment.
+`forge dev` allows 20 seconds for graceful process-tree shutdown. If you
+increase the server or worker shutdown timeout beyond that default, export a
+longer `FORGE_DEV_SHUTDOWN_TIMEOUT` before starting the CLI; its Go duration
+must exceed the longest application drain.
 Generated Compose ports are bound to `127.0.0.1` so known development
 credentials and Mailpit are not exposed on other network interfaces.
 HTTP limits and timeouts are listed in `.env.example`. Enable

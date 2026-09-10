@@ -14,30 +14,32 @@ import (
 )
 
 const (
-	processTreeControlSupported       = true
-	childCreateSuspended              = 0x00000004
-	childCreateNewProcessGroup        = 0x00000200
-	childCtrlBreakEvent               = 1
-	jobObjectExtendedLimitInformation = 9
-	jobObjectLimitKillOnJobClose      = 0x00002000
-	childProcessTerminate             = 0x0001
-	childProcessSetQuota              = 0x0100
-	childSnapshotThreads              = 0x00000004
-	childThreadSuspendResume          = 0x0002
-	childResumeFailed                 = uintptr(^uint32(0))
+	processTreeControlSupported         = true
+	childCreateSuspended                = 0x00000004
+	childCreateNewProcessGroup          = 0x00000200
+	childCtrlBreakEvent                 = 1
+	jobObjectExtendedLimitInformation   = 9
+	jobObjectBasicAccountingInformation = 1
+	jobObjectLimitKillOnJobClose        = 0x00002000
+	childProcessTerminate               = 0x0001
+	childProcessSetQuota                = 0x0100
+	childSnapshotThreads                = 0x00000004
+	childThreadSuspendResume            = 0x0002
+	childResumeFailed                   = uintptr(^uint32(0))
 )
 
 var (
-	childKernel32                 = syscall.NewLazyDLL("kernel32.dll")
-	generateChildConsoleCtrlEvent = childKernel32.NewProc("GenerateConsoleCtrlEvent")
-	createChildJobObject          = childKernel32.NewProc("CreateJobObjectW")
-	setChildJobObjectInformation  = childKernel32.NewProc("SetInformationJobObject")
-	assignChildProcessToJobObject = childKernel32.NewProc("AssignProcessToJobObject")
-	terminateChildJobObject       = childKernel32.NewProc("TerminateJobObject")
-	thread32First                 = childKernel32.NewProc("Thread32First")
-	thread32Next                  = childKernel32.NewProc("Thread32Next")
-	openChildThread               = childKernel32.NewProc("OpenThread")
-	resumeChildThread             = childKernel32.NewProc("ResumeThread")
+	childKernel32                  = syscall.NewLazyDLL("kernel32.dll")
+	generateChildConsoleCtrlEvent  = childKernel32.NewProc("GenerateConsoleCtrlEvent")
+	createChildJobObject           = childKernel32.NewProc("CreateJobObjectW")
+	setChildJobObjectInformation   = childKernel32.NewProc("SetInformationJobObject")
+	assignChildProcessToJobObject  = childKernel32.NewProc("AssignProcessToJobObject")
+	terminateChildJobObject        = childKernel32.NewProc("TerminateJobObject")
+	queryChildJobObjectInformation = childKernel32.NewProc("QueryInformationJobObject")
+	thread32First                  = childKernel32.NewProc("Thread32First")
+	thread32Next                   = childKernel32.NewProc("Thread32Next")
+	openChildThread                = childKernel32.NewProc("OpenThread")
+	resumeChildThread              = childKernel32.NewProc("ResumeThread")
 )
 
 type childThreadEntry struct {
@@ -78,6 +80,17 @@ type childJobExtendedLimitInformation struct {
 	JobMemoryLimit        uintptr
 	PeakProcessMemoryUsed uintptr
 	PeakJobMemoryUsed     uintptr
+}
+
+type childJobBasicAccountingInformation struct {
+	TotalUserTime             int64
+	TotalKernelTime           int64
+	ThisPeriodTotalUserTime   int64
+	ThisPeriodTotalKernelTime int64
+	TotalPageFaultCount       uint32
+	TotalProcesses            uint32
+	ActiveProcesses           uint32
+	TotalTerminatedProcesses  uint32
 }
 
 type platformChildProcessTree struct{ job syscall.Handle }
@@ -159,28 +172,30 @@ func closeChildProcessTree(tree platformChildProcessTree) {
 	}
 }
 
-func stopChildProcessTree(command *exec.Cmd, waited <-chan error, tree platformChildProcessTree) error {
+func stopChildProcessTree(command *exec.Cmd, waited <-chan error, tree platformChildProcessTree, grace time.Duration) error {
 	if command.Process == nil {
 		return nil
 	}
 	result, _, signalErr := generateChildConsoleCtrlEvent.Call(childCtrlBreakEvent, uintptr(command.Process.Pid))
-	if result != 0 {
-		select {
-		case <-waited:
+	directDone := false
+	if result != 0 && tree.job != 0 {
+		finished, inspectErr := waitForWindowsProcessTree(waited, tree, grace, &directDone)
+		if inspectErr == nil && finished {
 			return nil
-		case <-time.After(5 * time.Second):
 		}
 	}
 	if tree.job != 0 {
 		if result, _, terminateErr := terminateChildJobObject.Call(uintptr(tree.job), 1); result == 0 {
 			return fmt.Errorf("terminate child process job: %w", terminateErr)
 		}
-		select {
-		case <-waited:
-			return nil
-		case <-time.After(10 * time.Second):
-			return errors.New("child process job did not exit after forced termination")
+		finished, inspectErr := waitForWindowsProcessTree(waited, tree, 10*time.Second, &directDone)
+		if inspectErr != nil {
+			return inspectErr
 		}
+		if finished {
+			return nil
+		}
+		return errors.New("child process job did not exit after forced termination")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -197,4 +212,47 @@ func stopChildProcessTree(command *exec.Cmd, waited <-chan error, tree platformC
 	case <-ctx.Done():
 		return errors.Join(err, errors.New("child process tree did not exit after forced termination"))
 	}
+}
+
+func waitForWindowsProcessTree(waited <-chan error, tree platformChildProcessTree, timeout time.Duration, directDone *bool) (bool, error) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !*directDone {
+			select {
+			case <-waited:
+				*directDone = true
+			default:
+			}
+		}
+		active, err := childJobActiveProcesses(tree)
+		if err != nil {
+			return false, err
+		}
+		if *directDone && active == 0 {
+			return true, nil
+		}
+		select {
+		case <-deadline.C:
+			return false, nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func childJobActiveProcesses(tree platformChildProcessTree) (uint32, error) {
+	if tree.job == 0 {
+		return 0, nil
+	}
+	accounting := childJobBasicAccountingInformation{}
+	result, _, queryErr := queryChildJobObjectInformation.Call(
+		uintptr(tree.job), jobObjectBasicAccountingInformation,
+		uintptr(unsafe.Pointer(&accounting)), unsafe.Sizeof(accounting), 0,
+	)
+	if result == 0 {
+		return 0, fmt.Errorf("inspect child process job: %w", queryErr)
+	}
+	return accounting.ActiveProcesses, nil
 }

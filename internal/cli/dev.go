@@ -6,12 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"sync"
+	"time"
 )
 
 const (
-	developmentReadyMessage  = "development services ready\n"
-	developmentLineBufferMax = 64 << 10
+	developmentReadyMessage                   = "development services ready\n"
+	developmentLineBufferMax                  = 64 << 10
+	developmentLineTruncation                 = " [output truncated]\n"
+	developmentServiceProcessTreeGraceDefault = 20 * time.Second
+	developmentServiceProcessTreeGraceEnv     = "FORGE_DEV_SHUTDOWN_TIMEOUT"
 )
 
 var errDevelopmentServiceExited = errors.New("service exited unexpectedly")
@@ -78,25 +84,27 @@ func (readiness *developmentReadiness) isComplete() bool {
 }
 
 type developmentLineWriter struct {
-	mu        sync.Mutex
-	buffer    []byte
-	prefix    []byte
-	marker    []byte
-	service   string
-	output    *synchronizedDevelopmentOutput
-	dest      io.Writer
-	readiness *developmentReadiness
+	mu         sync.Mutex
+	buffer     []byte
+	discarding bool
+	prefix     []byte
+	readyLine  func([]byte) bool
+	service    string
+	output     *synchronizedDevelopmentOutput
+	dest       io.Writer
+	readiness  *developmentReadiness
 }
 
 func newDevelopmentLineWriter(
-	service, marker string,
+	service string,
+	readyLine func([]byte) bool,
 	output *synchronizedDevelopmentOutput,
 	destination io.Writer,
 	readiness *developmentReadiness,
 ) *developmentLineWriter {
 	return &developmentLineWriter{
 		prefix:    []byte("[" + service + "] "),
-		marker:    []byte(marker),
+		readyLine: readyLine,
 		service:   service,
 		output:    output,
 		dest:      destination,
@@ -108,23 +116,42 @@ func (writer *developmentLineWriter) Write(value []byte) (int, error) {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
 	consumed := len(value)
-	writer.buffer = append(writer.buffer, value...)
-	for {
-		newline := bytes.IndexByte(writer.buffer, '\n')
-		if newline >= 0 {
-			line := append([]byte(nil), writer.buffer[:newline+1]...)
-			writer.buffer = writer.buffer[newline+1:]
-			if err := writer.writeLine(line); err != nil {
+	for len(value) != 0 {
+		if writer.discarding {
+			newline := bytes.IndexByte(value, '\n')
+			if newline < 0 {
+				return consumed, nil
+			}
+			writer.discarding = false
+			value = value[newline+1:]
+			continue
+		}
+
+		capacity := developmentLineBufferMax - len(writer.buffer)
+		newline := bytes.IndexByte(value, '\n')
+		if newline >= 0 && newline <= capacity {
+			writer.buffer = append(writer.buffer, value[:newline+1]...)
+			value = value[newline+1:]
+			line := append([]byte(nil), writer.buffer...)
+			writer.buffer = writer.buffer[:0]
+			if err := writer.writeLine(line, true); err != nil {
 				return consumed, err
 			}
 			continue
 		}
-		if len(writer.buffer) < developmentLineBufferMax {
+
+		if newline < 0 && len(value) <= capacity {
+			writer.buffer = append(writer.buffer, value...)
 			break
 		}
-		line := append([]byte(nil), writer.buffer[:developmentLineBufferMax]...)
-		writer.buffer = writer.buffer[developmentLineBufferMax:]
-		if err := writer.writeLine(line); err != nil {
+		writer.buffer = append(writer.buffer, value[:capacity]...)
+		value = value[capacity:]
+		line := make([]byte, 0, len(writer.buffer)+len(developmentLineTruncation))
+		line = append(line, writer.buffer...)
+		line = append(line, developmentLineTruncation...)
+		writer.buffer = writer.buffer[:0]
+		writer.discarding = true
+		if err := writer.writeLine(line, false); err != nil {
 			return consumed, err
 		}
 	}
@@ -134,15 +161,17 @@ func (writer *developmentLineWriter) Write(value []byte) (int, error) {
 func (writer *developmentLineWriter) Flush() error {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
-	if len(writer.buffer) == 0 {
+	if len(writer.buffer) == 0 || writer.discarding {
+		writer.buffer = writer.buffer[:0]
+		writer.discarding = false
 		return nil
 	}
 	line := append([]byte(nil), writer.buffer...)
 	writer.buffer = writer.buffer[:0]
-	return writer.writeLine(line)
+	return writer.writeLine(line, true)
 }
 
-func (writer *developmentLineWriter) writeLine(line []byte) error {
+func (writer *developmentLineWriter) writeLine(line []byte, detectReady bool) error {
 	value := make([]byte, 0, len(writer.prefix)+len(line))
 	value = append(value, writer.prefix...)
 	value = append(value, line...)
@@ -153,7 +182,7 @@ func (writer *developmentLineWriter) writeLine(line []byte) error {
 	if err != nil {
 		return err
 	}
-	if bytes.Contains(line, writer.marker) {
+	if detectReady && writer.readyLine != nil && writer.readyLine(line) {
 		writer.readiness.mark(writer.service)
 	}
 	return nil
@@ -181,6 +210,11 @@ func runProjectDevWith(
 	if err := requireProjectFormatRange(11, 11); err != nil {
 		return err
 	}
+	processTreeGrace, err := developmentProcessTreeGrace()
+	if err != nil {
+		return err
+	}
+	processes = processRunnerWithGrace(processes, processTreeGrace)
 	return superviseDevelopmentServices(ctx, stdin, stdout, stderr, processes, serve)
 }
 
@@ -199,28 +233,29 @@ func superviseDevelopmentServices(
 	results := make(chan developmentServiceResult, 3)
 
 	type serviceDefinition struct {
-		name   string
-		marker string
-		run    func(context.Context, io.Writer, io.Writer) error
+		name        string
+		stdoutReady func([]byte) bool
+		stderrReady func([]byte) bool
+		run         func(context.Context, io.Writer, io.Writer) error
 	}
 	services := []serviceDefinition{
 		{
-			name:   "server",
-			marker: "serving http://",
+			name:        "server",
+			stdoutReady: developmentServerReadyLine,
 			run: func(serviceContext context.Context, serviceStdout, serviceStderr io.Writer) error {
 				return serve(serviceContext, stdin, serviceStdout, serviceStderr, processes)
 			},
 		},
 		{
-			name:   "worker",
-			marker: "worker_started",
+			name:        "worker",
+			stderrReady: developmentWorkerReadyLine,
 			run: func(serviceContext context.Context, serviceStdout, serviceStderr io.Writer) error {
 				return processes.Run(serviceContext, nil, serviceStdout, serviceStderr, "go", "run", "./cmd/worker")
 			},
 		},
 		{
-			name:   "scheduler",
-			marker: "event=scheduler_started",
+			name:        "scheduler",
+			stderrReady: developmentSchedulerReadyLine,
 			run: func(serviceContext context.Context, serviceStdout, serviceStderr io.Writer) error {
 				return processes.Run(serviceContext, nil, serviceStdout, serviceStderr, "go", "run", "./cmd/scheduler")
 			},
@@ -230,8 +265,8 @@ func superviseDevelopmentServices(
 	for _, service := range services {
 		service := service
 		go func() {
-			serviceStdout := newDevelopmentLineWriter(service.name, service.marker, output, stdout, readiness)
-			serviceStderr := newDevelopmentLineWriter(service.name, service.marker, output, stderr, readiness)
+			serviceStdout := newDevelopmentLineWriter(service.name, service.stdoutReady, output, stdout, readiness)
+			serviceStderr := newDevelopmentLineWriter(service.name, service.stderrReady, output, stderr, readiness)
 			err := service.run(childContext, serviceStdout, serviceStderr)
 			readiness.stop(service.name)
 			err = errors.Join(err, serviceStdout.Flush(), serviceStderr.Flush())
@@ -290,7 +325,74 @@ func superviseDevelopmentServices(
 	if readiness.isComplete() {
 		phase = "after all services were ready"
 	}
-	return fmt.Errorf("forge dev: %s service exited %s: %w", root.name, phase, cause)
+	return &developmentServiceError{service: root.name, phase: phase, cause: cause}
+}
+
+type developmentServiceError struct {
+	service string
+	phase   string
+	cause   error
+}
+
+func (err *developmentServiceError) Error() string {
+	return fmt.Sprintf("forge dev: %s service exited %s: %v", err.service, err.phase, err.cause)
+}
+
+func (err *developmentServiceError) Unwrap() error { return err.cause }
+
+func (err *developmentServiceError) ReportCLIError() bool { return true }
+
+func developmentServerReadyLine(line []byte) bool {
+	value := developmentOutputLine(line)
+	return strings.HasPrefix(value, "serving http://") && strings.HasSuffix(value, " (watching for changes)")
+}
+
+func developmentWorkerReadyLine(line []byte) bool {
+	value := developmentOutputLine(line)
+	return developmentOutputHasField(value, "INFO job worker_started") ||
+		developmentOutputHasField(value, `msg="job worker_started"`)
+}
+
+func developmentSchedulerReadyLine(line []byte) bool {
+	value := developmentOutputLine(line)
+	message := developmentOutputHasField(value, "INFO scheduler started") ||
+		developmentOutputHasField(value, `msg="scheduler started"`)
+	return message &&
+		developmentOutputHasField(value, "event=scheduler_started") &&
+		developmentOutputHasField(value, "mode=work")
+}
+
+func developmentOutputLine(line []byte) string {
+	return strings.TrimSuffix(strings.TrimSuffix(string(line), "\n"), "\r")
+}
+
+func developmentOutputHasField(line, field string) bool {
+	for offset := 0; ; {
+		index := strings.Index(line[offset:], field)
+		if index < 0 {
+			return false
+		}
+		index += offset
+		beforeOK := index == 0 || line[index-1] == ' ' || line[index-1] == '\t'
+		after := index + len(field)
+		afterOK := after == len(line) || line[after] == ' ' || line[after] == '\t'
+		if beforeOK && afterOK {
+			return true
+		}
+		offset = index + 1
+	}
+}
+
+func developmentProcessTreeGrace() (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(developmentServiceProcessTreeGraceEnv))
+	if raw == "" {
+		return developmentServiceProcessTreeGraceDefault, nil
+	}
+	grace, err := time.ParseDuration(raw)
+	if err != nil || grace <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", developmentServiceProcessTreeGraceEnv)
+	}
+	return grace, nil
 }
 
 func unexpectedDevelopmentShutdownError(err error) error {

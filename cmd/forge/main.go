@@ -38,6 +38,14 @@ func runCLI(
 	if ctx.Err() != nil && err == ctx.Err() {
 		return 0
 	}
+	report := false
+	var detailed interface{ ReportCLIError() bool }
+	if errors.As(err, &detailed) {
+		report = detailed.ReportCLIError()
+	}
+	if report {
+		fmt.Fprintln(stderr, "error:", err)
+	}
 	var exitError *exec.ExitError
 	if !hasMultipleCauses(err) && errors.As(err, &exitError) {
 		if code := exitError.ExitCode(); code >= 0 {
@@ -47,7 +55,9 @@ func runCLI(
 		// Its output has already reached stderr, so retain a quiet failure.
 		return 1
 	}
-	fmt.Fprintln(stderr, "error:", err)
+	if !report {
+		fmt.Fprintln(stderr, "error:", err)
+	}
 	return 1
 }
 

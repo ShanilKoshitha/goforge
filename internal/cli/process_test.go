@@ -352,6 +352,70 @@ func TestExecProcessRunnerStopsDescendantTreeOnCancellation(t *testing.T) {
 	}
 }
 
+func TestExecProcessRunnerAllowsGoRunDescendantToDrain(t *testing.T) {
+	if !processTreeControlSupported {
+		t.Skip("process-tree control is unsupported on this platform")
+	}
+	directory := t.TempDir()
+	source := filepath.Join(directory, "main.go")
+	marker := filepath.Join(directory, "graceful-marker")
+	program := `package main
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"time"
+)
+
+func main() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals)
+	fmt.Println("ready")
+	<-signals
+	time.Sleep(400 * time.Millisecond)
+	if err := os.WriteFile(os.Args[1], []byte("graceful"), 0600); err != nil {
+		os.Exit(2)
+	}
+}
+`
+	if err := os.WriteFile(source, []byte(program), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	output := &developmentTestBuffer{}
+	result := make(chan error, 1)
+	go func() {
+		result <- (execProcessRunner{processTreeGrace: 3 * time.Second}).Run(
+			ctx, nil, output, output, "go", "run", source, marker,
+		)
+	}()
+	startupDeadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(output.String(), "ready") {
+		if time.Now().After(startupDeadline) {
+			cancel()
+			t.Fatalf("go run descendant did not become ready:\n%s", output.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runner error = %v, want context cancellation", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("go run process tree did not finish graceful shutdown")
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("go run descendant did not finish graceful shutdown: %v", err)
+	}
+	if string(content) != "graceful" {
+		t.Fatalf("grace marker = %q", content)
+	}
+}
+
 func TestProcessTreeHelper(t *testing.T) {
 	role := os.Getenv("GOFORGE_PROCESS_TREE_HELPER")
 	if role == "" {

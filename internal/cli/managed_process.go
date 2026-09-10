@@ -5,26 +5,29 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"time"
 )
 
 // managedProcessSpec describes one child without relying on ambient process
 // state. An empty Directory uses the caller's working directory. A nil
 // Environment inherits the caller's environment, matching exec.Cmd.
 type managedProcessSpec struct {
-	Name        string
-	Arguments   []string
-	Directory   string
-	Environment []string
-	Stdin       io.Reader
-	Stdout      io.Writer
-	Stderr      io.Writer
+	Name             string
+	Arguments        []string
+	Directory        string
+	Environment      []string
+	Stdin            io.Reader
+	Stdout           io.Writer
+	Stderr           io.Writer
+	ProcessTreeGrace time.Duration
 }
 
 // managedProcess owns a child and its complete platform process tree. Wait is
 // safe to call repeatedly, and Stop is safe to call repeatedly or concurrently.
 type managedProcess struct {
-	command *exec.Cmd
-	tree    platformChildProcessTree
+	command          *exec.Cmd
+	tree             platformChildProcessTree
+	processTreeGrace time.Duration
 
 	done   chan struct{}
 	waited chan error
@@ -65,10 +68,11 @@ func startManagedProcess(spec managedProcessSpec) (*managedProcess, error) {
 	}
 
 	process := &managedProcess{
-		command: command,
-		tree:    tree,
-		done:    make(chan struct{}),
-		waited:  make(chan error, 1),
+		command:          command,
+		tree:             tree,
+		processTreeGrace: normalizedProcessTreeGrace(spec.ProcessTreeGrace),
+		done:             make(chan struct{}),
+		waited:           make(chan error, 1),
 	}
 	go process.collect()
 	return process, nil
@@ -130,7 +134,7 @@ func (process *managedProcess) stop() error {
 	process.stopping = true
 	process.stateMu.Unlock()
 
-	err := stopChildProcessTree(process.command, process.waited, process.tree)
+	err := stopChildProcessTree(process.command, process.waited, process.tree, process.processTreeGrace)
 	process.close()
 	return err
 }

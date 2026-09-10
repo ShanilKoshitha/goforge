@@ -29,30 +29,73 @@ func closeChildProcessTree(tree platformChildProcessTree) {
 	}
 }
 
-func stopChildProcessTree(command *exec.Cmd, waited <-chan error, _ platformChildProcessTree) error {
+func stopChildProcessTree(command *exec.Cmd, waited <-chan error, tree platformChildProcessTree, grace time.Duration) error {
 	if command.Process == nil {
 		return nil
 	}
-	if err := syscall.Kill(-command.Process.Pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+	processGroupID := tree.processGroupID
+	if processGroupID <= 0 {
+		processGroupID = command.Process.Pid
+	}
+	if err := syscall.Kill(-processGroupID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("stop child process group: %w", err)
 	}
-	select {
-	case <-waited:
-		// The direct process may exit before a descendant that ignored SIGTERM.
-		// Kill the still-addressable process group before its ID can be reused.
-		if err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-			return fmt.Errorf("kill remaining child process group: %w", err)
-		}
-		return nil
-	case <-time.After(5 * time.Second):
+	directDone := false
+	finished, err := waitForUnixProcessTree(waited, processGroupID, grace, &directDone)
+	if err != nil {
+		return err
 	}
-	if err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if finished {
+		return nil
+	}
+	if err := syscall.Kill(-processGroupID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("kill child process group: %w", err)
 	}
-	select {
-	case <-waited:
-		return nil
-	case <-time.After(5 * time.Second):
-		return errors.New("child process group did not exit after forced termination")
+	finished, err = waitForUnixProcessTree(waited, processGroupID, 5*time.Second, &directDone)
+	if err != nil {
+		return err
 	}
+	if finished {
+		return nil
+	}
+	return errors.New("child process group did not exit after forced termination")
+}
+
+func waitForUnixProcessTree(waited <-chan error, processGroupID int, timeout time.Duration, directDone *bool) (bool, error) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !*directDone {
+			select {
+			case <-waited:
+				*directDone = true
+			default:
+			}
+		}
+		alive, err := unixProcessGroupAlive(processGroupID)
+		if err != nil {
+			return false, err
+		}
+		if *directDone && !alive {
+			return true, nil
+		}
+		select {
+		case <-deadline.C:
+			return false, nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func unixProcessGroupAlive(processGroupID int) (bool, error) {
+	err := syscall.Kill(-processGroupID, 0)
+	if err == nil || errors.Is(err, syscall.EPERM) {
+		return true, nil
+	}
+	if errors.Is(err, syscall.ESRCH) {
+		return false, nil
+	}
+	return false, fmt.Errorf("inspect child process group: %w", err)
 }

@@ -5,6 +5,7 @@ package cli
 import (
 	"errors"
 	"os/exec"
+	"time"
 )
 
 const processTreeControlSupported = false
@@ -21,4 +22,6 @@ func attachChildProcessTree(*exec.Cmd) (platformChildProcessTree, error) {
 
 func closeChildProcessTree(platformChildProcessTree) {}
 
-func stopChildProcessTree(*exec.Cmd, <-chan error, platformChildProcessTree) error { return nil }
+func stopChildProcessTree(*exec.Cmd, <-chan error, platformChildProcessTree, time.Duration) error {
+	return nil
+}

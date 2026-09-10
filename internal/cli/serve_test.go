@@ -695,6 +695,7 @@ func TestWaitForCandidateHealthObservesHealthyServerAndEarlyExit(t *testing.T) {
 func TestDevelopmentCandidateRetriesPortClaimThatPassesUnrelatedHealthProbe(t *testing.T) {
 	target := &url.URL{Scheme: "http", Host: "127.0.0.1:43210"}
 	var starts int
+	var startedSpec managedProcessSpec
 	candidate, err := startDevelopmentCandidateWith(
 		context.Background(),
 		"server",
@@ -705,8 +706,9 @@ func TestDevelopmentCandidateRetriesPortClaimThatPassesUnrelatedHealthProbe(t *t
 				return target.Host, target, nil
 			},
 			environment: func(string) ([]string, error) { return nil, nil },
-			start: func(managedProcessSpec) (developmentProcess, error) {
+			start: func(spec managedProcessSpec) (developmentProcess, error) {
 				starts++
+				startedSpec = spec
 				return newFakeDevelopmentProcess(), nil
 			},
 			health: func(context.Context, developmentProcess, *url.URL, time.Duration) error {
@@ -716,7 +718,8 @@ func TestDevelopmentCandidateRetriesPortClaimThatPassesUnrelatedHealthProbe(t *t
 			ownsAddress: func(developmentProcess, string) (bool, error) {
 				return starts == 2, nil
 			},
-			attempts: 2,
+			attempts:         2,
+			processTreeGrace: 27 * time.Second,
 		},
 	)
 	if err != nil {
@@ -725,6 +728,9 @@ func TestDevelopmentCandidateRetriesPortClaimThatPassesUnrelatedHealthProbe(t *t
 	defer candidate.process.Stop()
 	if starts != 2 {
 		t.Fatalf("candidate starts = %d, want collision retry", starts)
+	}
+	if startedSpec.ProcessTreeGrace != 27*time.Second {
+		t.Fatalf("candidate process-tree grace = %s", startedSpec.ProcessTreeGrace)
 	}
 }
 

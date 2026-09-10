@@ -25,7 +25,15 @@ type developmentProcessCall struct {
 type developmentProcessStub struct {
 	mu    sync.Mutex
 	calls []developmentProcessCall
+	grace time.Duration
 	run   func(context.Context, io.Reader, io.Writer, io.Writer, string, ...string) error
+}
+
+func (process *developmentProcessStub) withProcessTreeGrace(grace time.Duration) processRunner {
+	process.mu.Lock()
+	process.grace = grace
+	process.mu.Unlock()
+	return process
 }
 
 func (process *developmentProcessStub) Run(
@@ -52,6 +60,12 @@ func (process *developmentProcessStub) recordedCalls() []developmentProcessCall 
 	process.mu.Lock()
 	defer process.mu.Unlock()
 	return append([]developmentProcessCall(nil), process.calls...)
+}
+
+func (process *developmentProcessStub) configuredGrace() time.Duration {
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	return process.grace
 }
 
 type developmentTestBuffer struct {
@@ -146,11 +160,11 @@ func TestDevStartsExactServicesAndWaitsForReadinessBarrier(t *testing.T) {
 		switch strings.Join(args, " ") {
 		case "run ./cmd/worker":
 			<-workerReady
-			_, _ = io.WriteString(childStderr, "time=now level=INFO event=worker_")
-			_, _ = io.WriteString(childStderr, "started\n")
+			_, _ = io.WriteString(childStderr, "2026/01/01 00:00:00 INFO job worker_")
+			_, _ = io.WriteString(childStderr, "started job_id=\"\"\n")
 		case "run ./cmd/scheduler":
 			<-schedulerReady
-			_, _ = io.WriteString(childStderr, "time=now level=INFO event=scheduler_started\n")
+			_, _ = io.WriteString(childStderr, "2026/01/01 00:00:00 INFO scheduler started event=scheduler_started mode=work\n")
 		default:
 			t.Errorf("unexpected process: %s %v", name, args)
 		}
@@ -179,7 +193,7 @@ func TestDevStartsExactServicesAndWaitsForReadinessBarrier(t *testing.T) {
 		t.Fatal("development reported ready before worker and scheduler")
 	}
 	close(workerReady)
-	waitForDevTestOutput(t, stderr, "event=worker_started")
+	waitForDevTestOutput(t, stderr, "INFO job worker_started")
 	if strings.Contains(stdout.String(), developmentReadyMessage) {
 		t.Fatal("development reported ready before scheduler")
 	}
@@ -204,7 +218,10 @@ func TestDevStartsExactServicesAndWaitsForReadinessBarrier(t *testing.T) {
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("process calls = %#v, want %#v", calls, want)
 	}
-	if !strings.Contains(stderr.String(), "[worker] time=now") || !strings.Contains(stderr.String(), "[scheduler] time=now") {
+	if grace := process.configuredGrace(); grace != developmentServiceProcessTreeGraceDefault {
+		t.Fatalf("process-tree grace = %s, want %s", grace, developmentServiceProcessTreeGraceDefault)
+	}
+	if !strings.Contains(stderr.String(), "[worker] 2026/01/01") || !strings.Contains(stderr.String(), "[scheduler] 2026/01/01") {
 		t.Fatalf("service output was not prefixed:\n%s", stderr.String())
 	}
 }
@@ -213,8 +230,8 @@ func TestDevelopmentLineWritersPrefixConcurrentFragmentsAtomically(t *testing.T)
 	destination := &developmentTestBuffer{}
 	output := &synchronizedDevelopmentOutput{}
 	readiness := newDevelopmentReadiness(output, io.Discard)
-	serve := newDevelopmentLineWriter("server", "not-ready", output, destination, readiness)
-	worker := newDevelopmentLineWriter("worker", "not-ready", output, destination, readiness)
+	serve := newDevelopmentLineWriter("server", nil, output, destination, readiness)
+	worker := newDevelopmentLineWriter("worker", nil, output, destination, readiness)
 
 	if _, err := serve.Write([]byte("serve ")); err != nil {
 		t.Fatal(err)
@@ -246,6 +263,84 @@ func TestDevelopmentLineWritersPrefixConcurrentFragmentsAtomically(t *testing.T)
 	}
 }
 
+func TestDevelopmentReadinessRequiresCanonicalLineOnIntendedStream(t *testing.T) {
+	stdout := &developmentTestBuffer{}
+	stderr := &developmentTestBuffer{}
+	output := &synchronizedDevelopmentOutput{}
+	readiness := newDevelopmentReadiness(output, stdout)
+	serverOut := newDevelopmentLineWriter("server", developmentServerReadyLine, output, stdout, readiness)
+	serverErr := newDevelopmentLineWriter("server", nil, output, stderr, readiness)
+	workerOut := newDevelopmentLineWriter("worker", nil, output, stdout, readiness)
+	workerErr := newDevelopmentLineWriter("worker", developmentWorkerReadyLine, output, stderr, readiness)
+	schedulerOut := newDevelopmentLineWriter("scheduler", nil, output, stdout, readiness)
+	schedulerErr := newDevelopmentLineWriter("scheduler", developmentSchedulerReadyLine, output, stderr, readiness)
+
+	_, _ = io.WriteString(serverErr, "serving http://127.0.0.1:8080 (watching for changes)\n")
+	_, _ = io.WriteString(serverOut, "error: serving http://127.0.0.1:8080 (watching for changes)\n")
+	_, _ = io.WriteString(workerOut, "2026/01/01 00:00:00 INFO job worker_started job_id=\"\"\n")
+	_, _ = io.WriteString(workerErr, "2026/01/01 00:00:00 INFO job worker_started_later job_id=\"\"\n")
+	_, _ = io.WriteString(schedulerOut, "2026/01/01 00:00:00 INFO scheduler started event=scheduler_started mode=work\n")
+	_, _ = io.WriteString(schedulerErr, "2026/01/01 00:00:00 INFO scheduler started event=scheduler_started mode=once\n")
+	if strings.Contains(stdout.String(), developmentReadyMessage) {
+		t.Fatalf("spoofed readiness line crossed the barrier:\n%s", stdout.String())
+	}
+
+	_, _ = io.WriteString(serverOut, "serving http://127.0.0.1:8080 (watching for changes)\r\n")
+	_, _ = io.WriteString(workerErr, "2026/01/01 00:00:00 INFO job worker_started job_id=\"\"\n")
+	_, _ = io.WriteString(schedulerErr, "2026/01/01 00:00:00 INFO scheduler started event=scheduler_started mode=work schedules=1\n")
+	if count := strings.Count(stdout.String(), developmentReadyMessage); count != 1 {
+		t.Fatalf("canonical readiness count = %d, want 1:\n%s", count, stdout.String())
+	}
+}
+
+func TestDevelopmentLineWriterTruncatesOneLogicalLineWithoutInterleaving(t *testing.T) {
+	destination := &developmentTestBuffer{}
+	output := &synchronizedDevelopmentOutput{}
+	readiness := newDevelopmentReadiness(output, io.Discard)
+	server := newDevelopmentLineWriter("server", nil, output, destination, readiness)
+	worker := newDevelopmentLineWriter("worker", nil, output, destination, readiness)
+
+	oversized := strings.Repeat("x", developmentLineBufferMax+1024)
+	if _, err := io.WriteString(server, oversized[:developmentLineBufferMax]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(worker, "other service\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(server, oversized[developmentLineBufferMax:]+" discarded\nrecovered\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	value := destination.String()
+	if count := strings.Count(value, "[server] "); count != 2 {
+		t.Fatalf("server line count = %d, want truncated and recovered lines", count)
+	}
+	if !strings.Contains(value, developmentLineTruncation) || strings.Contains(value, "discarded") {
+		t.Fatalf("oversized line was not bounded correctly")
+	}
+	if !strings.Contains(value, "[worker] other service\n") || !strings.HasSuffix(value, "[server] recovered\n") {
+		t.Fatalf("line recovery or atomic prefixing failed")
+	}
+}
+
+func TestDevelopmentProcessTreeGraceCoversGeneratedShutdownBudgets(t *testing.T) {
+	if developmentServiceProcessTreeGraceDefault <= 15*time.Second+100*time.Millisecond {
+		t.Fatalf("development process-tree grace = %s, must exceed generated 15s shutdown budget", developmentServiceProcessTreeGraceDefault)
+	}
+}
+
+func TestDevelopmentProcessTreeGraceIsExplicitlyConfigurable(t *testing.T) {
+	t.Setenv(developmentServiceProcessTreeGraceEnv, "31s")
+	grace, err := developmentProcessTreeGrace()
+	if err != nil || grace != 31*time.Second {
+		t.Fatalf("configured grace = %s, %v", grace, err)
+	}
+	t.Setenv(developmentServiceProcessTreeGraceEnv, "invalid")
+	if _, err := developmentProcessTreeGrace(); err == nil || !strings.Contains(err.Error(), developmentServiceProcessTreeGraceEnv) {
+		t.Fatalf("invalid grace error = %v", err)
+	}
+}
+
 func TestDevStartupFailureCancelsAndWaitsForSiblings(t *testing.T) {
 	want := errors.New("serve startup failed")
 	var cancelled atomic.Int32
@@ -271,11 +366,11 @@ func TestDevDoesNotReportReadyAfterMarkedServiceAlreadyExited(t *testing.T) {
 	process.run = func(ctx context.Context, _ io.Reader, _ io.Writer, stderr io.Writer, _ string, args ...string) error {
 		switch strings.Join(args, " ") {
 		case "run ./cmd/worker":
-			_, _ = io.WriteString(stderr, "event=worker_started\n")
+			_, _ = io.WriteString(stderr, `time=now level=INFO msg="job worker_started"`+"\n")
 			return errors.New("worker exited after its startup marker")
 		case "run ./cmd/scheduler":
 			<-ctx.Done()
-			_, _ = io.WriteString(stderr, "event=scheduler_started\n")
+			_, _ = io.WriteString(stderr, `msg="scheduler started" event=scheduler_started mode=work`+"\n")
 			return ctx.Err()
 		default:
 			return errors.New("unexpected process")
@@ -284,7 +379,7 @@ func TestDevDoesNotReportReadyAfterMarkedServiceAlreadyExited(t *testing.T) {
 	stdout := &developmentTestBuffer{}
 	serve := func(ctx context.Context, _ io.Reader, serviceStdout, _ io.Writer, _ processRunner) error {
 		<-ctx.Done()
-		_, _ = io.WriteString(serviceStdout, "serving http://127.0.0.1:8080\n")
+		_, _ = io.WriteString(serviceStdout, "serving http://127.0.0.1:8080 (watching for changes)\n")
 		return nil
 	}
 	result := make(chan error, 1)
@@ -308,11 +403,11 @@ func TestDevSteadyStateExitCancelsSiblingsAndPreservesCause(t *testing.T) {
 	process.run = func(ctx context.Context, _ io.Reader, _ io.Writer, stderr io.Writer, _ string, args ...string) error {
 		switch strings.Join(args, " ") {
 		case "run ./cmd/worker":
-			_, _ = io.WriteString(stderr, "event=worker_started\n")
+			_, _ = io.WriteString(stderr, `time=now level=INFO msg="job worker_started"`+"\n")
 			<-releaseWorker
 			return want
 		case "run ./cmd/scheduler":
-			_, _ = io.WriteString(stderr, "event=scheduler_started\n")
+			_, _ = io.WriteString(stderr, `msg="scheduler started" event=scheduler_started mode=work`+"\n")
 			<-ctx.Done()
 			siblingsCancelled.Add(1)
 			return ctx.Err()
@@ -322,7 +417,7 @@ func TestDevSteadyStateExitCancelsSiblingsAndPreservesCause(t *testing.T) {
 	}
 	stdout := &developmentTestBuffer{}
 	serve := func(ctx context.Context, _ io.Reader, serviceStdout, _ io.Writer, _ processRunner) error {
-		_, _ = io.WriteString(serviceStdout, "serving http://127.0.0.1:8080\n")
+		_, _ = io.WriteString(serviceStdout, "serving http://127.0.0.1:8080 (watching for changes)\n")
 		<-ctx.Done()
 		siblingsCancelled.Add(1)
 		return nil

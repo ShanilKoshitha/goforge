@@ -7,7 +7,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"time"
 )
+
+const defaultProcessTreeGrace = 5 * time.Second
 
 type processRunner interface {
 	Run(context.Context, io.Reader, io.Writer, io.Writer, string, ...string) error
@@ -17,27 +20,54 @@ type directoryProcessRunner interface {
 	RunInDirectory(context.Context, io.Reader, io.Writer, io.Writer, string, string, ...string) error
 }
 
-type execProcessRunner struct{}
-
-func (execProcessRunner) Run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, name string, args ...string) error {
-	return runExecProcess(ctx, stdin, stdout, stderr, "", name, args...)
+type execProcessRunner struct {
+	processTreeGrace time.Duration
 }
 
-func (execProcessRunner) RunInDirectory(
+type configurableProcessTreeGrace interface {
+	withProcessTreeGrace(time.Duration) processRunner
+}
+
+func (runner execProcessRunner) withProcessTreeGrace(grace time.Duration) processRunner {
+	runner.processTreeGrace = grace
+	return runner
+}
+
+func processRunnerWithGrace(processes processRunner, grace time.Duration) processRunner {
+	if configurable, ok := processes.(configurableProcessTreeGrace); ok {
+		return configurable.withProcessTreeGrace(grace)
+	}
+	return processes
+}
+
+func normalizedProcessTreeGrace(grace time.Duration) time.Duration {
+	if grace <= 0 {
+		return defaultProcessTreeGrace
+	}
+	return grace
+}
+
+func (runner execProcessRunner) Run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, name string, args ...string) error {
+	return runExecProcess(ctx, stdin, stdout, stderr, "", runner.processTreeGrace, name, args...)
+}
+
+func (runner execProcessRunner) RunInDirectory(
 	ctx context.Context,
 	stdin io.Reader,
 	stdout, stderr io.Writer,
 	directory, name string,
 	args ...string,
 ) error {
-	return runExecProcess(ctx, stdin, stdout, stderr, directory, name, args...)
+	return runExecProcess(ctx, stdin, stdout, stderr, directory, runner.processTreeGrace, name, args...)
 }
 
 func runExecProcess(
 	ctx context.Context,
 	stdin io.Reader,
 	stdout, stderr io.Writer,
-	directory, name string,
+	directory string,
+	processTreeGrace time.Duration,
+	name string,
 	args ...string,
 ) error {
 	if err := ctx.Err(); err != nil {
@@ -67,7 +97,7 @@ func runExecProcess(
 	case err := <-waited:
 		return err
 	case <-ctx.Done():
-		if err := stopChildProcessTree(command, waited, tree); err != nil {
+		if err := stopChildProcessTree(command, waited, tree, normalizedProcessTreeGrace(processTreeGrace)); err != nil {
 			return errors.Join(ctx.Err(), err)
 		}
 		return ctx.Err()

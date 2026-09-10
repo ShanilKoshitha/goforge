@@ -136,9 +136,33 @@ jobs:
           APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 DATABASE_URL="$GOFORGE_TEST_DATABASE_URL" "$RUNNER_TEMP/forge" migrate
           APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 DATABASE_URL="$GOFORGE_TEST_DATABASE_URL" JOB_POLL_INTERVAL=100ms SCHEDULE_POLL_INTERVAL=1s "$RUNNER_TEMP/forge" dev >"$RUNNER_TEMP/current-dev.log" 2>&1 &
           dev_pid=$!
-          cleanup() {
+          descendant_pids() {
+            for child in $(pgrep -P "$1" 2>/dev/null || true); do
+              descendant_pids "$child"
+              echo "$child"
+            done
+          }
+          stop_dev() {
             kill -TERM "$dev_pid" 2>/dev/null || true
-            wait "$dev_pid" 2>/dev/null || true
+            forced=0
+            for attempt in $(seq 1 400); do
+              state=$(awk '{print $3}' "/proc/$dev_pid/stat" 2>/dev/null || true)
+              if [ -z "$state" ] || [ "$state" = Z ]; then break; fi
+              sleep 0.1
+            done
+            state=$(awk '{print $3}' "/proc/$dev_pid/stat" 2>/dev/null || true)
+            if [ -n "$state" ] && [ "$state" != Z ]; then
+              forced=1
+              descendants=$(descendant_pids "$dev_pid")
+              if [ -n "$descendants" ]; then kill -KILL $descendants 2>/dev/null || true; fi
+              kill -KILL "$dev_pid" 2>/dev/null || true
+            fi
+            if wait "$dev_pid"; then status=0; else status=$?; fi
+            if [ "$forced" -ne 0 ]; then cat "$RUNNER_TEMP/current-dev.log"; return 124; fi
+            return "$status"
+          }
+          cleanup() {
+            stop_dev || true
           }
           trap cleanup EXIT
           for attempt in $(seq 1 300); do
@@ -151,8 +175,7 @@ jobs:
           grep -q '^\[scheduler\].*event=scheduler_started' "$RUNNER_TEMP/current-dev.log"
           test "$(grep -Fxc 'development services ready' "$RUNNER_TEMP/current-dev.log")" -eq 1
           curl --fail --silent --max-time 1 http://127.0.0.1:18082/health >/dev/null
-          kill -TERM "$dev_pid"
-          wait "$dev_pid"
+          stop_dev
           trap - EXIT
       - name: Generated PostgreSQL applications
         run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow)$' -count=2 -v

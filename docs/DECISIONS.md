@@ -1040,7 +1040,10 @@ service that fails before readiness, exits cleanly when it should still be
 running, or stops unexpectedly later is a stack failure: its name and original
 cause are reported while one shared child context stops and reaps its peers.
 Cancellation of the parent is the one successful terminal path and waits for
-all owned work to finish.
+all owned work to finish within the supervisor's bounded grace. The default
+20-second grace exceeds the generated server and worker shutdown budgets. An
+application that deliberately lengthens either budget must export a longer
+`FORGE_DEV_SHUTDOWN_TIMEOUT`; the supervisor never waits without a bound.
 
 The command accepts only format 11. Formats 6 through 10 contain a worker but no
 scheduler, and earlier formats do not share the current background-process

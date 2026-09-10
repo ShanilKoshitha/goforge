@@ -92,7 +92,10 @@ docker compose up -d
 forge make:resource Issue
 forge migrate
 # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
-forge dev
+forge serve
+# In separate terminals when needed:
+forge schedule:work
+forge queue:work
 ```
 
 For framework development from this checkout:
@@ -230,6 +233,10 @@ default: it labels and supervises `forge serve`, the application-owned worker,
 and the scheduler under one cancellation boundary, and reports ready only after
 all three startup contracts succeed. Any service exit stops its peers. It does
 not start PostgreSQL or Mailpit, apply migrations, or change configuration.
+The supervisor allows 20 seconds for graceful process-tree shutdown by default.
+If an application configures a longer server or worker drain, export
+`FORGE_DEV_SHUTDOWN_TIMEOUT` with a longer Go duration before starting the CLI;
+this outer timeout must exceed the longest application shutdown timeout.
 
 `forge serve` remains the HTTP-only watched development command;
 it compiles application-owned views, stages ordinary server binaries outside the
