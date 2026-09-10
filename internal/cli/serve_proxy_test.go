@@ -10,7 +10,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
+
+	"github.com/ShanilKoshitha/goforge/view"
 )
 
 func TestServeProxyRoutesWithoutRewritingRequestIdentity(t *testing.T) {
@@ -77,6 +80,166 @@ func TestServeProxyAtomicallySwapsBackend(t *testing.T) {
 	if got := requestServeProxy(t, proxy); got != "second" {
 		t.Fatalf("promoted backend response = %q", got)
 	}
+}
+
+func TestServeProxyInjectsLiveReloadAndPublishesCommittedGeneration(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		response.Header().Set("Content-Security-Policy", "default-src 'self'")
+		http.SetCookie(response, &http.Cookie{Name: "session", Value: "kept", HttpOnly: true})
+		_, _ = io.WriteString(response, "<!doctype html><html><body>page</body></html>")
+	}))
+	defer backend.Close()
+	proxy := newTestServeProxy(t, backend.URL)
+
+	page := requestServeProxyResponse(t, proxy, "/")
+	defer page.Body.Close()
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTag := `<script src="` + proxy.reload.ScriptPath() + `" data-goforge-generation="0" defer></script>`
+	if !strings.Contains(string(body), "page"+wantTag+"</body>") {
+		t.Fatalf("proxied page is missing LiveReload client:\n%s", body)
+	}
+	if page.Header.Get("Content-Security-Policy") != "default-src 'self'" || len(page.Cookies()) != 1 || page.Cookies()[0].Value != "kept" {
+		t.Fatalf("application response semantics changed: headers=%v cookies=%v", page.Header, page.Cookies())
+	}
+
+	events, err := http.Get("http://" + proxy.Address() + proxy.reload.EventsPath() + "?since=0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer events.Body.Close()
+	proxy.NotifyReload()
+	eventBody, err := io.ReadAll(events.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(eventBody), "event: reload\ndata: 1\n\n") {
+		t.Fatalf("committed reload event = %q", eventBody)
+	}
+
+	accepted := requestServeProxyResponse(t, proxy, "/")
+	defer accepted.Body.Close()
+	acceptedBody, err := io.ReadAll(accepted.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(acceptedBody), `data-goforge-generation="1"`) {
+		t.Fatalf("accepted page does not carry generation 1:\n%s", acceptedBody)
+	}
+}
+
+func TestServeProxyInjectsLargeBufferedFrameworkView(t *testing.T) {
+	engine, err := view.Parse(fstest.MapFS{
+		"page.html": {Data: []byte(`<html><body>{{.}}</body></html>`)},
+	}, nil, "*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat("rendered-page-", 2048)
+	backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		if err := engine.Render(response, http.StatusOK, "page.html", content); err != nil {
+			t.Errorf("render large framework view: %v", err)
+		}
+	}))
+	defer backend.Close()
+	proxy := newTestServeProxy(t, backend.URL)
+
+	response := requestServeProxyResponse(t, proxy, "/large")
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), content) || !strings.Contains(string(body), proxy.reload.ScriptPath()) {
+		t.Fatalf("large buffered framework view was not injected: length=%d", len(body))
+	}
+	if response.ContentLength != int64(len(body)) {
+		t.Fatalf("large injected Content-Length = %d, want %d", response.ContentLength, len(body))
+	}
+}
+
+func TestServeProxyLeavesTrailersAndStreamedHTMLUntouched(t *testing.T) {
+	t.Run("trailers", func(t *testing.T) {
+		backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			response.Header().Set("Trailer", "Digest")
+			_, _ = io.WriteString(response, "<html><body>trailed</body></html>")
+			response.Header().Set("Digest", "sha-256=upstream")
+		}))
+		defer backend.Close()
+		proxy := newTestServeProxy(t, backend.URL)
+
+		response := requestServeProxyResponse(t, proxy, "/")
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := string(body), "<html><body>trailed</body></html>"; got != want || strings.Contains(got, proxy.reload.ScriptPath()) {
+			t.Fatalf("trailed response body = %q, want %q", got, want)
+		}
+		if response.Trailer.Get("Digest") != "sha-256=upstream" {
+			t.Fatalf("application trailer changed: %v", response.Trailer)
+		}
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		defer func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		}()
+		backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(response, "<html><body>stream-")
+			response.(http.Flusher).Flush()
+			close(started)
+			<-release
+			_, _ = io.WriteString(response, "finished</body></html>")
+		}))
+		defer backend.Close()
+		proxy := newTestServeProxy(t, backend.URL)
+
+		response := requestServeProxyResponse(t, proxy, "/")
+		defer response.Body.Close()
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("backend did not flush streamed HTML")
+		}
+		prefix := make([]byte, len("<html><body>stream-"))
+		read := make(chan error, 1)
+		go func() {
+			_, err := io.ReadFull(response.Body, prefix)
+			read <- err
+		}()
+		select {
+		case err := <-read:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("development proxy buffered streamed HTML")
+		}
+		if got, want := string(prefix), "<html><body>stream-"; got != want {
+			t.Fatalf("stream prefix = %q, want %q", got, want)
+		}
+		close(release)
+		remainder, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := string(remainder), "finished</body></html>"; got != want || strings.Contains(got, proxy.reload.ScriptPath()) {
+			t.Fatalf("stream remainder = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestServeProxyReportsAddressCollision(t *testing.T) {
@@ -192,4 +355,18 @@ func requestServeProxy(t *testing.T, proxy *serveProxy) string {
 		t.Fatal(err)
 	}
 	return string(body)
+}
+
+func requestServeProxyResponse(t *testing.T, proxy *serveProxy, path string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, "http://"+proxy.Address()+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Sec-Fetch-Dest", "document")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
 }

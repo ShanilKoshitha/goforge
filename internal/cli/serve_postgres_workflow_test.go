@@ -7,14 +7,19 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+var developmentLiveReloadClientPattern = regexp.MustCompile(`<script src="(/\.goforge/livereload/[A-Za-z0-9_-]{43}/client\.js)" data-goforge-generation="([0-9]+)" defer></script>`)
 
 func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	databaseURL := os.Getenv("GOFORGE_TEST_DATABASE_URL")
@@ -90,6 +95,9 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	if !strings.Contains(initialBody, "Your routes, controllers, templates, and configuration are ordinary Go.") {
 		t.Fatalf("initial welcome response is missing generated content: %s", initialBody)
 	}
+	liveReloadScript, liveReloadEvents, initialGeneration := developmentLiveReloadPage(t, initialBody)
+	assertDevelopmentLiveReloadScript(t, baseURL, liveReloadScript, liveReloadEvents)
+	initialReload := openDevelopmentLiveReload(t, baseURL, liveReloadEvents, initialGeneration)
 	generatedPath := filepath.Join(directory, filepath.FromSlash(generatedViewsPath))
 	initialArtifact, err := os.ReadFile(generatedPath)
 	if err != nil {
@@ -107,6 +115,13 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 		t.Fatalf("write valid Forge view: %v", err)
 	}
 	viewV2Body := waitForDevelopmentResponse(t, baseURL, "view-v2", &serveOutput)
+	viewV2Generation := nextDevelopmentLiveReloadGeneration(t, initialGeneration)
+	waitForDevelopmentLiveReload(t, initialReload, viewV2Generation)
+	viewV2Body = developmentResponse(t, baseURL)
+	if !strings.Contains(viewV2Body, "view-v2") {
+		t.Fatalf("LiveReload generation %s did not expose its accepted view: %s", viewV2Generation, viewV2Body)
+	}
+	assertDevelopmentLiveReloadPage(t, viewV2Body, liveReloadScript, viewV2Generation)
 	if command.Process.Pid != cliProcessID || command.ProcessState != nil {
 		t.Fatal("valid view edit restarted or stopped the forge CLI supervisor")
 	}
@@ -117,12 +132,14 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	if bytes.Equal(initialArtifact, viewV2Artifact) {
 		t.Fatal("valid view edit did not refresh the inspectable compiled artifact")
 	}
+	viewV2Reload := openDevelopmentLiveReload(t, baseURL, liveReloadEvents, viewV2Generation)
 
 	outputOffset := len(serveOutput.String())
 	if err := os.WriteFile(partialPath, []byte("@if(.Ready)\n@endfor\n"), 0o644); err != nil {
 		t.Fatalf("write invalid Forge view: %v", err)
 	}
 	waitForDevelopmentOutput(t, &serveOutput, outputOffset, "partials/tagline.forge.html:2:1")
+	assertNoDevelopmentLiveReload(t, viewV2Reload, "invalid Forge edit")
 	if body := developmentResponse(t, baseURL); body != viewV2Body {
 		t.Fatalf("invalid Forge edit replaced the last-good response:\n%s", body)
 	}
@@ -133,9 +150,17 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 		t.Fatalf("repair Forge view: %v", err)
 	}
 	viewV3Body := waitForDevelopmentResponse(t, baseURL, "view-v3", &serveOutput)
+	viewV3Generation := nextDevelopmentLiveReloadGeneration(t, viewV2Generation)
+	waitForDevelopmentLiveReload(t, viewV2Reload, viewV3Generation)
+	viewV3Body = developmentResponse(t, baseURL)
+	if !strings.Contains(viewV3Body, "view-v3") {
+		t.Fatalf("LiveReload generation %s did not expose its repaired view: %s", viewV3Generation, viewV3Body)
+	}
+	assertDevelopmentLiveReloadPage(t, viewV3Body, liveReloadScript, viewV3Generation)
 	if strings.Contains(viewV3Body, "view-v2") {
 		t.Fatalf("repaired view retained stale content: %s", viewV3Body)
 	}
+	viewV3Reload := openDevelopmentLiveReload(t, baseURL, liveReloadEvents, viewV3Generation)
 	viewV3Artifact, err := os.ReadFile(generatedPath)
 	if err != nil {
 		t.Fatalf("read repaired compiled views: %v", err)
@@ -157,6 +182,13 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 		t.Fatalf("include nested view: %v", err)
 	}
 	viewV4Body := waitForDevelopmentResponse(t, baseURL, "nested-view-v4", &serveOutput)
+	viewV4Generation := nextDevelopmentLiveReloadGeneration(t, viewV3Generation)
+	waitForDevelopmentLiveReload(t, viewV3Reload, viewV4Generation)
+	viewV4Body = developmentResponse(t, baseURL)
+	if !strings.Contains(viewV4Body, "nested-view-v4") {
+		t.Fatalf("LiveReload generation %s did not expose its nested view: %s", viewV4Generation, viewV4Body)
+	}
+	assertDevelopmentLiveReloadPage(t, viewV4Body, liveReloadScript, viewV4Generation)
 	viewV4Artifact, err := os.ReadFile(generatedPath)
 	if err != nil {
 		t.Fatalf("read nested compiled views: %v", err)
@@ -209,10 +241,13 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	if err := os.Rename(temporaryController, controllerPath); err != nil {
 		t.Fatalf("atomically replace welcome controller: %v", err)
 	}
-	waitForDevelopmentResponse(t, baseURL, "atomic-save-v5", &serveOutput)
+	finalBody := waitForDevelopmentResponse(t, baseURL, "atomic-save-v5", &serveOutput)
+	_, finalEvents, finalGeneration := developmentLiveReloadPage(t, finalBody)
+	shutdownReload := openDevelopmentLiveReload(t, baseURL, finalEvents, finalGeneration)
 
 	stopCommandProcess(t, command, true)
 	serveRunning = false
+	waitForDevelopmentLiveReloadShutdown(t, shutdownReload)
 	if command.ProcessState == nil || !command.ProcessState.Success() {
 		t.Fatalf("cancelled forge serve did not exit cleanly: %v", command.ProcessState)
 	}
@@ -229,10 +264,147 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	}
 }
 
+type developmentLiveReloadResult struct {
+	body string
+	err  error
+}
+
+type developmentLiveReloadSubscription struct {
+	result <-chan developmentLiveReloadResult
+}
+
+func developmentLiveReloadPage(t *testing.T, body string) (scriptPath, eventsPath, generation string) {
+	t.Helper()
+	matches := developmentLiveReloadClientPattern.FindAllStringSubmatch(body, -1)
+	if len(matches) != 1 {
+		t.Fatalf("development page contains %d LiveReload clients, want exactly one:\n%s", len(matches), body)
+	}
+	if count := strings.Count(body, "data-goforge-generation="); count != 1 {
+		t.Fatalf("development page contains %d LiveReload generation markers, want exactly one", count)
+	}
+	scriptPath = matches[0][1]
+	eventsPath = strings.TrimSuffix(scriptPath, "/client.js") + "/events"
+	return scriptPath, eventsPath, matches[0][2]
+}
+
+func assertDevelopmentLiveReloadPage(t *testing.T, body, wantScriptPath, wantGeneration string) {
+	t.Helper()
+	scriptPath, _, generation := developmentLiveReloadPage(t, body)
+	if scriptPath != wantScriptPath {
+		t.Fatalf("development LiveReload client path changed from %q to %q", wantScriptPath, scriptPath)
+	}
+	if generation != wantGeneration {
+		t.Fatalf("development LiveReload generation = %q, want %q", generation, wantGeneration)
+	}
+}
+
+func nextDevelopmentLiveReloadGeneration(t *testing.T, generation string) string {
+	t.Helper()
+	current, err := strconv.ParseUint(generation, 10, 64)
+	if err != nil {
+		t.Fatalf("parse development LiveReload generation %q: %v", generation, err)
+	}
+	if current == ^uint64(0) {
+		t.Fatal("development LiveReload generation cannot advance")
+	}
+	return strconv.FormatUint(current+1, 10)
+}
+
+func assertDevelopmentLiveReloadScript(t *testing.T, baseURL, scriptPath, eventsPath string) {
+	t.Helper()
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Get(baseURL + scriptPath)
+	if err != nil {
+		t.Fatalf("request development LiveReload client: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read development LiveReload client: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("development LiveReload client status = %d: %s", response.StatusCode, body)
+	}
+	if got := response.Header.Get("Content-Type"); got != "application/javascript; charset=utf-8" {
+		t.Fatalf("development LiveReload client content type = %q", got)
+	}
+	if !strings.Contains(string(body), `new EventSource("`+eventsPath+`"`) {
+		t.Fatalf("development LiveReload client does not connect to %q: %s", eventsPath, body)
+	}
+}
+
+func openDevelopmentLiveReload(t *testing.T, baseURL, eventsPath, generation string) developmentLiveReloadSubscription {
+	t.Helper()
+	requestURL := baseURL + eventsPath + "?since=" + url.QueryEscape(generation)
+	response, err := (&http.Client{}).Get(requestURL)
+	if err != nil {
+		t.Fatalf("subscribe to development LiveReload: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		t.Fatalf("development LiveReload subscription status = %d: %s", response.StatusCode, body)
+	}
+	if got := response.Header.Get("Content-Type"); got != "text/event-stream; charset=utf-8" {
+		_ = response.Body.Close()
+		t.Fatalf("development LiveReload content type = %q", got)
+	}
+	result := make(chan developmentLiveReloadResult, 1)
+	go func() {
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		result <- developmentLiveReloadResult{body: string(body), err: readErr}
+	}()
+	t.Cleanup(func() { _ = response.Body.Close() })
+	return developmentLiveReloadSubscription{result: result}
+}
+
+func waitForDevelopmentLiveReload(t *testing.T, subscription developmentLiveReloadSubscription, generation string) {
+	t.Helper()
+	select {
+	case result := <-subscription.result:
+		if result.err != nil {
+			t.Fatalf("read development LiveReload event: %v", result.err)
+		}
+		if count := strings.Count(result.body, "event: reload\n"); count != 1 {
+			t.Fatalf("development LiveReload emitted %d reload events, want exactly one: %q", count, result.body)
+		}
+		want := "event: reload\ndata: " + generation + "\n\n"
+		if !strings.Contains(result.body, want) {
+			t.Fatalf("development LiveReload event = %q, want generation %q", result.body, generation)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("development LiveReload did not emit generation %q", generation)
+	}
+}
+
+func assertNoDevelopmentLiveReload(t *testing.T, subscription developmentLiveReloadSubscription, operation string) {
+	t.Helper()
+	select {
+	case result := <-subscription.result:
+		t.Fatalf("%s completed the LiveReload stream: body=%q err=%v", operation, result.body, result.err)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func waitForDevelopmentLiveReloadShutdown(t *testing.T, subscription developmentLiveReloadSubscription) {
+	t.Helper()
+	select {
+	case <-subscription.result:
+	case <-time.After(2 * time.Second):
+		t.Fatal("forge serve shutdown left a development LiveReload stream open")
+	}
+}
+
 func developmentResponse(t *testing.T, baseURL string) string {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
-	response, err := client.Get(baseURL + "/")
+	request, err := http.NewRequest(http.MethodGet, baseURL+"/", nil)
+	if err != nil {
+		t.Fatalf("create development welcome request: %v", err)
+	}
+	request.Header.Set("Sec-Fetch-Dest", "document")
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("request development welcome page: %v", err)
 	}
@@ -252,7 +424,12 @@ func waitForDevelopmentResponse(t *testing.T, baseURL, marker string, output *sy
 	deadline := time.Now().Add(30 * time.Second)
 	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
-		response, err := client.Get(baseURL + "/")
+		request, requestErr := http.NewRequest(http.MethodGet, baseURL+"/", nil)
+		if requestErr != nil {
+			t.Fatalf("create development welcome request: %v", requestErr)
+		}
+		request.Header.Set("Sec-Fetch-Dest", "document")
+		response, err := client.Do(request)
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
 			_ = response.Body.Close()

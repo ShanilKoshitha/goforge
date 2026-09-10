@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"strconv"
 )
 
 type Engine struct {
@@ -36,6 +37,7 @@ func (engine *Engine) Render(response http.ResponseWriter, status int, name stri
 		return mapExecutionError(name, engine.mappings, engine.includes, err)
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	response.Header().Set("Content-Length", strconv.Itoa(body.Len()))
 	response.WriteHeader(status)
 	if _, err := response.Write(body.Bytes()); err != nil {
 		return fmt.Errorf("write view %q: %w", name, err)
