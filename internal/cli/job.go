@@ -31,7 +31,7 @@ type jobSpec struct {
 type jobExclusiveWriter func(string, string) error
 
 func makeJob(name string, stdout io.Writer) error {
-	if err := requireProjectFormatRange(6, 10); err != nil {
+	if err := requireProjectFormatRange(6, currentProjectFormat); err != nil {
 		return err
 	}
 	return makeJobWithWriters(name, stdout, writeExclusive, writeManagedFile)

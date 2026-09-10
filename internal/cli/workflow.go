@@ -9,10 +9,7 @@ import (
 	"runtime"
 )
 
-const (
-	minimumWorkflowFormat = 4
-	maximumWorkflowFormat = 10
-)
+const minimumWorkflowFormat = 4
 
 func runProjectTests(
 	ctx context.Context,
@@ -90,7 +87,7 @@ func checkProjectArtifacts(
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	if err := requireProjectFormatRange(minimumWorkflowFormat, maximumWorkflowFormat); err != nil {
+	if err := requireProjectFormatRange(minimumWorkflowFormat, currentProjectFormat); err != nil {
 		return err
 	}
 	if err := generateORM(true, stdout); err != nil {

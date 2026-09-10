@@ -32,7 +32,7 @@ type plannedFile struct {
 type resourceManagedPublisher func(string, developmentFileState, []byte) error
 
 func makeResource(name string, stdout io.Writer) error {
-	if err := requireProjectFormatRange(8, 10); err != nil {
+	if err := requireProjectFormatRange(8, currentProjectFormat); err != nil {
 		return err
 	}
 	return makeResourceWithDependencies(context.Background(), name, defaultResourceFields(), false, nil, stdout, stdout, execProcessRunner{}, publishResourceManagedFile)
@@ -54,12 +54,12 @@ func makeResourceWithProcessFields(ctx context.Context, name string, fields []re
 }
 
 func makeResourceWithProcessRelationships(ctx context.Context, name string, fields []resourceField, relationships []resourceBelongsTo, schemaDriven bool, stdin io.Reader, stdout, stderr io.Writer, processes processRunner) error {
-	if err := requireProjectFormatRange(8, 10); err != nil {
+	if err := requireProjectFormatRange(8, currentProjectFormat); err != nil {
 		return err
 	}
 	if len(relationships) > 0 {
-		if err := requireProjectFormat(10); err != nil {
-			return fmt.Errorf("belongs-to resource generation requires project format 10: %w", err)
+		if err := requireProjectFormatRange(10, currentProjectFormat); err != nil {
+			return fmt.Errorf("belongs-to resource generation requires project format 10 or newer: %w", err)
 		}
 	}
 	return makeResourceWithRelationshipDependencies(ctx, name, fields, relationships, schemaDriven, stdin, stdout, stderr, processes, publishResourceManagedFile)

@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.14.0\n" {
+	if output.String() != "forge 0.14.1\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -34,6 +34,7 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"forge.yaml",
 		"cmd/server/main.go",
 		"cmd/worker/main.go",
+		"cmd/scheduler/main.go",
 		"cmd/views/main.go",
 		"routes/routes.go",
 		"internal/application/application.go",
@@ -42,9 +43,11 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"database/migrations/000001_create_auth.up.sql",
 		"database/migrations/000002_create_jobs.up.sql",
 		"database/migrations/000004_create_account_recovery.up.sql",
+		"database/migrations/000005_create_schedules.up.sql",
 		"internal/jobs/dependencies.go",
 		"internal/jobs/dispatcher.go",
 		"internal/jobs/registry_gen.go",
+		"internal/schedules/registry.go",
 		"internal/jobs/deliver_mail.go",
 		".forge/jobs.json",
 		"internal/mailbox/store.go",
@@ -81,8 +84,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "version: 10") {
-		t.Fatalf("fresh scaffold is not format 10:\n%s", manifest)
+	if !strings.Contains(string(manifest), "version: 11") {
+		t.Fatalf("fresh scaffold is not format 11:\n%s", manifest)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {
@@ -103,8 +106,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.13.0") {
-		t.Fatalf("scaffold does not pin GoForge v0.13.0:\n%s", moduleFile)
+	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.14.0") {
+		t.Fatalf("scaffold does not pin GoForge v0.14.0:\n%s", moduleFile)
 	}
 	requestPath, requestContent, err := requestFile("CreateUser")
 	if err != nil {
@@ -250,7 +253,7 @@ func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
-			if err := os.WriteFile("forge.yaml", []byte("version: 11\n"), 0o644); err != nil {
+			if err := os.WriteFile("forge.yaml", []byte("version: 12\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer

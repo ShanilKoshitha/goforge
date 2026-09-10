@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.14.0"
+const Version = "0.14.1"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -84,7 +84,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := requireProjectRoot(); err != nil {
 			return err
 		}
-		if err := requireProjectFormatRange(6, 10); err != nil {
+		if err := requireProjectFormatRange(6, currentProjectFormat); err != nil {
 			return err
 		}
 		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", args[0], args[1])
@@ -95,10 +95,25 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := requireProjectRoot(); err != nil {
 			return err
 		}
-		if err := requireProjectFormatRange(6, 10); err != nil {
+		if err := requireProjectFormatRange(6, currentProjectFormat); err != nil {
 			return err
 		}
 		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", "queue:forget", args[1])
+	case "schedule:work":
+		if err := requireScheduleProject(args, "usage: forge schedule:work"); err != nil {
+			return err
+		}
+		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/scheduler")
+	case "schedule:run":
+		if err := requireScheduleProject(args, "usage: forge schedule:run"); err != nil {
+			return err
+		}
+		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/scheduler", "--once")
+	case "schedule:list":
+		if err := requireScheduleProject(args, "usage: forge schedule:list"); err != nil {
+			return err
+		}
+		return runProjectCommand(ctx, stdin, stdout, stderr, processes, "go", "run", "./cmd/console", "schedule:list")
 	default:
 		if strings.HasPrefix(args[0], "make:") {
 			return fmt.Errorf("unknown generator %q", args[0])
@@ -114,7 +129,17 @@ func requireQueueProject(args []string, usage string) error {
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	return requireProjectFormatRange(6, 10)
+	return requireProjectFormatRange(6, currentProjectFormat)
+}
+
+func requireScheduleProject(args []string, usage string) error {
+	if len(args) != 1 {
+		return errors.New(usage)
+	}
+	if err := requireProjectRoot(); err != nil {
+		return err
+	}
+	return requireProjectFormatRange(11, currentProjectFormat)
 }
 
 func printHelp(w io.Writer) {
@@ -130,6 +155,9 @@ Usage:
   forge queue:failed
   forge queue:retry <id|--all>
   forge queue:forget <id>
+  forge schedule:work
+  forge schedule:run
+  forge schedule:list
   forge views:compile [--check]
   forge orm:generate [--check]
   forge make controller <name>
@@ -154,7 +182,7 @@ default; append :nullable to allow null. Without --field, resources retain the
 legacy name:string and versionless-update contract. Any explicit --field uses
 schema-driven output and requires a positive version on updates.
 
-Format-10 projects may add repeatable required relationships with
+Format-10 and format-11 projects may add repeatable required relationships with
 --belongs-to <name>:<ExistingResource>. The target must already be a generated
 resource. Relationship IDs remain explicit, owner-scoped, and database-backed.
 

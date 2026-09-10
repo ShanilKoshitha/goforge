@@ -89,7 +89,7 @@ func runProjectServe(
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	if err := requireProjectFormatRange(minimumWorkflowFormat, maximumWorkflowFormat); err != nil {
+	if err := requireProjectFormatRange(minimumWorkflowFormat, currentProjectFormat); err != nil {
 		return err
 	}
 	publicAddress, err := developmentPublicAddress()
@@ -689,7 +689,7 @@ func buildDevelopmentServer(
 	if err != nil {
 		return nil, err
 	}
-	if formatErr := requireProjectFormatRange(minimumWorkflowFormat, maximumWorkflowFormat); formatErr != nil {
+	if formatErr := requireProjectFormatRange(minimumWorkflowFormat, currentProjectFormat); formatErr != nil {
 		return nil, errors.Join(formatErr, lock.Close())
 	}
 	projectFormat, err := projectFormat()
