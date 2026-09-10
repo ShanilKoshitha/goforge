@@ -21,13 +21,14 @@ const (
 )
 
 // serveProxy keeps one public development address while its backend changes.
-// It is transport-only: response bodies and application routes pass through
-// unchanged.
+// Application routes pass through unchanged; eligible browser documents gain
+// the development-only LiveReload client at this proxy boundary.
 type serveProxy struct {
 	address string
 	server  *http.Server
 	target  atomic.Pointer[url.URL]
 	done    chan error
+	reload  *serveLiveReload
 
 	closeOnce sync.Once
 	closeErr  error
@@ -43,21 +44,28 @@ func startServeProxy(address string, target *url.URL) (*serveProxy, error) {
 	if err != nil {
 		return nil, err
 	}
+	reload, err := newServeLiveReload()
+	if err != nil {
+		return nil, err
+	}
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
+		reload.Close()
 		return nil, fmt.Errorf("listen for development proxy on %s: %w", address, err)
 	}
 
 	proxy := &serveProxy{
 		address: listener.Addr().String(),
 		done:    make(chan error, 1),
+		reload:  reload,
 	}
 	proxy.target.Store(initial)
 	reverse := &httputil.ReverseProxy{
-		Rewrite: proxy.rewrite,
+		Rewrite:        proxy.rewrite,
+		ModifyResponse: reload.ModifyResponse,
 	}
 	proxy.server = &http.Server{
-		Handler:           reverse,
+		Handler:           reload.Handler(reverse),
 		ReadHeaderTimeout: serveProxyReadHeaderTimeout,
 		IdleTimeout:       serveProxyIdleTimeout,
 		MaxHeaderBytes:    serveProxyMaxHeaderBytes,
@@ -103,6 +111,12 @@ func (proxy *serveProxy) SwapTarget(target *url.URL) error {
 	return nil
 }
 
+// NotifyReload publishes one accepted development generation. The supervisor
+// calls it only after the candidate and compiled views are fully committed.
+func (proxy *serveProxy) NotifyReload() {
+	proxy.reload.NotifyReload()
+}
+
 // Done reports the terminal Serve result. A graceful Close reports nil.
 func (proxy *serveProxy) Done() <-chan error {
 	return proxy.done
@@ -112,6 +126,9 @@ func (proxy *serveProxy) Done() <-chan error {
 // first call and do not begin another shutdown.
 func (proxy *serveProxy) Close(ctx context.Context) error {
 	proxy.closeOnce.Do(func() {
+		// SSE handlers are intentionally long lived. Stop them before Shutdown so
+		// graceful cancellation does not wait for the outer shutdown timeout.
+		proxy.reload.Close()
 		proxy.closeErr = proxy.server.Shutdown(ctx)
 		if errors.Is(proxy.closeErr, http.ErrServerClosed) {
 			proxy.closeErr = nil

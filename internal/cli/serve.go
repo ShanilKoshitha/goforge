@@ -40,6 +40,7 @@ type developmentProcess interface {
 type developmentProxy interface {
 	Address() string
 	SwapTarget(*url.URL) error
+	NotifyReload()
 	Done() <-chan error
 	Close(context.Context) error
 }
@@ -452,6 +453,7 @@ developmentLoop:
 			if commitErr := commitDevelopmentBuild(active.build); commitErr != nil {
 				return commitErr
 			}
+			proxy.NotifyReload()
 			fmt.Fprintln(dependencies.stdout, "reloaded development server")
 			continue developmentLoop
 		}

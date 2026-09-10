@@ -79,6 +79,55 @@ func TestServeProxyAtomicallySwapsBackend(t *testing.T) {
 	}
 }
 
+func TestServeProxyInjectsLiveReloadAndPublishesCommittedGeneration(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		response.Header().Set("Content-Security-Policy", "default-src 'self'")
+		http.SetCookie(response, &http.Cookie{Name: "session", Value: "kept", HttpOnly: true})
+		_, _ = io.WriteString(response, "<!doctype html><html><body>page</body></html>")
+	}))
+	defer backend.Close()
+	proxy := newTestServeProxy(t, backend.URL)
+
+	page := requestServeProxyResponse(t, proxy, "/")
+	defer page.Body.Close()
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTag := `<script src="` + proxy.reload.ScriptPath() + `" data-goforge-generation="0" defer></script>`
+	if !strings.Contains(string(body), "page"+wantTag+"</body>") {
+		t.Fatalf("proxied page is missing LiveReload client:\n%s", body)
+	}
+	if page.Header.Get("Content-Security-Policy") != "default-src 'self'" || len(page.Cookies()) != 1 || page.Cookies()[0].Value != "kept" {
+		t.Fatalf("application response semantics changed: headers=%v cookies=%v", page.Header, page.Cookies())
+	}
+
+	events, err := http.Get("http://" + proxy.Address() + proxy.reload.EventsPath() + "?since=0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer events.Body.Close()
+	proxy.NotifyReload()
+	eventBody, err := io.ReadAll(events.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(eventBody), "event: reload\ndata: 1\n\n") {
+		t.Fatalf("committed reload event = %q", eventBody)
+	}
+
+	accepted := requestServeProxyResponse(t, proxy, "/")
+	defer accepted.Body.Close()
+	acceptedBody, err := io.ReadAll(accepted.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(acceptedBody), `data-goforge-generation="1"`) {
+		t.Fatalf("accepted page does not carry generation 1:\n%s", acceptedBody)
+	}
+}
+
 func TestServeProxyReportsAddressCollision(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -192,4 +241,18 @@ func requestServeProxy(t *testing.T, proxy *serveProxy) string {
 		t.Fatal(err)
 	}
 	return string(body)
+}
+
+func requestServeProxyResponse(t *testing.T, proxy *serveProxy, path string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, "http://"+proxy.Address()+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Sec-Fetch-Dest", "document")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
 }

@@ -48,6 +48,7 @@ type fakeDevelopmentProxy struct {
 
 	mu      sync.Mutex
 	targets []string
+	reloads int
 	closed  bool
 	onSwap  func(*url.URL)
 }
@@ -67,6 +68,11 @@ func (proxy *fakeDevelopmentProxy) SwapTarget(target *url.URL) error {
 		hook(target)
 	}
 	return nil
+}
+func (proxy *fakeDevelopmentProxy) NotifyReload() {
+	proxy.mu.Lock()
+	proxy.reloads++
+	proxy.mu.Unlock()
 }
 func (proxy *fakeDevelopmentProxy) Close(context.Context) error {
 	proxy.mu.Lock()
@@ -221,6 +227,9 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 	if len(proxy.targets) != 1 {
 		t.Fatalf("failed rebuild promoted a target: %v", proxy.targets)
 	}
+	if proxy.reloads != 0 {
+		t.Fatalf("failed rebuild emitted %d reloads", proxy.reloads)
+	}
 	proxy.mu.Unlock()
 
 	source.change(testSnapshot(3))
@@ -236,6 +245,9 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 	proxy.mu.Lock()
 	if got, want := proxy.targets, []string{"http://candidate-a", "http://candidate-c"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("targets = %v, want %v", got, want)
+	}
+	if proxy.reloads != 1 {
+		t.Fatalf("successful recovery reloads = %d, want 1", proxy.reloads)
 	}
 	proxy.mu.Unlock()
 
