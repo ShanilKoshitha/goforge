@@ -25,7 +25,7 @@ func runNew(args []string, stdout io.Writer) error {
 	if err := createProject(options); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Created %s\n\nNext:\n  cd %s\n  docker compose up -d\n  forge make:resource Issue\n  forge make:job SendWelcome\n  forge migrate\n  # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.\n  forge serve\n", options.module, options.directory)
+	fmt.Fprintf(stdout, "Created %s\n\nNext:\n  cd %s\n  docker compose up -d\n  forge make:resource Issue\n  forge make:job SendWelcome\n  forge migrate\n  # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.\n  forge dev\n", options.module, options.directory)
 	return nil
 }
 

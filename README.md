@@ -92,9 +92,7 @@ docker compose up -d
 forge make:resource Issue
 forge migrate
 # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
-forge serve
-# In other terminals, materialize recurring jobs with `forge schedule:work`
-# and execute durable delivery with `forge queue:work`.
+forge dev
 ```
 
 For framework development from this checkout:
@@ -109,13 +107,13 @@ forge migrate
 forge test
 forge build
 # For plain-HTTP development, set APP_ENV=local and APP_URL=http://localhost:8080 in .env.
-forge serve
+forge dev
 ```
 
 Generated projects retain `APP_ENV=production` in `.env`, which keeps session
 cookies HTTPS-only. Change it to `APP_ENV=local` and set
 `APP_URL=http://localhost:8080` only for local plain-HTTP development, before
-running `forge serve` or the worker. Never use `APP_ENV=local` in a
+running `forge dev`, `forge serve`, or the worker. Never use `APP_ENV=local` in a
 deployed process because it disables secure cookies.
 
 Visit `http://localhost:8080/register` for the browser workflow or
@@ -140,11 +138,12 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.14.3 CLI. Fresh applications
+The command surface below is included in the v0.15.0 source. Fresh applications
 use format 11 and pin the immutable public v0.14.2 runtime.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
+forge dev
 forge serve
 forge test
 forge build
@@ -226,7 +225,13 @@ go run ./cmd/scheduler --once
 ```
 
 Use direct Go commands for custom packages, flags, tags, targets, output paths,
-or worker and console builds. `forge serve` is the watched development default;
+or worker and console builds. `forge dev` is the complete format-11 development
+default: it labels and supervises `forge serve`, the application-owned worker,
+and the scheduler under one cancellation boundary, and reports ready only after
+all three startup contracts succeed. Any service exit stops its peers. It does
+not start PostgreSQL or Mailpit, apply migrations, or change configuration.
+
+`forge serve` remains the HTTP-only watched development command;
 it compiles application-owned views, stages ordinary server binaries outside the
 repository, health-checks them on private loopback addresses, and switches its
 stable public proxy only after success. Invalid view or Go source leaves the
@@ -240,10 +245,11 @@ macOS. AIX, DragonFly BSD, FreeBSD, illumos, iOS, NetBSD, OpenBSD, and Solaris
 use the system `lsof` command for the same check. Where that utility is absent,
 use the exact one-shot escape hatch `go run ./cmd/server`.
 
-The wrappers never start services, apply migrations, generate a stale ORM,
-modify `.env`, or start workers. Browser LiveReload/HMR, frontend assets,
-multi-process development, and environment diagnosis remain separate
-milestones.
+`forge test`, `forge build`, and `forge serve` never start external services,
+apply migrations, generate a stale ORM, modify `.env`, or start workers.
+`forge dev` starts only the three application processes; background-process
+source changes require restarting that one command. Browser LiveReload/HMR,
+frontend assets, and environment diagnosis remain separate milestones.
 
 ## Framework packages
 

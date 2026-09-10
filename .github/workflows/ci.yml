@@ -104,7 +104,7 @@ jobs:
           go build ./cmd/scheduler
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.14.3'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.15.0'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.14.2' go.mod
@@ -133,21 +133,26 @@ jobs:
           go build ./cmd/worker
           go build ./cmd/scheduler
           test -x bin/app
-          APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 "$RUNNER_TEMP/forge" serve >"$RUNNER_TEMP/current-serve.log" 2>&1 &
-          serve_pid=$!
+          APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 DATABASE_URL="$GOFORGE_TEST_DATABASE_URL" "$RUNNER_TEMP/forge" migrate
+          APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 DATABASE_URL="$GOFORGE_TEST_DATABASE_URL" JOB_POLL_INTERVAL=100ms SCHEDULE_POLL_INTERVAL=1s "$RUNNER_TEMP/forge" dev >"$RUNNER_TEMP/current-dev.log" 2>&1 &
+          dev_pid=$!
           cleanup() {
-            kill -TERM "$serve_pid" 2>/dev/null || true
-            wait "$serve_pid" 2>/dev/null || true
+            kill -TERM "$dev_pid" 2>/dev/null || true
+            wait "$dev_pid" 2>/dev/null || true
           }
           trap cleanup EXIT
-          for attempt in $(seq 1 150); do
-            if curl --fail --silent --max-time 1 http://127.0.0.1:18082/health >/dev/null; then break; fi
-            if ! kill -0 "$serve_pid" 2>/dev/null; then cat "$RUNNER_TEMP/current-serve.log"; exit 1; fi
+          for attempt in $(seq 1 300); do
+            if grep -Fxq 'development services ready' "$RUNNER_TEMP/current-dev.log"; then break; fi
+            if ! kill -0 "$dev_pid" 2>/dev/null; then cat "$RUNNER_TEMP/current-dev.log"; exit 1; fi
             sleep 0.1
           done
+          grep -q '^\[server\].*serving http://' "$RUNNER_TEMP/current-dev.log"
+          grep -q '^\[worker\].*worker_started' "$RUNNER_TEMP/current-dev.log"
+          grep -q '^\[scheduler\].*event=scheduler_started' "$RUNNER_TEMP/current-dev.log"
+          test "$(grep -Fxc 'development services ready' "$RUNNER_TEMP/current-dev.log")" -eq 1
           curl --fail --silent --max-time 1 http://127.0.0.1:18082/health >/dev/null
-          kill -TERM "$serve_pid"
-          wait "$serve_pid"
+          kill -TERM "$dev_pid"
+          wait "$dev_pid"
           trap - EXIT
       - name: Generated PostgreSQL applications
         run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow)$' -count=2 -v

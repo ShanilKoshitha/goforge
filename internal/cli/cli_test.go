@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.14.3\n" {
+	if output.String() != "forge 0.15.0\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -28,6 +28,9 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "set APP_ENV=local and APP_URL=http://localhost:8080 in .env") {
 		t.Fatalf("new-project instructions omit the local HTTP environment step:\n%s", output.String())
+	}
+	if !strings.Contains(output.String(), "forge dev") {
+		t.Fatalf("new-project instructions omit the complete development workflow:\n%s", output.String())
 	}
 	for _, name := range []string{
 		"go.mod",
