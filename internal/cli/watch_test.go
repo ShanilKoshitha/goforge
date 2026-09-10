@@ -77,7 +77,7 @@ func TestSourceSnapshotExcludesGeneratedAndIgnoredDirectories(t *testing.T) {
 	}
 }
 
-func TestSourceSnapshotStreamsLargeAssetInputs(t *testing.T) {
+func TestSourceSnapshotUsesMetadataMarkerForOversizedAssetInputs(t *testing.T) {
 	root := t.TempDir()
 	name := filepath.Join(root, filepath.FromSlash("resources/assets/files/oversized.css"))
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
@@ -94,9 +94,13 @@ func TestSourceSnapshotStreamsLargeAssetInputs(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	before, err := takeSourceSnapshot(root)
+	reader := newSourceSnapshotReader(true)
+	before, err := reader.Read(root)
 	if err != nil {
 		t.Fatalf("snapshot large application-owned asset: %v", err)
+	}
+	if reader.hashes != 0 {
+		t.Fatalf("oversized asset content hashes = %d, want 0", reader.hashes)
 	}
 	file, err = os.OpenFile(name, os.O_WRONLY, 0)
 	if err != nil {
@@ -109,12 +113,65 @@ func TestSourceSnapshotStreamsLargeAssetInputs(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	after, err := takeSourceSnapshot(root)
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(name, future, future); err != nil {
+		t.Fatal(err)
+	}
+	after, err := reader.Read(root)
 	if err != nil {
 		t.Fatalf("snapshot changed large application-owned asset: %v", err)
 	}
 	if after == before {
 		t.Fatal("large asset content change was not detected")
+	}
+}
+
+func TestSourceSnapshotCachesUnchangedContentAndIgnoresTouches(t *testing.T) {
+	root := t.TempDir()
+	name := filepath.Join(root, filepath.FromSlash("resources/assets/files/app.css"))
+	writeWatchFile(t, root, "resources/assets/files/app.css", strings.Repeat("a", 1<<20))
+	reader := newSourceSnapshotReader(true)
+	first, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.hashes != 1 {
+		t.Fatalf("initial hashes = %d, want 1", reader.hashes)
+	}
+	repeated, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated != first || reader.hashes != 1 {
+		t.Fatalf("unchanged read = %x hashes=%d", repeated, reader.hashes)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(name, future, future); err != nil {
+		t.Fatal(err)
+	}
+	touched, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if touched != first || reader.hashes != 2 {
+		t.Fatalf("touch snapshot changed=%v hashes=%d", touched != first, reader.hashes)
+	}
+}
+
+func TestLegacySourceSnapshotExcludesFormatTwelveAssetRoot(t *testing.T) {
+	root := t.TempDir()
+	reader := newSourceSnapshotReader(false)
+	before, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeWatchFile(t, root, "resources/assets/files/app.css", "legacy unrelated asset")
+	after, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatal("format 4-11 snapshot included format-12 asset root")
 	}
 }
 

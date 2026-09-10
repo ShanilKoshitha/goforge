@@ -93,6 +93,10 @@ func runProjectServe(
 	if err := requireProjectFormatRange(minimumWorkflowFormat, currentProjectFormat); err != nil {
 		return err
 	}
+	format, err := projectFormat()
+	if err != nil {
+		return err
+	}
 	processTreeGrace, err := developmentProcessTreeGrace()
 	if err != nil {
 		return err
@@ -101,11 +105,14 @@ func runProjectServe(
 	if err != nil {
 		return err
 	}
-	trackedSource, err := takeSourceSnapshot(".")
+	snapshotReader := newSourceSnapshotReader(format >= 12)
+	trackedSource, err := snapshotReader.Read(".")
 	if err != nil {
 		return fmt.Errorf("snapshot application source: %w", err)
 	}
-	tracker := startSourceGenerationTracker(ctx, ".", trackedSource, servePollInterval)
+	tracker := startSourceGenerationTrackerWithReader(ctx, trackedSource, servePollInterval, func() (sourceSnapshot, error) {
+		return snapshotReader.Read(".")
+	})
 	defer tracker.Close()
 	temporaryDirectory, err := os.MkdirTemp("", "goforge-serve-")
 	if err != nil {
