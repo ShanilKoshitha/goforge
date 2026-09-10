@@ -1,6 +1,6 @@
 # v0.14.2–v0.14.3 schedule integration hardening scorecard
 
-Status: **in progress** — 2026-09-10
+Status: **accepted** — 2026-09-10
 
 Target:
 
@@ -22,13 +22,13 @@ their schedule journey. No project-format or database migration boundary changes
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| Dynamic schedule work can cooperate with cancellation | candidate | `schedule.DynamicContext` receives the exact operation context; deadline cancellation returns promptly, preserves `errors.Is`, dispatches nothing, rolls back the schedule transaction, releases its row lock/connection, and permits a later healthy retry |
-| Existing schedule source and durable identity remain compatible | candidate | Existing `schedule.Dynamic` callers compile unchanged; static and legacy factories keep their behavior; switching an equivalent factory to `DynamicContext` retains the existing payload-strategy fingerprint and durable cursor |
-| Schedule target names must be wired into the generated worker registry | candidate | A collision-proof generated manifest package lists built-in and application job-definition target names from the generator metadata; scheduler and schedule-list startup reject every schedule target absent from that set before configuration or durable work; no reflection, scanning, or handler construction is used. Application-authored same-name definitions and deployed worker queue selection remain explicit operator-owned contracts |
-| Password-recovery equalization is deterministic | candidate | `Request` has one public return path through an envelope around its private branch-complete work method; the response deadline is selected before that work, its child context is shorter, envelope order and delay bounds are pure-tested, and live known/absent/failure acceptance retains identical public responses plus absent-account state invariants without comparing sequential wall times |
-| Generated concurrency evidence proves actual contention | candidate | Two separate scheduler processes are synchronized around one locked due row and report one enqueue plus one contention result, while the worker still executes exactly one durable effect |
-| The public workflow remains ordinary Go | candidate | The generated registry, registered-name set, validation, context-aware factory, scheduler process, SQL adapter, and direct commands remain inspectable and replaceable without runtime discovery |
-| The milestone passes twice without regression | in progress | Framework race/vet/build, fresh public no-replace format-11 application, generated PostgreSQL acceptance, native Windows CLI, and independent adversarial review pass twice on each final staged revision |
+| Dynamic schedule work can cooperate with cancellation | passing | `schedule.DynamicContext` receives the exact operation context; deadline cancellation returns promptly, preserves `errors.Is`, dispatches nothing, rolls back the schedule transaction, releases its row lock/connection, and permits a later healthy retry |
+| Existing schedule source and durable identity remain compatible | passing | Existing `schedule.Dynamic` callers compile unchanged; static and legacy factories keep their behavior; switching an equivalent factory to `DynamicContext` retains the existing payload-strategy fingerprint and durable cursor |
+| Schedule target names must be wired into the generated worker registry | passing | A collision-proof generated manifest package lists built-in and application job-definition target names from the generator metadata; scheduler and schedule-list startup reject every schedule target absent from that set before configuration or durable work; no reflection, scanning, or handler construction is used. Application-authored same-name definitions and deployed worker queue selection remain explicit operator-owned contracts |
+| Password-recovery equalization is deterministic | passing | `Request` has one public return path through an envelope around its private branch-complete work method; the response deadline is selected before that work, its child context is shorter, envelope order and delay bounds are pure-tested, and live known/absent/failure acceptance retains identical public responses plus absent-account state invariants without comparing sequential wall times |
+| Generated concurrency evidence proves actual contention | passing | Two separate scheduler processes are synchronized around one locked due row and report one enqueue plus one contention result, while the worker still executes exactly one durable effect |
+| The public workflow remains ordinary Go | passing | The generated registry, registered-name set, validation, context-aware factory, scheduler process, SQL adapter, and direct commands remain inspectable and replaceable without runtime discovery |
+| The milestone passes twice without regression | passing | Framework race/vet/build, fresh public no-replace format-11 application, generated PostgreSQL acceptance, native Windows CLI, and independent adversarial review passed twice on the final code revision |
 
 ## Runnable baseline — 2026-09-10
 
@@ -69,6 +69,25 @@ their schedule journey. No project-format or database migration boundary changes
   module. Independent exact-head review found no P0–P3 actionable finding.
 - Tag run 34484640732 passed Linux/PostgreSQL in 13m24s and native Windows in
   6m07s, closing the public runtime stage before v0.14.3 adoption.
+
+## v0.14.3 adoption evidence — 2026-09-10
+
+- Final code head `e8c8f78` passed two consecutive local read-only framework
+  suites. Vet, schedule race tests, module tidy, whitespace checks, and a native
+  Windows CLI build reporting `forge 0.14.3` also passed.
+- An untouched no-replace format-11 application pinned the checksum-verified
+  public v0.14.2 module, contained the `DynamicContext` example, passed module
+  verification and tidy, and passed framework test/vet/build plus server,
+  worker, scheduler, and console compilation.
+- Exact-head push run 34487616892 passed Linux/PostgreSQL in 12m50s and native
+  Windows in 6m31s. Pull-request run 34487651117 independently passed those
+  gates in 13m21s and 5m40s. Both included full race/vet/build, released
+  format-8 compatibility, public v0.14.1 format-11 upgrade compatibility, the
+  current public-runtime scaffold, and generated PostgreSQL acceptance with
+  forced scheduler contention.
+- Independent repaired-head review found no P0–P3 actionable findings and
+  verified that the commits contain only Shanil authorship with no co-author,
+  sign-off, or assistant-related trailers.
 
 ## Explicit non-goals
 

@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.14.3 is PostgreSQL-first and under acceptance against its written
+GoForge v0.14.3 is PostgreSQL-first and accepted against its written
 schedule-integration hardening scorecard. It includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
