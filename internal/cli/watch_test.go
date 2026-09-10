@@ -118,32 +118,6 @@ func TestSourceSnapshotStreamsLargeAssetInputs(t *testing.T) {
 	}
 }
 
-func TestBuildSnapshotIncludesPotentialEmbedInputsAndExcludesBuildOutput(t *testing.T) {
-	root := t.TempDir()
-	embedded := "vendor/example/data.txt"
-	writeWatchFile(t, root, embedded, "first")
-	before, err := takeBuildSourceSnapshot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeWatchFile(t, root, embedded, "second")
-	afterEmbedChange, err := takeBuildSourceSnapshot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if afterEmbedChange == before {
-		t.Fatal("potential embedded vendor input was excluded from build snapshot")
-	}
-	writeWatchFile(t, root, "bin/app", "build output")
-	afterOutput, err := takeBuildSourceSnapshot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if afterOutput != afterEmbedChange {
-		t.Fatal("canonical build output changed build source snapshot")
-	}
-}
-
 func TestSourceSnapshotTracksContentCreateDeleteAndRename(t *testing.T) {
 	root := t.TempDir()
 	writeWatchFile(t, root, "first.go", "package first")

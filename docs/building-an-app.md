@@ -137,8 +137,11 @@ immutable fingerprints with exact HTML/asset version pairing.
 
 There is no asset compile command because v0.17 performs no transformations.
 `go build ./cmd/server` is the complete direct production path and fails closed
-at application startup. The opinionated `forge build` additionally refuses to
-publish if application sources change between validation and compilation.
+at application startup. The opinionated `forge build` additionally copies the
+application into a private temporary source tree, revalidates that exact copy,
+and compiles only the validated copy before publication. Tool output, VCS/cache
+directories, and `node_modules` are excluded; keep Node-produced browser output
+in an application directory such as `public/dist` when using this gate.
 Replace the application package or route with ordinary
 `net/http`, a CDN, or a Node-backed pipeline when those tradeoffs fit.
 

@@ -1143,12 +1143,15 @@ generation.
 
 Format-12 applications also own `cmd/assets`, a read-only executable that loads
 the same embedded set. `forge assets:check`, `forge test`, and `forge build`
-delegate to it so a quiescent invalid source set fails before publication. The
-application-owned required-name list catches view dependencies, and the build
-refuses publication when any application source changes between validation and
-compilation. Startup remains the final fail-closed boundary. This is validation,
-not an asset compiler: it writes nothing, and direct `go build` plus fail-closed
-application startup remain the ordinary Go escape path.
+delegate to it so invalid source fails before publication. The application-owned
+required-name list catches view dependencies. To close edit/revert races, the
+opinionated build copies application source into a private temporary tree,
+rechecks ORM, views, and assets there, and compiles only that isolated validated
+tree. VCS state, tool output, caches, and `node_modules` are excluded; ordinary
+compiled frontend output elsewhere remains part of the copy. Startup remains
+the final fail-closed boundary. This is validation, not an asset compiler: it
+writes no application source, and direct `go build` plus fail-closed application
+startup remain the ordinary Go escape path.
 
 The adoption patch will let `forge dev` accept both formats 11 and 12 because
 the server, worker, and scheduler process contract is unchanged; format 12 only

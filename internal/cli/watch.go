@@ -224,17 +224,6 @@ func (tracker *sourceGenerationTracker) Close() {
 // takeSourceSnapshot returns a deterministic digest of application source.
 // Paths are relative to root and normalized with forward slashes.
 func takeSourceSnapshot(root string) (sourceSnapshot, error) {
-	return takeSourceSnapshotWith(root, false)
-}
-
-// takeBuildSourceSnapshot includes every regular application file because Go
-// embed patterns may make any of them a compilation input. Output and tool
-// directories remain excluded.
-func takeBuildSourceSnapshot(root string) (sourceSnapshot, error) {
-	return takeSourceSnapshotWith(root, true)
-}
-
-func takeSourceSnapshotWith(root string, includeAll bool) (sourceSnapshot, error) {
 	rootInfo, err := os.Stat(root)
 	if err != nil {
 		return sourceSnapshot{}, fmt.Errorf("inspect source root: %w", err)
@@ -271,17 +260,12 @@ func takeSourceSnapshotWith(root string, includeAll bool) (sourceSnapshot, error
 			if isRootSourceFile(relative) {
 				return fmt.Errorf("source path %s is not a regular file", relative)
 			}
-			if includeAll && isBuildOutputDirectory(relative) {
+			if _, excluded := excludedSourceDirectories[entry.Name()]; excluded && !strings.HasPrefix(relative, assetSourceRoot) {
 				return filepath.SkipDir
-			}
-			if !includeAll {
-				if _, excluded := excludedSourceDirectories[entry.Name()]; excluded && !strings.HasPrefix(relative, assetSourceRoot) {
-					return filepath.SkipDir
-				}
 			}
 			return nil
 		}
-		if !includeAll && !isWatchedSourcePath(relative) {
+		if !isWatchedSourcePath(relative) {
 			return nil
 		}
 		info, err := entry.Info()
@@ -529,18 +513,6 @@ func isWatchedSourcePath(relative string) bool {
 func isRootSourceFile(relative string) bool {
 	switch relative {
 	case "forge.yaml", "go.mod", "go.sum", ".env":
-		return true
-	default:
-		return false
-	}
-}
-
-func isBuildOutputDirectory(relative string) bool {
-	if strings.Contains(relative, "/") {
-		return false
-	}
-	switch relative {
-	case ".git", ".cache", ".tmp", "tmp", "bin":
 		return true
 	default:
 		return false

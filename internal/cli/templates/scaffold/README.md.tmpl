@@ -138,9 +138,12 @@ forge build
 Both commands first check the generated ORM, compiled views, and embedded asset
 inventory without rewriting application files. `forge test` then runs exactly
 `go test ./...`.
-`forge build` stages a trimmed server executable and publishes it only after a
-successful compile as `bin/app` on Unix or `bin/app.exe` on Windows. A failed or
-cancelled build preserves the last-good binary.
+`forge build` copies application inputs to a private temporary tree, revalidates
+that exact copy, stages a trimmed server executable, and publishes it only after
+a successful compile as `bin/app` on Unix or `bin/app.exe` on Windows. VCS,
+cache/tool outputs, and `node_modules` are excluded; put Node-produced browser
+output in an application directory such as `public/dist`. A failed or cancelled
+build preserves the last-good binary.
 
 Use the exact underlying workflow whenever the default is not suitable:
 

@@ -26,6 +26,7 @@ type workflowProcessCall struct {
 type workflowProcess struct {
 	calls        []workflowProcessCall
 	errors       map[int]error
+	beforeRun    map[int]func(workflowProcessCall)
 	afterRun     map[int]func()
 	buildContent []byte
 }
@@ -45,10 +46,13 @@ func (blockingWorkflowProcess) Run(
 	if name == "go" && reflect.DeepEqual(args, []string{"run", "./cmd/assets"}) {
 		return nil
 	}
-	if name != "go" || len(args) != 5 || args[0] != "build" || args[2] != "-o" {
+	if name == "go" && len(args) >= 4 && args[0] == "-C" && args[2] == "run" {
+		return nil
+	}
+	if name != "go" || len(args) != 7 || args[0] != "-C" || args[2] != "build" || args[4] != "-o" {
 		return errors.New("unexpected blocking workflow command")
 	}
-	if err := os.WriteFile(args[3], []byte("completed but unpublished build"), 0o755); err != nil {
+	if err := os.WriteFile(args[5], []byte("completed but unpublished build"), 0o755); err != nil {
 		return err
 	}
 	return execProcessRunner{}.Run(
@@ -70,8 +74,11 @@ func (process *workflowProcess) Run(
 	}
 	process.calls = append(process.calls, call)
 	index := len(process.calls) - 1
-	if len(args) >= 4 && args[0] == "build" && args[2] == "-o" && process.buildContent != nil {
-		if err := os.WriteFile(args[3], process.buildContent, 0o755); err != nil {
+	if callback := process.beforeRun[index]; callback != nil {
+		callback(call)
+	}
+	if output := workflowBuildOutput(args); output != "" && process.buildContent != nil {
+		if err := os.WriteFile(output, process.buildContent, 0o755); err != nil {
 			return err
 		}
 	}
@@ -79,6 +86,15 @@ func (process *workflowProcess) Run(
 		callback()
 	}
 	return process.errors[index]
+}
+
+func workflowBuildOutput(args []string) string {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == "-o" {
+			return args[index+1]
+		}
+	}
+	return ""
 }
 
 func TestForgeTestChecksArtifactsThenRunsConventionalGoTest(t *testing.T) {
@@ -164,7 +180,7 @@ func TestForgeBuildStagesAndRepeatedlyReplacesCanonicalArtifact(t *testing.T) {
 	}
 	destination := workflowBuildDestination()
 	assertFileContent(t, destination, "first build")
-	assertBuildCall(t, process.calls, 2)
+	assertBuildCall(t, process.calls, 4)
 	assertNoTemporaryBuilds(t)
 	if !strings.Contains(output.String(), "built "+filepath.ToSlash(destination)) {
 		t.Fatalf("build output omits canonical artifact:\n%s", output.String())
@@ -175,7 +191,7 @@ func TestForgeBuildStagesAndRepeatedlyReplacesCanonicalArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFileContent(t, destination, "second build")
-	assertBuildCall(t, process.calls, 5)
+	assertBuildCall(t, process.calls, 9)
 	assertNoTemporaryBuilds(t)
 }
 
@@ -191,7 +207,7 @@ func TestForgeBuildFailurePreservesLastGoodArtifact(t *testing.T) {
 	}
 	want := errors.New("compiler failed")
 	process := &workflowProcess{
-		errors:       map[int]error{2: want},
+		errors:       map[int]error{4: want},
 		buildContent: []byte("incomplete replacement"),
 	}
 
@@ -200,46 +216,31 @@ func TestForgeBuildFailurePreservesLastGoodArtifact(t *testing.T) {
 		t.Fatalf("build error = %v, want compiler error", err)
 	}
 	assertFileContent(t, destination, "last good")
-	assertBuildCall(t, process.calls, 2)
+	assertBuildCall(t, process.calls, 4)
 	assertNoTemporaryBuilds(t)
 }
 
-func TestForgeBuildRejectsSourceChangesBeforePublication(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		callIndex int
-		want      string
-	}{
-		{name: "after validation", callIndex: 1, want: "changed during build validation"},
-		{name: "during compilation", callIndex: 2, want: "changed during compilation"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			directory := workflowProject(t)
-			t.Chdir(directory)
-			destination := workflowBuildDestination()
-			if err := os.MkdirAll("bin", 0o755); err != nil {
-				t.Fatal(err)
+func TestForgeBuildCompilesIsolatedValidatedSourceDuringABAEdit(t *testing.T) {
+	directory := workflowProject(t)
+	t.Chdir(directory)
+	process := &workflowProcess{
+		beforeRun: map[int]func(workflowProcessCall){4: func(call workflowProcessCall) {
+			unsafe := filepath.FromSlash("resources/assets/files/unsafe.svg")
+			if err := os.WriteFile(unsafe, []byte("<svg/>"), 0o644); err != nil {
+				t.Error(err)
 			}
-			if err := os.WriteFile(destination, []byte("last good"), 0o755); err != nil {
-				t.Fatal(err)
+			defer os.Remove(unsafe)
+			if _, err := os.Stat(filepath.Join(call.args[1], unsafe)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("isolated build source observed ABA edit: %v", err)
 			}
-			process := &workflowProcess{
-				afterRun: map[int]func(){test.callIndex: func() {
-					if err := os.WriteFile(filepath.FromSlash("resources/assets/files/unsafe.svg"), []byte("<svg/>"), 0o644); err != nil {
-						t.Error(err)
-					}
-				}},
-				buildContent: []byte("invalid generation"),
-			}
-
-			err := run(context.Background(), []string{"build"}, nil, io.Discard, io.Discard, process)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("source mutation error = %v", err)
-			}
-			assertFileContent(t, destination, "last good")
-			assertNoTemporaryBuilds(t)
-		})
+		}},
+		buildContent: []byte("validated isolated generation"),
 	}
+	if err := run(context.Background(), []string{"build"}, nil, io.Discard, io.Discard, process); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, workflowBuildDestination(), "validated isolated generation")
+	assertBuildCall(t, process.calls, 4)
 }
 
 func TestForgeBuildSuccessWithoutArtifactPreservesLastGoodArtifact(t *testing.T) {
@@ -259,7 +260,7 @@ func TestForgeBuildSuccessWithoutArtifactPreservesLastGoodArtifact(t *testing.T)
 		t.Fatalf("missing artifact error = %v", err)
 	}
 	assertFileContent(t, destination, "last good")
-	assertBuildCall(t, process.calls, 2)
+	assertBuildCall(t, process.calls, 4)
 	assertNoTemporaryBuilds(t)
 }
 
@@ -275,7 +276,7 @@ func TestForgeBuildCancellationAfterCompilationPreservesLastGoodArtifact(t *test
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	process := &workflowProcess{
-		afterRun:     map[int]func(){2: cancel},
+		afterRun:     map[int]func(){4: cancel},
 		buildContent: []byte("cancelled replacement"),
 	}
 
@@ -284,7 +285,7 @@ func TestForgeBuildCancellationAfterCompilationPreservesLastGoodArtifact(t *test
 		t.Fatalf("cancelled build error = %v", err)
 	}
 	assertFileContent(t, destination, "last good")
-	assertBuildCall(t, process.calls, 2)
+	assertBuildCall(t, process.calls, 4)
 	assertNoTemporaryBuilds(t)
 }
 
@@ -306,7 +307,7 @@ func TestForgeBuildRealProcessCancellationPreservesLastGoodArtifact(t *testing.T
 	go func() {
 		result <- run(ctx, []string{"build"}, nil, io.Discard, io.Discard, blockingWorkflowProcess{})
 	}()
-	waitForWorkflowHelper(t, ready)
+	waitForWorkflowHelperOrResult(t, ready, result)
 	cancel()
 	select {
 	case err := <-result:
@@ -318,6 +319,28 @@ func TestForgeBuildRealProcessCancellationPreservesLastGoodArtifact(t *testing.T
 	}
 	assertFileContent(t, destination, "last good")
 	assertNoTemporaryBuilds(t)
+}
+
+func waitForWorkflowHelperOrResult(t *testing.T, ready string, result <-chan error) {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		select {
+		case err := <-result:
+			t.Fatalf("build ended before cancellation helper started: %v", err)
+		case <-deadline.C:
+			t.Fatal("build cancellation helper did not start")
+		case <-poll.C:
+			if _, err := os.Stat(ready); err == nil {
+				return
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+		}
+	}
 }
 
 func TestForgeBuildCancellationHelper(t *testing.T) {
@@ -517,12 +540,17 @@ func assertBuildCall(t *testing.T, calls []workflowProcessCall, index int) {
 		t.Fatalf("missing build call %d: %+v", index, calls)
 	}
 	call := calls[index]
-	if call.name != "go" || len(call.args) != 5 || !reflect.DeepEqual(call.args[:3], []string{"build", "-trimpath", "-o"}) || call.args[4] != "./cmd/server" {
+	if call.name != "go" || len(call.args) != 7 || call.args[0] != "-C" || call.args[2] != "build" ||
+		!reflect.DeepEqual(call.args[3:5], []string{"-trimpath", "-o"}) || call.args[6] != "./cmd/server" {
 		t.Fatalf("build call = %s %v", call.name, call.args)
 	}
-	temporary := filepath.Clean(call.args[3])
-	if filepath.Dir(temporary) != "bin" || !strings.HasPrefix(filepath.Base(temporary), ".goforge-build-") {
-		t.Fatalf("build temporary path = %q", call.args[3])
+	temporary := filepath.Clean(call.args[5])
+	absoluteBin, err := filepath.Abs("bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(temporary) != absoluteBin || !strings.HasPrefix(filepath.Base(temporary), ".goforge-build-") {
+		t.Fatalf("build temporary path = %q", call.args[5])
 	}
 	if runtime.GOOS == "windows" && filepath.Ext(temporary) != ".exe" {
 		t.Fatalf("Windows build temporary lacks .exe: %q", temporary)

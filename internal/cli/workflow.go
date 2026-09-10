@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,19 +35,20 @@ func runProjectBuild(
 	if err := requireProjectFormatRange(minimumWorkflowFormat, currentProjectFormat); err != nil {
 		return err
 	}
-	baseline, err := takeBuildSourceSnapshot(".")
-	if err != nil {
-		return fmt.Errorf("snapshot application source: %w", err)
-	}
 	if err := checkProjectArtifacts(ctx, stdin, stdout, stderr, processes); err != nil {
 		return err
 	}
-	validated, err := takeBuildSourceSnapshot(".")
+	format, err := projectFormat()
 	if err != nil {
-		return fmt.Errorf("snapshot validated application source: %w", err)
+		return err
 	}
-	if validated != baseline {
-		return errors.New("application source changed during build validation; retry the build")
+	stagedRoot, err := stageProjectSource(ctx, ".")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stagedRoot)
+	if err := checkStagedProjectArtifacts(ctx, stdin, stdout, stderr, processes, stagedRoot, format); err != nil {
+		return err
 	}
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		return fmt.Errorf("create build output directory: %w", err)
@@ -71,19 +71,16 @@ func runProjectBuild(
 		return fmt.Errorf("prepare temporary build artifact: %w", err)
 	}
 	defer os.Remove(temporaryPath)
+	absoluteTemporaryPath, err := filepath.Abs(temporaryPath)
+	if err != nil {
+		return fmt.Errorf("resolve temporary build artifact: %w", err)
+	}
 
-	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "build", "-trimpath", "-o", temporaryPath, "./cmd/server"); err != nil {
+	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "-C", stagedRoot, "build", "-trimpath", "-o", absoluteTemporaryPath, "./cmd/server"); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	compiled, err := takeBuildSourceSnapshot(".")
-	if err != nil {
-		return fmt.Errorf("snapshot compiled application source: %w", err)
-	}
-	if compiled != baseline {
-		return errors.New("application source changed during compilation; build was not published")
 	}
 	info, err := os.Stat(temporaryPath)
 	if err != nil {
@@ -97,6 +94,26 @@ func runProjectBuild(
 		return fmt.Errorf("publish build artifact %s: %w", filepath.ToSlash(destination), err)
 	}
 	fmt.Fprintf(stdout, "built %s\n", filepath.ToSlash(destination))
+	return nil
+}
+
+func checkStagedProjectArtifacts(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	processes processRunner,
+	root string,
+	format int,
+) error {
+	if err := generateORMAt(root, true, stdout); err != nil {
+		return err
+	}
+	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "-C", root, "run", "./cmd/views", "--check"); err != nil {
+		return err
+	}
+	if format >= 12 {
+		return processes.Run(ctx, stdin, stdout, stderr, "go", "-C", root, "run", "./cmd/assets")
+	}
 	return nil
 }
 
