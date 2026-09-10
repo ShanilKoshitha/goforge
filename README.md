@@ -19,13 +19,10 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.17.0 is PostgreSQL-first and publishes the first half of the
-production-asset milestone: a bounded, immutable, standard-HTTP asset runtime
-that applications can wire explicitly. Fresh applications deliberately remain
-format 11 and pin the immutable public v0.14.2 runtime until the format-12
-scaffold can depend on this published v0.17.0 module without a local replace.
-The preceding v0.16.0 browser LiveReload milestone remains accepted. GoForge
-includes explicit database wiring,
+GoForge v0.17.1 is a PostgreSQL-first candidate against its written embedded
+production-assets scorecard. Fresh format-12 applications pin the published
+v0.17.0 asset runtime without a local replace. It includes explicit database
+wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -76,11 +73,13 @@ IANA civil time and DST behavior, bounded misfire coalescing, conservative
 active-job overlap suppression, fail-closed definition fingerprints,
 competing-process row coordination, read-only inspection, and payload-free
 observers.
-Fresh format-11 scaffolds own the schedule registry, PostgreSQL migration,
-isolated configuration, scheduler process, inspection command, and direct Go
-escape hatches. The v0.16.0 source pins the immutable public v0.14.2 runtime
-and demonstrates its cancellation-aware dynamic schedule factory.
-The v0.14.2 runtime adds cancellation-aware dynamic schedule factories,
+Fresh format-11 and format-12 scaffolds own the schedule registry, PostgreSQL
+migration, isolated configuration, scheduler process, inspection command, and
+direct Go escape hatches. The v0.16.0 release pinned the immutable public
+v0.14.2 runtime and demonstrated its cancellation-aware dynamic schedule
+factory; format 12 pins v0.17.0 because its embedded package uses the new public
+asset runtime.
+The v0.14.2 runtime added cancellation-aware dynamic schedule factories,
 dependency-free validation between generated schedule and worker registries,
 and deterministic password-recovery equalization acceptance without runtime
 discovery.
@@ -88,7 +87,12 @@ The v0.15 CLI composes the watched server, durable worker, and recurring
 scheduler behind one labelled, truthful development lifecycle. The v0.16
 release closes the server-rendered browser loop with a randomized same-origin
 client and committed-generation SSE while keeping all reload machinery outside
-generated and production application code.
+generated and production application code. The v0.17 candidate gives fresh
+applications an ordinary embedded CSS/JavaScript package, explicit route and
+Forge `asset` helper. Direct Go builds contain the exact application-owned
+bytes; stable URLs use strong ETags and mandatory revalidation so rolling
+deployments remain correct without a hidden asset build or retained-generation
+claim.
 
 ## Install and try it
 
@@ -148,8 +152,8 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.17.0 source. Fresh applications
-use format 11 and pin the immutable public v0.14.2 runtime.
+The command surface below is included in the v0.17.1 candidate. Fresh
+applications use format 12 and pin the matching asset runtime.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
@@ -157,6 +161,7 @@ forge dev
 forge serve
 forge test
 forge build
+forge assets:check
 forge migrate
 forge views:compile
 forge orm:generate [--check]
@@ -200,7 +205,7 @@ runtime schema. Updates replace the complete writable resource: a missing,
 `null`, or empty nullable value clears that column to SQL `NULL`, while numeric
 `0` and boolean `false` remain present values.
 
-Format-10 and format-11 applications can generate a required owner-scoped
+Format-10 through format-12 applications can generate a required owner-scoped
 relationship to an existing resource:
 
 ```sh
@@ -216,9 +221,10 @@ choices, and presentation; generated SQL owns the composite owner/target
 constraint. No relationship registry or runtime schema is added.
 
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-11 projects. Both non-mutating preflights check the
-generated ORM first and compiled views second. Testing then runs exactly `go
-test ./...`. Building stages a trimmed `./cmd/server` executable and publishes
+format-4 through format-12 projects. Both non-mutating preflights check the
+generated ORM first, compiled views second, and format-12 embedded assets third.
+Testing then runs exactly `go test ./...`. Building stages a trimmed
+`./cmd/server` executable and publishes
 it atomically as `bin/app` on Unix or `bin/app.exe` on Windows, so a failed build
 does not replace the last-good binary.
 
@@ -227,6 +233,7 @@ The exact direct escape hatches are:
 ```sh
 forge orm:generate --check
 forge views:compile --check
+forge assets:check
 go test ./...
 go build -trimpath -o bin/app ./cmd/server
 go build -trimpath -o bin/scheduler ./cmd/scheduler
@@ -235,7 +242,7 @@ go run ./cmd/scheduler --once
 ```
 
 Use direct Go commands for custom packages, flags, tags, targets, output paths,
-or worker and console builds. `forge dev` is the complete format-11 development
+or worker and console builds. `forge dev` is the complete format-11/12 development
 default: it labels and supervises `forge serve`, the application-owned worker,
 and the scheduler under one cancellation boundary, and reports ready only after
 all three startup contracts succeed. Any service exit stops its peers. It does
@@ -265,7 +272,9 @@ use the exact one-shot escape hatch `go run ./cmd/server`.
 `forge test`, `forge build`, and `forge serve` never start external services,
 apply migrations, generate a stale ORM, modify `.env`, or start workers.
 `forge dev` starts only the three application processes; background-process
-source changes require restarting that one command. Frontend assets, HMR, and
+source changes require restarting that one command. Format-12 asset files below
+`resources/assets/files` participate in the watched server's last-good rebuild
+and committed browser reload. Asset transforms, HMR, external publication, and
 environment diagnosis remain separate milestones.
 
 ## Framework packages

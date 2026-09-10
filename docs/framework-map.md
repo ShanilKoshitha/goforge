@@ -18,6 +18,7 @@ normal Go.
 | Cache | `cache.Store` | Four-method interface plus JSON helpers |
 | Session / flash | `session.Manager` | Signed random ID and replaceable server store |
 | Blade / Twig templates | `.forge.html` layouts, components, props, slots, stacks, control flow, and form directives | Managed `views_gen.go` containing canonical `html/template` source plus source mappings |
+| Asset pipeline / static files | Application-owned embedded files and Forge `asset` resolver | Ordinary `embed.FS`, explicit route wiring, stable URLs, strong ETags, and a replaceable `http.Handler` |
 | Queues / Active Job / Spring Batch jobs | Generated typed jobs plus an explicit registry and `cmd/worker` | Application-owned handlers and worker wiring over inspectable PostgreSQL rows, leases, and ordinary Go interfaces |
 | Scheduler / cron commands | Explicit versioned schedule definitions and a separate scheduler process | Typed job materialization plus one inspectable PostgreSQL cursor row per definition |
 | Browser request lifecycle | `web.Sessions`, `web.CSRF`, and explicit page data | Buffered `net/http` response plus signed server-side session |
