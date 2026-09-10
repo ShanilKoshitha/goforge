@@ -22,9 +22,13 @@ import (
 
 const (
 	defaultURLPrefix = "/assets"
-	defaultMaxFiles  = 256
-	defaultMaxFile   = 8 << 20
-	defaultMaxTotal  = 32 << 20
+
+	// DefaultMaxFiles is the zero-config inventory limit.
+	DefaultMaxFiles = 256
+	// DefaultMaxFileBytes is the zero-config per-file limit.
+	DefaultMaxFileBytes int64 = 8 << 20
+	// DefaultMaxTotalBytes is the zero-config total inventory limit.
+	DefaultMaxTotalBytes int64 = 32 << 20
 )
 
 // Config describes one immutable in-memory asset set. Zero limits select
@@ -250,13 +254,13 @@ func validatedLimits(config Config) (int, int64, int64, error) {
 	maxFile := config.MaxFileBytes
 	maxTotal := config.MaxTotalBytes
 	if maxFiles == 0 {
-		maxFiles = defaultMaxFiles
+		maxFiles = DefaultMaxFiles
 	}
 	if maxFile == 0 {
-		maxFile = defaultMaxFile
+		maxFile = DefaultMaxFileBytes
 	}
 	if maxTotal == 0 {
-		maxTotal = defaultMaxTotal
+		maxTotal = DefaultMaxTotalBytes
 	}
 	if maxFiles < 0 || maxFile < 0 || maxTotal < 0 {
 		return 0, 0, 0, errors.New("asset: limits must be positive")
@@ -291,7 +295,7 @@ func validLogicalPath(name string) bool {
 }
 
 func validSegment(segment string) bool {
-	if segment == "" || strings.HasPrefix(segment, ".") {
+	if segment == "" || strings.HasPrefix(segment, ".") || strings.HasSuffix(segment, ".") {
 		return false
 	}
 	for _, character := range segment {
@@ -301,7 +305,15 @@ func validSegment(segment string) bool {
 		}
 		return false
 	}
-	return true
+	base, _, _ := strings.Cut(segment, ".")
+	switch strings.ToUpper(base) {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return false
+	default:
+		return true
+	}
 }
 
 func readBounded(files fs.FS, name string, limit int64) ([]byte, error) {
