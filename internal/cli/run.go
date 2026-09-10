@@ -60,6 +60,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return errors.New("usage: forge build")
 		}
 		return runProjectBuild(ctx, stdin, stdout, stderr, processes)
+	case "assets:check":
+		if len(args) != 1 {
+			return errors.New("usage: forge assets:check")
+		}
+		return runProjectAssetCheck(ctx, stdin, stdout, stderr, processes)
 	case "views:compile":
 		if len(args) > 2 || len(args) == 2 && args[1] != "--check" {
 			return errors.New("usage: forge views:compile [--check]")
@@ -156,6 +161,7 @@ Usage:
   forge dev
   forge test
   forge build
+  forge assets:check
   forge migrate
   forge queue:work
   forge queue:failed

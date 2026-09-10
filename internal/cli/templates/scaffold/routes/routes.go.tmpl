@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/ShanilKoshitha/goforge/httpx"
@@ -24,7 +25,10 @@ import (
 	"[[.Module]]/internal/mailbox"
 )
 
-func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions session.Store, attemptStore ratelimit.Store, settings config.Config, recovery controllers.PasswordRecoveryService, registrations ...auth.RegistrationTransaction) error {
+func Register(router *httpx.Router, renderer *view.Engine, staticAssets http.Handler, db *sql.DB, sessions session.Store, attemptStore ratelimit.Store, settings config.Config, recovery controllers.PasswordRecoveryService, registrations ...auth.RegistrationTransaction) error {
+	if staticAssets == nil {
+		return errors.New("asset handler is required")
+	}
 	manager, err := session.NewManagerWithPolicy(sessions, []byte(settings.SessionSecret), session.Cookie{
 		UnsafeAllowHTTP: settings.Environment == "local",
 	}, session.Policy{
@@ -82,6 +86,7 @@ func Register(router *httpx.Router, renderer *view.Engine, db *sql.DB, sessions 
 
 	health := controllers.NewHealthController(db, migrations.Files)
 	welcome := controllers.NewWelcomeController(renderer)
+	router.Named("assets.show", "GET", "/assets/{path...}", httpx.Adapt(staticAssets))
 	router.Named("welcome", "GET", "/", welcome.Show)
 	router.Named("health.show", "GET", "/health", health.Show)
 	router.Named("health.ready", "GET", "/ready", health.Ready)

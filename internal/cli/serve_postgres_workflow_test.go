@@ -91,9 +91,16 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	})
 	baseURL := "http://" + address
 	waitForHealth(t, baseURL, &serveOutput)
+	initialAssetBody, initialAssetETag := developmentAssetResponse(t, baseURL, "/assets/app.css")
+	if !strings.Contains(initialAssetBody, ":root") || initialAssetETag == "" {
+		t.Fatalf("initial embedded stylesheet is incomplete: etag=%q body=%q", initialAssetETag, initialAssetBody)
+	}
 	initialBody := developmentResponse(t, baseURL)
 	if !strings.Contains(initialBody, "Your routes, controllers, templates, and configuration are ordinary Go.") {
 		t.Fatalf("initial welcome response is missing generated content: %s", initialBody)
+	}
+	if !strings.Contains(initialBody, `href="/assets/app.css"`) || !strings.Contains(initialBody, `src="/assets/app.js"`) {
+		t.Fatalf("initial welcome response does not resolve application assets: %s", initialBody)
 	}
 	liveReloadScript, liveReloadEvents, initialGeneration := developmentLiveReloadPage(t, initialBody)
 	assertDevelopmentLiveReloadScript(t, baseURL, liveReloadScript, liveReloadEvents)
@@ -196,6 +203,50 @@ func TestGeneratedDevelopmentServerWorkflow(t *testing.T) {
 	if bytes.Equal(viewV3Artifact, viewV4Artifact) {
 		t.Fatal("new nested view directory did not refresh the compiled artifact")
 	}
+
+	assetReload := openDevelopmentLiveReload(t, baseURL, liveReloadEvents, viewV4Generation)
+	assetPath := filepath.Join(directory, "resources", "assets", "files", "app.css")
+	originalAsset, err := os.ReadFile(assetPath)
+	if err != nil {
+		t.Fatalf("read application stylesheet: %v", err)
+	}
+	assetV5 := append(append([]byte(nil), originalAsset...), []byte("\n/* asset-v5 */\n")...)
+	if err := os.WriteFile(assetPath, assetV5, 0o644); err != nil {
+		t.Fatalf("write valid asset edit: %v", err)
+	}
+	assetV5Body, assetV5ETag := waitForDevelopmentAsset(t, baseURL, "/assets/app.css", "asset-v5", &serveOutput)
+	assetV5Generation := nextDevelopmentLiveReloadGeneration(t, viewV4Generation)
+	waitForDevelopmentLiveReload(t, assetReload, assetV5Generation)
+	if assetV5ETag == initialAssetETag || assetV5Body == initialAssetBody {
+		t.Fatalf("accepted asset edit retained stale representation: old=%q new=%q", initialAssetETag, assetV5ETag)
+	}
+	viewV4Body = developmentResponse(t, baseURL)
+	assertDevelopmentLiveReloadPage(t, viewV4Body, liveReloadScript, assetV5Generation)
+	assertDevelopmentAssetRevalidation(t, baseURL, "/assets/app.css", initialAssetETag, "asset-v5")
+
+	invalidAssetReload := openDevelopmentLiveReload(t, baseURL, liveReloadEvents, assetV5Generation)
+	unsupportedAssetPath := filepath.Join(directory, "resources", "assets", "files", "unsafe.svg")
+	outputOffset = len(serveOutput.String())
+	if err := os.WriteFile(unsupportedAssetPath, []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`), 0o644); err != nil {
+		t.Fatalf("write unsupported active asset: %v", err)
+	}
+	waitForDevelopmentOutput(t, &serveOutput, outputOffset, "unsupported file type")
+	assertNoDevelopmentLiveReload(t, invalidAssetReload, "unsupported active asset")
+	if body, etag := developmentAssetResponse(t, baseURL, "/assets/app.css"); body != assetV5Body || etag != assetV5ETag {
+		t.Fatalf("invalid asset candidate displaced last-good bytes: etag=%q body=%q", etag, body)
+	}
+	if err := os.Remove(unsupportedAssetPath); err != nil {
+		t.Fatalf("remove unsupported active asset: %v", err)
+	}
+	assetV6 := append(append([]byte(nil), assetV5...), []byte("\n/* asset-recovered-v6 */\n")...)
+	if err := os.WriteFile(assetPath, assetV6, 0o644); err != nil {
+		t.Fatalf("repair application assets: %v", err)
+	}
+	_, _ = waitForDevelopmentAsset(t, baseURL, "/assets/app.css", "asset-recovered-v6", &serveOutput)
+	assetV6Generation := nextDevelopmentLiveReloadGeneration(t, assetV5Generation)
+	waitForDevelopmentLiveReload(t, invalidAssetReload, assetV6Generation)
+	viewV4Body = developmentResponse(t, baseURL)
+	assertDevelopmentLiveReloadPage(t, viewV4Body, liveReloadScript, assetV6Generation)
 
 	controllerPath := filepath.Join(directory, "internal", "http", "controllers", "welcome_controller.go")
 	originalController, err := os.ReadFile(controllerPath)
@@ -417,6 +468,64 @@ func developmentResponse(t *testing.T, baseURL string) string {
 		t.Fatalf("development welcome status = %d: %s", response.StatusCode, body)
 	}
 	return string(body)
+}
+
+func developmentAssetResponse(t *testing.T, baseURL, assetPath string) (string, string) {
+	t.Helper()
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Get(baseURL + assetPath)
+	if err != nil {
+		t.Fatalf("request development asset %s: %v", assetPath, err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read development asset %s: %v", assetPath, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("development asset %s status = %d: %s", assetPath, response.StatusCode, body)
+	}
+	return string(body), response.Header.Get("ETag")
+}
+
+func waitForDevelopmentAsset(t *testing.T, baseURL, assetPath, marker string, output *synchronizedBuffer) (string, string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	client := &http.Client{Timeout: time.Second}
+	for time.Now().Before(deadline) {
+		response, err := client.Get(baseURL + assetPath)
+		if err == nil {
+			body, readErr := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if readErr == nil && response.StatusCode == http.StatusOK && strings.Contains(string(body), marker) {
+				return string(body), response.Header.Get("ETag")
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("development asset %s never contained %q:\n%s", assetPath, marker, output.String())
+	return "", ""
+}
+
+func assertDevelopmentAssetRevalidation(t *testing.T, baseURL, assetPath, oldETag, marker string) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, baseURL+assetPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("If-None-Match", oldETag)
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("revalidate development asset %s: %v", assetPath, err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), marker) {
+		t.Fatalf("stale asset validator did not receive accepted bytes: %d %q", response.StatusCode, body)
+	}
 }
 
 func waitForDevelopmentResponse(t *testing.T, baseURL, marker string, output *synchronizedBuffer) string {

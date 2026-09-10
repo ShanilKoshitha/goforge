@@ -207,7 +207,7 @@ func runProjectDevWith(
 	if err := requireProjectRoot(); err != nil {
 		return err
 	}
-	if err := requireProjectFormatRange(11, 11); err != nil {
+	if err := requireProjectFormatRange(11, currentProjectFormat); err != nil {
 		return err
 	}
 	processTreeGrace, err := developmentProcessTreeGrace()

@@ -16,6 +16,7 @@ import (
 )
 
 const generatedViewSource = "resources/views/views_gen.go"
+const assetSourceRoot = "resources/assets/files/"
 
 const sourceWatchErrorTolerance = 500 * time.Millisecond
 
@@ -258,7 +259,7 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 			if isRootSourceFile(relative) {
 				return fmt.Errorf("source path %s is not a regular file", relative)
 			}
-			if _, excluded := excludedSourceDirectories[entry.Name()]; excluded {
+			if _, excluded := excludedSourceDirectories[entry.Name()]; excluded && !strings.HasPrefix(relative, assetSourceRoot) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -486,6 +487,9 @@ func validateSourceWatchDurations(pollInterval, debounce, errorTolerance time.Du
 func isWatchedSourcePath(relative string) bool {
 	if relative == generatedViewSource {
 		return false
+	}
+	if strings.HasPrefix(relative, assetSourceRoot) {
+		return true
 	}
 	if isRootSourceFile(relative) {
 		return true

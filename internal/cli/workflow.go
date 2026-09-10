@@ -96,5 +96,30 @@ func checkProjectArtifacts(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return runProjectViewCompiler(ctx, stdin, stdout, stderr, processes, true)
+	if err := runProjectViewCompiler(ctx, stdin, stdout, stderr, processes, true); err != nil {
+		return err
+	}
+	format, err := projectFormat()
+	if err != nil {
+		return err
+	}
+	if format >= 12 {
+		return runProjectAssetCheck(ctx, stdin, stdout, stderr, processes)
+	}
+	return nil
+}
+
+func runProjectAssetCheck(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	processes processRunner,
+) error {
+	if err := requireProjectRoot(); err != nil {
+		return err
+	}
+	if err := requireProjectFormatRange(12, currentProjectFormat); err != nil {
+		return err
+	}
+	return processes.Run(ctx, stdin, stdout, stderr, "go", "run", "./cmd/assets")
 }

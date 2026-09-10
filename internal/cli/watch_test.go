@@ -30,6 +30,11 @@ func TestSourceSnapshotIncludesOnlyEligibleApplicationSource(t *testing.T) {
 		".env",
 		"main.go",
 		"internal/app/app.go",
+		"resources/assets/files/app.css",
+		"resources/assets/files/app.js",
+		"resources/assets/files/images/mark.bin",
+		"resources/assets/files/node_modules/local.css",
+		"resources/assets/files/.private/theme.css",
 		"resources/views/page.forge.html",
 		"database/migrations/one.sql",
 	} {
@@ -41,7 +46,7 @@ func TestSourceSnapshotIncludesOnlyEligibleApplicationSource(t *testing.T) {
 		baseline = current
 	}
 
-	for _, name := range []string{"README.md", "nested/go.mod", "nested/.env", "assets/app.js", "styles/app.css"} {
+	for _, name := range []string{"README.md", "nested/go.mod", "nested/.env", "assets/app.js", "styles/app.css", "resources/assets/README.md"} {
 		writeWatchFile(t, root, name, "changed but ineligible")
 		if current := mustSourceSnapshot(t, root); current != baseline {
 			t.Fatalf("ineligible path %s changed snapshot", name)

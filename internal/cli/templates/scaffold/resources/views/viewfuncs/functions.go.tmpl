@@ -3,6 +3,8 @@ package viewfuncs
 import (
 	"html/template"
 	"strings"
+
+	"[[.Module]]/resources/assets"
 )
 
 // Functions is the application-owned template function registry. It is kept
@@ -10,6 +12,7 @@ import (
 // a missing or corrupt artifact.
 func Functions() template.FuncMap {
 	return template.FuncMap{
+		"asset":    assets.URL,
 		"headline": strings.TrimSpace,
 	}
 }

@@ -96,8 +96,8 @@ func TestDevCommandRejectsArgumentsBeforeStartingProcesses(t *testing.T) {
 	}
 }
 
-func TestDevRequiresExactlyFormatElevenBeforeStartingServices(t *testing.T) {
-	for _, version := range []string{"10", "12"} {
+func TestDevRequiresScheduleCapableFormatsBeforeStartingServices(t *testing.T) {
+	for _, version := range []string{"10", "13"} {
 		t.Run(version, func(t *testing.T) {
 			directory := developmentProjectDirectory(t, version)
 			t.Chdir(directory)
