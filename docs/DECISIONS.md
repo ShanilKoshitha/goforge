@@ -1103,3 +1103,59 @@ server-rendered edit loop. Keeping it at the already development-only proxy
 makes the behavior observable and replaceable without infecting production
 code, while strict response eligibility and same-origin external code preserve
 the framework's security and conventional-Go promises.
+
+## D040 — Production assets are embedded inputs with stable revalidated URLs
+
+**Status:** accepted design; staged across the v0.17 release series
+
+Format-12 applications own opaque frontend files below
+`resources/assets/files`. Ordinary `go:embed` includes those exact bytes in the
+server binary. The application constructs a bounded, validated asset set in its
+visible object graph, passes its URL resolver into the application-owned Forge
+function map, and mounts its standard `http.Handler` explicitly in the route
+table. No source-tree scan, disk lookup, compiler, or generated manifest runs in
+the deployed process; the already embedded inventory is bounded and validated
+once at startup.
+
+The first production URL contract is stable `/assets/<logical-path>` with a
+strong content ETag and `Cache-Control: public, max-age=0, must-revalidate`.
+This deliberately chooses availability and honest cache validation over
+premature cache immutability. It prevents missing current-only fingerprint
+files, but stable paths alone do not guarantee that HTML and assets come from
+the same generation during a rolling deployment. Operators must keep asset
+changes backward compatible or use deployment stickiness until GoForge has a
+retained-generation publication contract.
+
+Asset lookup and serving reject non-canonical paths, dotfiles, case-fold
+collisions, unsupported active media types, irregular files, and bounded-size
+violations. GET, HEAD, conditional requests, and ranges use ordinary HTTP
+semantics. The default allowlist is deliberately narrow; applications can
+replace or separately mount `net/http`, object storage, a CDN, or their own
+asset package when they need different media or caching policy.
+
+The format-12 adoption patch will treat every regular file below the asset input
+root as source, independent of extension. The server binary build will capture
+asset bytes in the same candidate as application Go and compiled views. The
+existing promotion boundary remains authoritative: failed, stale, or reverted
+candidates preserve the last-good server and do not notify the browser; a
+successful asset replacement emits the same single committed LiveReload
+generation.
+
+Format-12 applications will also own `cmd/assets`, a read-only executable that
+loads the same embedded set. `forge assets:check`, `forge test`, and `forge
+build` will delegate to it so quiescent invalid source fails before publication;
+the build will also refuse a source set that changes during its transaction.
+Application startup remains the final fail-closed boundary. This is validation,
+not an asset compiler: it writes nothing, and direct `go build` plus fail-closed
+application startup remain the ordinary Go escape path.
+
+The adoption patch will let `forge dev` accept both formats 11 and 12 because
+the server, worker, and scheduler process contract is unchanged; format 12 only
+adds embedded inputs to the watched server. Formats 10 and earlier remain
+explicitly unsupported by the three-process command.
+
+Reason: a production-shaped browser application must ship CSS and JavaScript,
+but opaque assets need no artificial build pipeline. Direct embedding produces
+the smallest inspectable Go workflow today while leaving transforms, retained
+fingerprints, external hosting, and Node-based adapters as honest independent
+contracts.

@@ -19,8 +19,13 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.16.0 is PostgreSQL-first and accepted against its written browser
-LiveReload scorecard. It includes explicit database wiring,
+GoForge v0.17.0 is PostgreSQL-first and publishes the first half of the
+production-asset milestone: a bounded, immutable, standard-HTTP asset runtime
+that applications can wire explicitly. Fresh applications deliberately remain
+format 11 and pin the immutable public v0.14.2 runtime until the format-12
+scaffold can depend on this published v0.17.0 module without a local replace.
+The preceding v0.16.0 browser LiveReload milestone remains accepted. GoForge
+includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -90,7 +95,7 @@ generated and production application code.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.16.0
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.17.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -143,7 +148,7 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.16.0 source. Fresh applications
+The command surface below is included in the v0.17.0 source. Fresh applications
 use format 11 and pin the immutable public v0.14.2 runtime.
 
 ```text
@@ -266,6 +271,8 @@ environment diagnosis remain separate milestones.
 ## Framework packages
 
 - `forge`: application lifecycle and graceful shutdown
+- `asset`: bounded immutable embedded files, canonical URLs, strong validators,
+  byte ranges, and deterministic media policy through standard `http.Handler`
 - `httpx`: routing, JSON binding, errors, middleware, and `net/http` adapters
 - `config`: typed environment and optional dotenv loading
 - `validation`: fluent validation without reflection
