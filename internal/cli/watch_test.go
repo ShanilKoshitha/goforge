@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/ShanilKoshitha/goforge/asset"
 )
 
 type sourceWatchResult struct {
@@ -79,7 +77,7 @@ func TestSourceSnapshotExcludesGeneratedAndIgnoredDirectories(t *testing.T) {
 	}
 }
 
-func TestSourceSnapshotBoundsAssetInputsBeforeReading(t *testing.T) {
+func TestSourceSnapshotStreamsLargeAssetInputs(t *testing.T) {
 	root := t.TempDir()
 	name := filepath.Join(root, filepath.FromSlash("resources/assets/files/oversized.css"))
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
@@ -89,15 +87,34 @@ func TestSourceSnapshotBoundsAssetInputsBeforeReading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Truncate(asset.DefaultMaxFileBytes + 1); err != nil {
+	if err := file.Truncate(9 << 20); err != nil {
 		_ = file.Close()
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := takeSourceSnapshot(root); err == nil || !strings.Contains(err.Error(), "per-file limit") {
-		t.Fatalf("oversized asset snapshot error = %v", err)
+	before, err := takeSourceSnapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot large application-owned asset: %v", err)
+	}
+	file, err = os.OpenFile(name, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt([]byte("x"), (9<<20)-1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := takeSourceSnapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot changed large application-owned asset: %v", err)
+	}
+	if after == before {
+		t.Fatal("large asset content change was not detected")
 	}
 }
 

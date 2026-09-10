@@ -14,8 +14,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/ShanilKoshitha/goforge/asset"
 )
 
 const generatedViewSource = "resources/views/views_gen.go"
@@ -226,6 +224,17 @@ func (tracker *sourceGenerationTracker) Close() {
 // takeSourceSnapshot returns a deterministic digest of application source.
 // Paths are relative to root and normalized with forward slashes.
 func takeSourceSnapshot(root string) (sourceSnapshot, error) {
+	return takeSourceSnapshotWith(root, false)
+}
+
+// takeBuildSourceSnapshot includes every regular application file because Go
+// embed patterns may make any of them a compilation input. Output and tool
+// directories remain excluded.
+func takeBuildSourceSnapshot(root string) (sourceSnapshot, error) {
+	return takeSourceSnapshotWith(root, true)
+}
+
+func takeSourceSnapshotWith(root string, includeAll bool) (sourceSnapshot, error) {
 	rootInfo, err := os.Stat(root)
 	if err != nil {
 		return sourceSnapshot{}, fmt.Errorf("inspect source root: %w", err)
@@ -235,13 +244,10 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 	}
 
 	type sourceFile struct {
-		path  string
-		full  string
-		asset bool
+		path string
+		full string
 	}
 	var files []sourceFile
-	assetFiles := 0
-	var assetBytes int64
 	err = filepath.WalkDir(root, func(name string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// A file or directory disappearing during a scan is an ordinary
@@ -270,7 +276,7 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 			}
 			return nil
 		}
-		if !isWatchedSourcePath(relative) {
+		if !includeAll && !isWatchedSourcePath(relative) {
 			return nil
 		}
 		info, err := entry.Info()
@@ -280,21 +286,7 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("source path %s is not a regular file", relative)
 		}
-		isAsset := strings.HasPrefix(relative, assetSourceRoot)
-		if isAsset {
-			assetFiles++
-			if assetFiles > asset.DefaultMaxFiles {
-				return fmt.Errorf("asset source count exceeds limit %d", asset.DefaultMaxFiles)
-			}
-			if info.Size() < 0 || info.Size() > asset.DefaultMaxFileBytes {
-				return fmt.Errorf("asset source %s exceeds per-file limit %d bytes", relative, asset.DefaultMaxFileBytes)
-			}
-			if info.Size() > asset.DefaultMaxTotalBytes-assetBytes {
-				return fmt.Errorf("asset source total exceeds limit %d bytes", asset.DefaultMaxTotalBytes)
-			}
-			assetBytes += info.Size()
-		}
-		files = append(files, sourceFile{path: relative, full: name, asset: isAsset})
+		files = append(files, sourceFile{path: relative, full: name})
 		return nil
 	})
 	if err != nil {
@@ -303,46 +295,30 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 	sort.Slice(files, func(left, right int) bool { return files[left].path < files[right].path })
 
 	digest := sha256.New()
-	var readAssetBytes int64
 	for _, file := range files {
-		content, err := readSourceSnapshotFile(file.full, file.asset)
+		opened, err := os.Open(file.full)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return sourceSnapshot{}, fmt.Errorf("read source %s: %w", file.path, err)
+			return sourceSnapshot{}, fmt.Errorf("open source %s: %w", file.path, err)
 		}
-		if file.asset {
-			if int64(len(content)) > asset.DefaultMaxTotalBytes-readAssetBytes {
-				return sourceSnapshot{}, fmt.Errorf("asset source total exceeds limit %d bytes", asset.DefaultMaxTotalBytes)
-			}
-			readAssetBytes += int64(len(content))
+		info, statErr := opened.Stat()
+		if statErr != nil {
+			_ = opened.Close()
+			return sourceSnapshot{}, fmt.Errorf("inspect source %s: %w", file.path, statErr)
 		}
 		writeSnapshotField(digest, []byte(file.path))
-		writeSnapshotField(digest, content)
+		writeSnapshotSize(digest, info.Size())
+		copied, readErr := io.CopyN(digest, opened, info.Size())
+		closeErr := opened.Close()
+		if readErr != nil || closeErr != nil || copied != info.Size() {
+			return sourceSnapshot{}, fmt.Errorf("read source %s: %w", file.path, errors.Join(readErr, closeErr))
+		}
 	}
 	var snapshot sourceSnapshot
 	copy(snapshot[:], digest.Sum(nil))
 	return snapshot, nil
-}
-
-func readSourceSnapshotFile(name string, isAsset bool) ([]byte, error) {
-	if !isAsset {
-		return os.ReadFile(name)
-	}
-	file, err := os.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	content, readErr := io.ReadAll(io.LimitReader(file, asset.DefaultMaxFileBytes+1))
-	closeErr := file.Close()
-	if readErr != nil || closeErr != nil {
-		return nil, errors.Join(readErr, closeErr)
-	}
-	if int64(len(content)) > asset.DefaultMaxFileBytes {
-		return nil, fmt.Errorf("content exceeds per-file limit %d bytes", asset.DefaultMaxFileBytes)
-	}
-	return content, nil
 }
 
 // waitForChangedSourceSnapshot waits until source differs from previous and
@@ -555,10 +531,14 @@ func isRootSourceFile(relative string) bool {
 }
 
 func writeSnapshotField(digest interface{ Write([]byte) (int, error) }, value []byte) {
-	var size [8]byte
-	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
-	_, _ = digest.Write(size[:])
+	writeSnapshotSize(digest, int64(len(value)))
 	_, _ = digest.Write(value)
+}
+
+func writeSnapshotSize(digest interface{ Write([]byte) (int, error) }, value int64) {
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(value))
+	_, _ = digest.Write(size[:])
 }
 
 func stopAndDrainTimer(timer *time.Timer) {
