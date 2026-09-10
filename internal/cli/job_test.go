@@ -306,6 +306,38 @@ func TestFormatElevenRefusesUserOwnedManifestBeforeWrites(t *testing.T) {
 	}
 }
 
+func TestFormatElevenRefusesUserOwnedManifestPackageBeforeWrites(t *testing.T) {
+	directory := jobProject(t, "11")
+	t.Chdir(directory)
+	packageDirectory := filepath.Dir(filepath.FromSlash(generatedJobManifestPath))
+	if err := os.MkdirAll(packageDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	customPath := filepath.Join(packageDirectory, "custom.go")
+	customSource := []byte("package custommanifest\n\nconst UserOwned = true\n")
+	if err := os.WriteFile(customPath, customSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registryBefore, _ := os.ReadFile(filepath.FromSlash(generatedJobRegistryPath))
+	stateBefore, _ := os.ReadFile(filepath.FromSlash(jobStatePath))
+
+	err := makeJob("ProtectedPackageWork", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "existing directory is not GoForge-generated") {
+		t.Fatalf("user-owned manifest package error = %v", err)
+	}
+	registryAfter, _ := os.ReadFile(filepath.FromSlash(generatedJobRegistryPath))
+	stateAfter, _ := os.ReadFile(filepath.FromSlash(jobStatePath))
+	customAfter, _ := os.ReadFile(customPath)
+	if !bytes.Equal(registryBefore, registryAfter) || !bytes.Equal(stateBefore, stateAfter) || !bytes.Equal(customSource, customAfter) {
+		t.Fatal("manifest package refusal changed generated or user-owned state")
+	}
+	for _, path := range []string{generatedJobManifestPath, "internal/jobs/protected_package_work.go", "internal/jobs/protected_package_work_test.go"} {
+		if _, statErr := os.Stat(filepath.FromSlash(path)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("manifest package refusal wrote %s: %v", path, statErr)
+		}
+	}
+}
+
 func TestFormatsSixThroughTenDoNotGainJobManifest(t *testing.T) {
 	for _, format := range []string{"6", "7", "8", "9", "10"} {
 		t.Run(format, func(t *testing.T) {

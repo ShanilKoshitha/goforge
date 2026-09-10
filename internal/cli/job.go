@@ -104,6 +104,15 @@ func makeJobWithWriters(name string, stdout io.Writer, exclusive jobExclusiveWri
 		if !manifestMissing && !hasGoForgeGeneratedMarker(oldManifest) {
 			return fmt.Errorf("refusing to overwrite %s: existing file is not GoForge-generated", generatedJobManifestPath)
 		}
+		if manifestMissing {
+			entries, readErr := os.ReadDir(filepath.Dir(filepath.FromSlash(generatedJobManifestPath)))
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return fmt.Errorf("inspect generated job manifest package: %w", readErr)
+			}
+			if len(entries) != 0 {
+				return fmt.Errorf("refusing to claim %s: existing directory is not GoForge-generated", filepath.Dir(generatedJobManifestPath))
+			}
+		}
 	}
 	oldState, stateMissing, err := readOptionalGeneratedFile(jobStatePath)
 	if err != nil {
