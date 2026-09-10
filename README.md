@@ -19,8 +19,9 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.15.0 is PostgreSQL-first and accepted against its written unified
-development-workflow scorecard. It includes explicit database wiring,
+GoForge's current v0.16.0 candidate is PostgreSQL-first and is being evaluated
+against its written browser LiveReload scorecard. It includes explicit database
+wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -73,12 +74,17 @@ competing-process row coordination, read-only inspection, and payload-free
 observers.
 Fresh format-11 scaffolds own the schedule registry, PostgreSQL migration,
 isolated configuration, scheduler process, inspection command, and direct Go
-escape hatches. The v0.15.0 source pins the immutable public v0.14.2 runtime
+escape hatches. The v0.16.0 source pins the immutable public v0.14.2 runtime
 and demonstrates its cancellation-aware dynamic schedule factory.
 The v0.14.2 runtime adds cancellation-aware dynamic schedule factories,
 dependency-free validation between generated schedule and worker registries,
 and deterministic password-recovery equalization acceptance without runtime
 discovery.
+The v0.15 CLI composes the watched server, durable worker, and recurring
+scheduler behind one labelled, truthful development lifecycle. The v0.16
+candidate closes the server-rendered browser loop with a randomized same-origin
+client and committed-generation SSE while keeping all reload machinery outside
+generated and production application code.
 
 ## Install and try it
 
@@ -138,7 +144,7 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.15.0 source. Fresh applications
+The command surface below is included in the v0.16.0 source. Fresh applications
 use format 11 and pin the immutable public v0.14.2 runtime.
 
 ```text
@@ -239,9 +245,12 @@ this outer timeout must exceed the longest application shutdown timeout.
 it compiles application-owned views, stages ordinary server binaries outside the
 repository, health-checks them on private loopback addresses, and switches its
 stable public proxy only after success. Invalid view or Go source leaves the
-last-good server reachable and recovers on the next correction. Refresh the
-browser after a successful reload; the proxy does not inject scripts or rewrite
-responses. Promotion proves `/health` liveness, not `/ready` database or
+last-good server reachable and recovers on the next correction. Eligible full
+HTML browser navigations receive one randomized same-origin external client and
+reload automatically only after a replacement is fully committed. The proxy
+preserves application CSP and cookies and leaves compressed, streamed, ranged,
+downloadable, `no-transform`, and non-document responses untouched. Promotion
+proves `/health` liveness, not `/ready` database or
 migration readiness; run `forge migrate` explicitly after SQL changes.
 
 PID-verified candidate promotion is batteries-included on Linux, Windows, and
@@ -252,8 +261,8 @@ use the exact one-shot escape hatch `go run ./cmd/server`.
 `forge test`, `forge build`, and `forge serve` never start external services,
 apply migrations, generate a stale ORM, modify `.env`, or start workers.
 `forge dev` starts only the three application processes; background-process
-source changes require restarting that one command. Browser LiveReload/HMR,
-frontend assets, and environment diagnosis remain separate milestones.
+source changes require restarting that one command. Frontend assets, HMR, and
+environment diagnosis remain separate milestones.
 
 ## Framework packages
 

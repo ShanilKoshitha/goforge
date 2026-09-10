@@ -62,8 +62,11 @@ exit stops its peers, and Ctrl-C waits for the complete owned process tree.
 compiles views with the application's own function map, stages an ordinary Go
 server binary outside the repository, and keeps one public address while it
 watches Go, `.forge.html`, SQL, module, environment, and project-manifest
-inputs. Refresh the browser after a successful reload to see the new rendered
-output.
+inputs. Eligible full HTML browser pages carry a development-only same-origin
+client and reload automatically after a valid replacement is completely
+committed. Failed edits leave the last-good page and server in place. The proxy
+does not rewrite compressed, streamed, ranged, downloadable, `no-transform`,
+or non-document responses.
 
 A broken view or Go edit prints its normal diagnostic while the last-good
 server remains reachable. Correcting the source rebuilds automatically. View
@@ -73,9 +76,11 @@ remains the exact one-shot escape hatch when watching or the development proxy
 does not fit.
 
 `forge dev` does not start Compose/PostgreSQL/Mailpit, apply migrations,
-generate a stale ORM artifact, change `.env`, inject browser reload code, or
-compile frontend assets. Worker and scheduler source or registry changes require
-restarting `forge dev`; the server retains its last-good hot replacement loop.
+generate a stale ORM artifact, change `.env`, or compile frontend assets. Its
+browser reload client exists only at the development proxy; generated source
+and production binaries remain unchanged. Worker and scheduler source or
+registry changes require restarting `forge dev`; the server retains its
+last-good hot replacement loop.
 Candidate promotion checks `/health` liveness;
 `/ready` continues to report PostgreSQL and exact migration readiness. A changed
 migration may therefore leave `/ready` at 503 until you run `forge migrate`.

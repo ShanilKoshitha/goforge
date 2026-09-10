@@ -44,6 +44,29 @@ page reload, not HMR or an asset pipeline.
   compiled-view commit. Failed edits keep the last-good server but require a
   manual browser refresh after the later successful repair.
 
+## Candidate evidence — 2026-09-10
+
+- The complete framework suite passes on the final implementation tree. Focused
+  LiveReload, development-proxy, promotion-supervisor, generated-workflow, and
+  view-engine tests also pass under the race detector; `go vet ./...` and a
+  fresh CLI build pass.
+- Deterministic tests prove exact randomized routing, same-origin external
+  script delivery, monotonic/missed generations, bounded concurrent SSE,
+  idle-deadline recovery, prompt shutdown, strict document eligibility,
+  byte-preserving streamed/trailer/no-transform fallbacks, large buffered Forge
+  views, and unchanged CSP/cookies/status.
+- Supervisor tests prove no notification for initial, failed, unhealthy, stale,
+  crashed, reverted, or failed-commit candidates and exact cleanup, compiled-view
+  commit, then one reload ordering for an accepted promotion.
+- The gated fresh PostgreSQL journey now exercises initial client discovery,
+  valid-edit notification and accepted HTML, invalid-edit silence with the
+  byte-identical last-good page, repair notification, and active-SSE Ctrl-C
+  shutdown. Its two live CI runs remain the release gate.
+- Independent adversarial review initially found transformation opt-out,
+  streaming/trailer, idle deadline, large-view length, and duplicate-marker
+  defects. Each now has a regression test; the final re-review reports no
+  remaining P0, P1, or P2 finding after ten repeated focused race runs and vet.
+
 ## Explicit non-goals
 
 - JavaScript/CSS compilation, bundling, minification, fingerprints, manifests,
