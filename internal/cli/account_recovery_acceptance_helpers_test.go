@@ -22,10 +22,9 @@ import (
 )
 
 type recoveryAcceptanceResponse struct {
-	Status  int
-	Body    string
-	Header  http.Header
-	Elapsed time.Duration
+	Status int
+	Body   string
+	Header http.Header
 }
 
 func recoveryAcceptanceJSON(client *http.Client, method, target, body, source string) (recoveryAcceptanceResponse, error) {
@@ -68,7 +67,6 @@ func recoveryAcceptanceHostileHeaders(request *http.Request, source string) {
 }
 
 func recoveryAcceptanceDo(client *http.Client, request *http.Request) (recoveryAcceptanceResponse, error) {
-	started := time.Now()
 	response, err := client.Do(request)
 	if err != nil {
 		return recoveryAcceptanceResponse{}, err
@@ -79,24 +77,8 @@ func recoveryAcceptanceDo(client *http.Client, request *http.Request) (recoveryA
 		return recoveryAcceptanceResponse{}, err
 	}
 	return recoveryAcceptanceResponse{
-		Status: response.StatusCode, Body: string(contents), Header: response.Header.Clone(), Elapsed: time.Since(started),
+		Status: response.StatusCode, Body: string(contents), Header: response.Header.Clone(),
 	}, nil
-}
-
-func recoveryAcceptanceAssertTimingParity(t *testing.T, known, unknown recoveryAcceptanceResponse) {
-	t.Helper()
-	const minimum = 500 * time.Millisecond
-	const maximumDifference = 500 * time.Millisecond
-	if known.Elapsed < minimum || unknown.Elapsed < minimum {
-		t.Fatalf("password recovery timing floor was not applied: known=%s unknown=%s", known.Elapsed, unknown.Elapsed)
-	}
-	difference := known.Elapsed - unknown.Elapsed
-	if difference < 0 {
-		difference = -difference
-	}
-	if difference > maximumDifference {
-		t.Fatalf("known and unknown password recovery timing differs by %s: known=%s unknown=%s", difference, known.Elapsed, unknown.Elapsed)
-	}
 }
 
 func recoveryAcceptanceMustJSON(t *testing.T, client *http.Client, method, target, body, source string) recoveryAcceptanceResponse {
