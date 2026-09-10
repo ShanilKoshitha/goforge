@@ -1142,11 +1142,13 @@ successful asset replacement emits the same single committed LiveReload
 generation.
 
 Only format-12 projects add the asset root to development snapshots. The
-poller caches bounded file digests by size and modification time, so unchanged
-inventories are not re-read every 100 milliseconds and metadata-only touches do
-not reload. Files beyond the default runtime bounds use a cheap metadata marker;
-the application-owned validator remains authoritative, including when an
-application deliberately raises its visible asset limits.
+poller caches bounded asset digests by size and modification time, so unchanged
+inventories are not re-read every 100 milliseconds. It periodically revalidates
+cached content, while non-asset source is always content-checked, so preserved
+metadata cannot hide an edit forever. Metadata-only touches do not reload. Files
+beyond the default runtime bounds use a cheap metadata marker; the
+application-owned validator remains authoritative whenever a build is attempted,
+including when an application deliberately raises its visible asset limits.
 
 Format-12 applications also own `cmd/assets`, a read-only executable that loads
 the same embedded set. `forge assets:check`, `forge test`, and `forge build`

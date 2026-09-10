@@ -19,6 +19,8 @@ import (
 )
 
 const generatedViewSource = "resources/views/views_gen.go"
+
+const assetSnapshotRevalidationInterval = 5 * time.Second
 const assetSourceRoot = "resources/assets/files/"
 
 const sourceWatchErrorTolerance = 500 * time.Millisecond
@@ -45,16 +47,22 @@ type sourceDigestCacheEntry struct {
 	size     int64
 	modified int64
 	digest   [sha256.Size]byte
+	checked  time.Time
 }
 
 type sourceSnapshotReader struct {
 	includeAssets bool
 	cache         map[string]sourceDigestCacheEntry
 	hashes        int
+	now           func() time.Time
 }
 
 func newSourceSnapshotReader(includeAssets bool) *sourceSnapshotReader {
-	return &sourceSnapshotReader{includeAssets: includeAssets, cache: make(map[string]sourceDigestCacheEntry)}
+	return &sourceSnapshotReader{
+		includeAssets: includeAssets,
+		cache:         make(map[string]sourceDigestCacheEntry),
+		now:           time.Now,
+	}
 }
 
 type sourceGenerationTracker struct {
@@ -273,6 +281,7 @@ func (reader *sourceSnapshotReader) Read(root string) (sourceSnapshot, error) {
 		full         string
 		size         int64
 		modified     int64
+		asset        bool
 		metadataOnly bool
 	}
 	var files []sourceFile
@@ -331,7 +340,7 @@ func (reader *sourceSnapshotReader) Read(root string) (sourceSnapshot, error) {
 		}
 		files = append(files, sourceFile{
 			path: relative, full: name, size: info.Size(), modified: info.ModTime().UnixNano(),
-			metadataOnly: metadataOnly,
+			asset: isAsset, metadataOnly: metadataOnly,
 		})
 		return nil
 	})
@@ -342,16 +351,18 @@ func (reader *sourceSnapshotReader) Read(root string) (sourceSnapshot, error) {
 
 	digest := sha256.New()
 	nextCache := make(map[string]sourceDigestCacheEntry, len(files))
+	now := reader.now()
 	for _, file := range files {
-		entry := sourceDigestCacheEntry{size: file.size, modified: file.modified}
+		entry := sourceDigestCacheEntry{size: file.size, modified: file.modified, checked: now}
 		if file.metadataOnly {
 			metadata := sha256.New()
 			writeSnapshotField(metadata, []byte("asset-metadata-only"))
 			writeSnapshotSize(metadata, file.size)
 			writeSnapshotSize(metadata, file.modified)
 			copy(entry.digest[:], metadata.Sum(nil))
-		} else if cached, ok := reader.cache[file.path]; ok && cached.size == file.size && cached.modified == file.modified {
+		} else if cached, ok := reader.cache[file.path]; file.asset && ok && cached.size == file.size && cached.modified == file.modified && now.Sub(cached.checked) < assetSnapshotRevalidationInterval {
 			entry.digest = cached.digest
+			entry.checked = cached.checked
 		} else {
 			fileDigest, err := hashSourceFile(file.full, file.size)
 			if err != nil {
@@ -363,7 +374,9 @@ func (reader *sourceSnapshotReader) Read(root string) (sourceSnapshot, error) {
 			entry.digest = fileDigest
 			reader.hashes++
 		}
-		nextCache[file.path] = entry
+		if file.asset {
+			nextCache[file.path] = entry
+		}
 		writeSnapshotField(digest, []byte(file.path))
 		writeSnapshotField(digest, entry.digest[:])
 	}

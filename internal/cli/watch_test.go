@@ -158,6 +158,72 @@ func TestSourceSnapshotCachesUnchangedContentAndIgnoresTouches(t *testing.T) {
 	}
 }
 
+func TestSourceSnapshotPeriodicallyRevalidatesPreservedAssetMetadata(t *testing.T) {
+	root := t.TempDir()
+	name := filepath.Join(root, filepath.FromSlash("resources/assets/files/app.css"))
+	writeWatchFile(t, root, "resources/assets/files/app.css", "first")
+	original, err := os.Stat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	reader := newSourceSnapshotReader(true)
+	reader.now = func() time.Time { return now }
+	before, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, []byte("later"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(name, original.ModTime(), original.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	cached, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached != before {
+		t.Fatal("asset cache did not honor its bounded trust interval")
+	}
+	now = now.Add(assetSnapshotRevalidationInterval)
+	after, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Fatal("preserved-metadata asset edit remained invisible after periodic revalidation")
+	}
+}
+
+func TestSourceSnapshotNeverCachesNonAssetContent(t *testing.T) {
+	root := t.TempDir()
+	name := filepath.Join(root, "main.go")
+	writeWatchFile(t, root, "main.go", "first")
+	original, err := os.Stat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := newSourceSnapshotReader(true)
+	before, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, []byte("later"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(name, original.ModTime(), original.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := reader.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Fatal("preserved-metadata source edit was hidden by asset cache")
+	}
+}
+
 func TestLegacySourceSnapshotExcludesFormatTwelveAssetRoot(t *testing.T) {
 	root := t.TempDir()
 	reader := newSourceSnapshotReader(false)
