@@ -454,7 +454,7 @@ func TestDevelopmentSupervisorDoesNotPromoteCandidateThatAlreadyExited(t *testin
 	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot, 2)}
 	initial := newFakeDevelopmentProcess()
 	var starts int
-	var stderr synchronizedBuffer
+	var stdout, stderr synchronizedBuffer
 	proxyReady := make(chan *fakeDevelopmentProxy, 1)
 	dependencies := developmentServeDependencies{
 		snapshot:      source.snapshot,
@@ -480,12 +480,13 @@ func TestDevelopmentSupervisorDoesNotPromoteCandidateThatAlreadyExited(t *testin
 			return proxy, nil
 		},
 		publicAddress: "127.0.0.1:8080",
-		stdout:        io.Discard,
+		stdout:        &stdout,
 		stderr:        &stderr,
 	}
 	result := make(chan error, 1)
 	go func() { result <- superviseDevelopmentServer(ctx, dependencies) }()
 	proxy := <-proxyReady
+	waitForText(t, &stdout, "serving http://127.0.0.1:8080 (watching for changes)")
 	source.change(testSnapshot(2))
 	waitForText(t, &stderr, "candidate crashed")
 	select {
@@ -587,7 +588,7 @@ func TestDevelopmentSupervisorRevertsCandidateExitDuringPromotion(t *testing.T) 
 	candidate := newFakeDevelopmentProcess()
 	candidate.waitErr = errors.New("promotion crash")
 	var starts int
-	var stderr synchronizedBuffer
+	var stdout, stderr synchronizedBuffer
 	proxyReady := make(chan *fakeDevelopmentProxy, 1)
 	dependencies := developmentServeDependencies{
 		snapshot:      source.snapshot,
@@ -617,12 +618,13 @@ func TestDevelopmentSupervisorRevertsCandidateExitDuringPromotion(t *testing.T) 
 			return proxy, nil
 		},
 		publicAddress: "127.0.0.1:8080",
-		stdout:        io.Discard,
+		stdout:        &stdout,
 		stderr:        &stderr,
 	}
 	result := make(chan error, 1)
 	go func() { result <- superviseDevelopmentServer(ctx, dependencies) }()
 	proxy := <-proxyReady
+	waitForText(t, &stdout, "serving http://127.0.0.1:8080 (watching for changes)")
 	source.change(testSnapshot(2))
 	waitForText(t, &stderr, "promotion crash")
 	select {

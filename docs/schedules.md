@@ -228,6 +228,6 @@ This two-stage release prevents `main` from ever generating imports that are
 not available from the scaffold's public module dependency.
 
 The v0.14.2 runtime bridge adds `DynamicContext` without changing project
-format, schema, fingerprints, or legacy callers. The following v0.14.3 CLI
-release pins that immutable runtime from generated applications and moves the
-generated acceptance journey to the cancellation-aware API.
+format, schema, fingerprints, or legacy callers. The v0.14.3 CLI pins that
+immutable runtime from generated applications and moves the generated example
+and acceptance journey to the cancellation-aware API.

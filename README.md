@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.14.2 is PostgreSQL-first and under acceptance against its written
+GoForge v0.14.3 is PostgreSQL-first and accepted against its written
 schedule-integration hardening scorecard. It includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
@@ -71,10 +71,11 @@ IANA civil time and DST behavior, bounded misfire coalescing, conservative
 active-job overlap suppression, fail-closed definition fingerprints,
 competing-process row coordination, read-only inspection, and payload-free
 observers.
-Fresh format-11 scaffolds now own the schedule registry, PostgreSQL migration,
+Fresh format-11 scaffolds own the schedule registry, PostgreSQL migration,
 isolated configuration, scheduler process, inspection command, and direct Go
-escape hatches while pinning the immutable public v0.14.0 runtime.
-The v0.14.2 source adds cancellation-aware dynamic schedule factories,
+escape hatches. The v0.14.3 source pins the immutable public v0.14.2 runtime
+and demonstrates its cancellation-aware dynamic schedule factory.
+The v0.14.2 runtime adds cancellation-aware dynamic schedule factories,
 dependency-free validation between generated schedule and worker registries,
 and deterministic password-recovery equalization acceptance without runtime
 discovery.
@@ -84,7 +85,7 @@ discovery.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.2
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.3
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -139,8 +140,8 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.14.2 CLI. Fresh applications
-use format 11 and pin the immutable public v0.14.0 runtime.
+The command surface below is included in the v0.14.3 CLI. Fresh applications
+use format 11 and pin the immutable public v0.14.2 runtime.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]

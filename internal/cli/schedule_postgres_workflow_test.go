@@ -72,6 +72,21 @@ func TestGeneratedSchedulePostgresWorkflow(t *testing.T) {
 		filepath.Join("internal", "schedules", "registry.go")); err != nil {
 		t.Fatalf("gofmt schedule fixtures: %v\n%s", err, output)
 	}
+	generatedRegistry, err := os.ReadFile(filepath.Join(directory, "internal", "schedules", "registry.go"))
+	if err != nil {
+		t.Fatalf("read generated acceptance schedule registry: %v", err)
+	}
+	for _, want := range []string{
+		"schedule.DynamicContext(func(ctx context.Context, occurrence schedule.Occurrence)",
+		"if err := ctx.Err(); err != nil",
+	} {
+		if !strings.Contains(string(generatedRegistry), want) {
+			t.Errorf("generated acceptance registry omits %q:\n%s", want, generatedRegistry)
+		}
+	}
+	if strings.Contains(string(generatedRegistry), "schedule.Dynamic(") {
+		t.Fatalf("generated acceptance registry retained legacy schedule.Dynamic:\n%s", generatedRegistry)
+	}
 
 	adminDB, err := sql.Open("pgx", databaseURL)
 	if err != nil {
@@ -496,6 +511,7 @@ func TestRecordScheduledEffectHandlerRequiresDependencies(t *testing.T) {
 const scheduleAcceptanceRegistrySource = `package schedules
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -509,7 +525,10 @@ var everyMinute = schedule.MustDefine(
 	"acceptance.every-minute.v1",
 	"* * * * *",
 	jobs.RecordScheduledEffectDefinition,
-	schedule.Dynamic(func(occurrence schedule.Occurrence) (jobs.RecordScheduledEffect, error) {
+	schedule.DynamicContext(func(ctx context.Context, occurrence schedule.Occurrence) (jobs.RecordScheduledEffect, error) {
+		if err := ctx.Err(); err != nil {
+			return jobs.RecordScheduledEffect{}, err
+		}
 		return jobs.RecordScheduledEffect{
 			BusinessKey: "generated-scheduler-current-minute",
 			ScheduledAt: occurrence.ScheduledAt,

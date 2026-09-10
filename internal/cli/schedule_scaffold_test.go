@@ -27,12 +27,12 @@ func TestFormatElevenScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], "version: 11") {
 		t.Fatal("fresh scaffold must declare format 11")
 	}
-	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.14.0") {
+	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.14.2") {
 		t.Fatal("fresh scaffold must pin the public schedule runtime")
 	}
 	for _, checksum := range []string{
-		"github.com/ShanilKoshitha/goforge v0.14.0 h1:Dt5aHth+6iG5ODwUL8mLGL0ye6piP1klyYoGgZ3TE7k=",
-		"github.com/ShanilKoshitha/goforge v0.14.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+		"github.com/ShanilKoshitha/goforge v0.14.2 h1:HIjhuU2nsE17gLc6C537lmILYB5aRkfs2dWlXFEuLYA=",
+		"github.com/ShanilKoshitha/goforge v0.14.2/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 		"github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=",
 		"github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=",
 	} {
@@ -70,6 +70,17 @@ func TestFormatElevenScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 	registry := files["internal/schedules/registry.go"]
 	if !strings.Contains(registry, "reports.daily.v1") || !strings.Contains(registry, "schedule.Register") {
 		t.Fatal("schedule registry must show explicit versioned registration")
+	}
+	for _, want := range []string{
+		"schedule.DynamicContext(func(ctx context.Context, occurrence schedule.Occurrence)",
+		"if err := ctx.Err(); err != nil",
+	} {
+		if !strings.Contains(registry, want) {
+			t.Errorf("schedule registry must demonstrate cancellation-aware payload construction with %q", want)
+		}
+	}
+	if strings.Contains(registry, "schedule.Dynamic(") {
+		t.Fatal("fresh schedule registry example must not use legacy schedule.Dynamic")
 	}
 	if strings.Contains(registry, "init()") || strings.Contains(registry, "reflect.") {
 		t.Fatal("schedule registry must not discover definitions at runtime")

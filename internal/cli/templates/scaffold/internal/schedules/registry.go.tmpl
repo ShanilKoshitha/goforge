@@ -19,12 +19,17 @@ func NewRegistry() (*schedule.Registry, error) {
 }
 
 func registerApplicationSchedules(registry *schedule.Registry) error {
-	// Example after importing [[.Module]]/internal/jobs and defining a typed
-	// job in application code:
+	// Example after importing context and [[.Module]]/internal/jobs, then
+	// defining a typed job in application code:
 	//
 	// dailyReport := schedule.MustDefine(
 	//     "reports.daily.v1", "0 6 * * *", jobs.BuildReportDefinition,
-	//     schedule.Static(jobs.BuildReport{Scope: "all"}),
+	//     schedule.DynamicContext(func(ctx context.Context, occurrence schedule.Occurrence) (jobs.BuildReport, error) {
+	//         if err := ctx.Err(); err != nil {
+	//             return jobs.BuildReport{}, err
+	//         }
+	//         return jobs.BuildReport{Scope: "all"}, nil
+	//     }),
 	//     schedule.TimeZone("America/Halifax"),
 	// )
 	// return schedule.Register(registry, dailyReport)
