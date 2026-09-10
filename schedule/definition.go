@@ -26,7 +26,7 @@ const (
 
 // Factory is an opaque typed schedule payload strategy.
 type Factory[P any] struct {
-	build      func(Occurrence) (P, error)
+	build      func(context.Context, Occurrence) (P, error)
 	strategy   string
 	staticJSON []byte
 	err        error
@@ -51,7 +51,7 @@ func Static[P any](payload P) Factory[P] {
 	return Factory[P]{
 		strategy:   staticPayloadStrategy,
 		staticJSON: bytes,
-		build: func(Occurrence) (P, error) {
+		build: func(_ context.Context, _ Occurrence) (P, error) {
 			var result P
 			if err := json.Unmarshal(bytes, &result); err != nil {
 				return result, fmt.Errorf("decode static payload: %w", err)
@@ -64,6 +64,21 @@ func Static[P any](payload P) Factory[P] {
 // Dynamic binds an occurrence-aware typed payload factory. Its implementation
 // is governed by the schedule's versioned name rather than function identity.
 func Dynamic[P any](factory func(Occurrence) (P, error)) Factory[P] {
+	if factory == nil {
+		return Factory[P]{err: fmt.Errorf("schedule: dynamic payload factory is required")}
+	}
+	return Factory[P]{
+		build: func(_ context.Context, occurrence Occurrence) (P, error) {
+			return factory(occurrence)
+		},
+		strategy: dynamicPayloadStrategy,
+	}
+}
+
+// DynamicContext binds a cancellation-aware occurrence payload factory. Its
+// implementation shares Dynamic's versioned strategy marker, so adopting it
+// does not change an existing schedule definition's fingerprint.
+func DynamicContext[P any](factory func(context.Context, Occurrence) (P, error)) Factory[P] {
 	if factory == nil {
 		return Factory[P]{err: fmt.Errorf("schedule: dynamic payload factory is required")}
 	}
@@ -153,9 +168,15 @@ func Define[P any](name, expression string, target job.Definition[P], factory Fa
 		misfireGrace: settings.misfireGrace, jobName: target.Name(), policy: policy, fingerprint: fingerprint,
 	}
 	definition.materialize = func(ctx context.Context, dispatcher job.Dispatcher, executor job.Executor, occurrence Occurrence) (job.DispatchResult, error) {
-		payload, err := factory.build(occurrence)
+		if err := ctx.Err(); err != nil {
+			return job.DispatchResult{}, err
+		}
+		payload, err := factory.build(ctx, occurrence)
 		if err != nil {
 			return job.DispatchResult{}, fmt.Errorf("schedule: build payload for %s: %w", name, err)
+		}
+		if err := ctx.Err(); err != nil {
+			return job.DispatchResult{}, err
 		}
 		return target.Dispatch(ctx, dispatcher.Using(executor), payload, job.Deduplicate("goforge:schedule:"+name))
 	}

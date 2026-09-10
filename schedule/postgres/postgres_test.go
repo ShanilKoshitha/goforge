@@ -319,6 +319,75 @@ func TestPostgresDurableScheduleWorkflow(t *testing.T) {
 		}
 	})
 
+	t.Run("context-aware factory timeout rolls back and releases lock", func(t *testing.T) {
+		const name = "tests.context-timeout.v1"
+		key := "goforge:schedule:" + name
+		healthy := schedule.MustDefine(
+			name, "* * * * *", target,
+			schedule.DynamicContext(func(context.Context, schedule.Occurrence) (postgresPayload, error) {
+				return postgresPayload{Value: "healthy"}, nil
+			}),
+			schedule.MisfireGrace(15*time.Minute),
+		)
+		newScheduler := func(definition schedule.Definition, timeout time.Duration) *schedule.Scheduler {
+			t.Helper()
+			registry := schedule.NewRegistry()
+			schedule.MustRegister(registry, definition)
+			scheduler, schedulerErr := schedule.NewScheduler(store, registry, dispatcher, schedule.Config{OperationTimeout: timeout})
+			if schedulerErr != nil {
+				t.Fatal(schedulerErr)
+			}
+			return scheduler
+		}
+
+		if _, err := newScheduler(healthy, time.Second).RunOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM "%s" WHERE dedup_key = $1`, jobsTable), key); err != nil {
+			t.Fatal(err)
+		}
+		forceDue(t, ctx, db, schedulesTable, name, 2*time.Minute)
+		before := oneStatus(t, ctx, store, healthy)
+
+		blocking := schedule.MustDefine(
+			name, "* * * * *", target,
+			schedule.DynamicContext(func(factoryContext context.Context, _ schedule.Occurrence) (postgresPayload, error) {
+				<-factoryContext.Done()
+				return postgresPayload{}, factoryContext.Err()
+			}),
+			schedule.MisfireGrace(15*time.Minute),
+		)
+		if blocking.Fingerprint() != healthy.Fingerprint() {
+			t.Fatal("context-aware factory identity changed durable fingerprint")
+		}
+		started := time.Now()
+		_, err := newScheduler(blocking, 100*time.Millisecond).RunOnce(ctx)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("timeout error=%v", err)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("context-aware factory exceeded operation bound: %s", elapsed)
+		}
+		if count := countJobsByKey(t, ctx, db, jobsTable, key); count != 0 {
+			t.Fatalf("timed-out factory retained %d queue rows", count)
+		}
+		after := oneStatus(t, ctx, store, blocking)
+		if !after.NextRunAt.Equal(before.NextRunAt) || after.LastOutcome != before.LastOutcome || after.LastJobID != before.LastJobID {
+			t.Fatalf("timed-out factory advanced durable state: before=%+v after=%+v", before, after)
+		}
+
+		results, err := newScheduler(healthy, time.Second).RunOnce(ctx)
+		if err != nil {
+			t.Fatalf("retry after timeout: %v", err)
+		}
+		if len(results) != 1 || results[0].Outcome != schedule.OutcomeEnqueued {
+			t.Fatalf("retry results=%+v", results)
+		}
+		if count := countJobsByKey(t, ctx, db, jobsTable, key); count != 1 {
+			t.Fatalf("retry after lock release created %d queue rows", count)
+		}
+	})
+
 	t.Run("terminated transaction cannot orphan queue or cursor", func(t *testing.T) {
 		forceDue(t, ctx, db, schedulesTable, everyMinute.Name(), 2*time.Minute)
 		before := oneStatus(t, ctx, store, everyMinute)
