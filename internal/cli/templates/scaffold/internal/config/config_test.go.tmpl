@@ -71,6 +71,8 @@ func TestSchedulerConfigurationIsIsolatedBoundedAndHasOperationalDefaults(t *tes
 	t.Setenv("DATABASE_URL", "postgres://localhost/application")
 	t.Setenv("SESSION_SECRET", "")
 	t.Setenv("MAIL_OUTBOX_KEY", "")
+	t.Setenv("SCHEDULE_POLL_INTERVAL", "")
+	t.Setenv("SCHEDULE_OP_TIMEOUT", "")
 	settings, err := LoadScheduler()
 	if err != nil {
 		t.Fatal(err)

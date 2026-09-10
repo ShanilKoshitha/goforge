@@ -112,7 +112,7 @@ forge test
 forge build
 ```
 
-Both commands support project formats 4 through 8 and accept no arguments. They
+Both commands support project formats 4 through 11 and accept no arguments. They
 first check `internal/models/zz_orm_gen.go` and then
 `resources/views/views_gen.go` without rewriting either file. A missing, stale,
 or invalid artifact stops before tests or compilation and reports the explicit
