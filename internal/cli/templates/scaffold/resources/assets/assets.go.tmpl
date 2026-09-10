@@ -3,6 +3,7 @@ package assets
 
 import (
 	"embed"
+	"fmt"
 	"sync"
 
 	"github.com/ShanilKoshitha/goforge/asset"
@@ -14,6 +15,10 @@ import (
 //
 //go:embed all:files
 var Files embed.FS
+
+// Required lists the logical assets referenced by application-owned views.
+// Keep this explicit list in sync when adding or removing asset calls.
+var Required = [...]string{"app.css", "app.js"}
 
 var (
 	loadOnce sync.Once
@@ -28,6 +33,16 @@ func Load() (*asset.Set, error) {
 			Root:      "files",
 			URLPrefix: "/assets",
 		})
+		if loadErr != nil {
+			return
+		}
+		for _, name := range Required {
+			if _, err := loaded.URL(name); err != nil {
+				loadErr = fmt.Errorf("required application asset %q: %w", name, err)
+				loaded = nil
+				return
+			}
+		}
 	})
 	return loaded, loadErr
 }

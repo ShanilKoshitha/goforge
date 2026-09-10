@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,8 +30,25 @@ func runProjectBuild(
 	stdout, stderr io.Writer,
 	processes processRunner,
 ) error {
+	if err := requireProjectRoot(); err != nil {
+		return err
+	}
+	if err := requireProjectFormatRange(minimumWorkflowFormat, currentProjectFormat); err != nil {
+		return err
+	}
+	baseline, err := takeBuildSourceSnapshot(".")
+	if err != nil {
+		return fmt.Errorf("snapshot application source: %w", err)
+	}
 	if err := checkProjectArtifacts(ctx, stdin, stdout, stderr, processes); err != nil {
 		return err
+	}
+	validated, err := takeBuildSourceSnapshot(".")
+	if err != nil {
+		return fmt.Errorf("snapshot validated application source: %w", err)
+	}
+	if validated != baseline {
+		return errors.New("application source changed during build validation; retry the build")
 	}
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		return fmt.Errorf("create build output directory: %w", err)
@@ -59,6 +77,13 @@ func runProjectBuild(
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	compiled, err := takeBuildSourceSnapshot(".")
+	if err != nil {
+		return fmt.Errorf("snapshot compiled application source: %w", err)
+	}
+	if compiled != baseline {
+		return errors.New("application source changed during compilation; build was not published")
 	}
 	info, err := os.Stat(temporaryPath)
 	if err != nil {

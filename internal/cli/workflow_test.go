@@ -204,6 +204,44 @@ func TestForgeBuildFailurePreservesLastGoodArtifact(t *testing.T) {
 	assertNoTemporaryBuilds(t)
 }
 
+func TestForgeBuildRejectsSourceChangesBeforePublication(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		callIndex int
+		want      string
+	}{
+		{name: "after validation", callIndex: 1, want: "changed during build validation"},
+		{name: "during compilation", callIndex: 2, want: "changed during compilation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := workflowProject(t)
+			t.Chdir(directory)
+			destination := workflowBuildDestination()
+			if err := os.MkdirAll("bin", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(destination, []byte("last good"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			process := &workflowProcess{
+				afterRun: map[int]func(){test.callIndex: func() {
+					if err := os.WriteFile(filepath.FromSlash("resources/assets/files/unsafe.svg"), []byte("<svg/>"), 0o644); err != nil {
+						t.Error(err)
+					}
+				}},
+				buildContent: []byte("invalid generation"),
+			}
+
+			err := run(context.Background(), []string{"build"}, nil, io.Discard, io.Discard, process)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("source mutation error = %v", err)
+			}
+			assertFileContent(t, destination, "last good")
+			assertNoTemporaryBuilds(t)
+		})
+	}
+}
+
 func TestForgeBuildSuccessWithoutArtifactPreservesLastGoodArtifact(t *testing.T) {
 	directory := workflowProject(t)
 	t.Chdir(directory)

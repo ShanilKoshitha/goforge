@@ -149,6 +149,31 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err := Run([]string{"assets:check"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold assets are invalid: %v\n%s", err, checkOutput.String())
 	}
+	if err := Run([]string{"build"}, &checkOutput, &checkOutput); err != nil {
+		t.Fatalf("fresh scaffold cannot publish its production binary: %v\n%s", err, checkOutput.String())
+	}
+	buildPath := workflowBuildDestination()
+	lastGoodBuild, err := os.ReadFile(buildPath)
+	if err != nil {
+		t.Fatalf("read production binary: %v", err)
+	}
+	cssPath := filepath.Join("resources", "assets", "files", "app.css")
+	css, err := os.ReadFile(cssPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cssPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run([]string{"build"}, &checkOutput, &checkOutput); err == nil || !strings.Contains(err.Error(), "required application asset") {
+		t.Fatalf("build accepted a missing template asset: %v\n%s", err, checkOutput.String())
+	}
+	if current, err := os.ReadFile(buildPath); err != nil || !bytes.Equal(current, lastGoodBuild) {
+		t.Fatalf("failed asset build replaced last-good binary: %v", err)
+	}
+	if err := os.WriteFile(cssPath, css, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := Run([]string{"make:job", "SendWelcome"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold cannot generate a job: %v\n%s", err, checkOutput.String())
 	}
