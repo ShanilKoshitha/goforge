@@ -67,6 +67,25 @@ func TestBackgroundConfigurationDoesNotRequireHTTPSessionSecret(t *testing.T) {
 	}
 }
 
+func TestSchedulerConfigurationIsIsolatedBoundedAndHasOperationalDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/application")
+	t.Setenv("SESSION_SECRET", "")
+	t.Setenv("MAIL_OUTBOX_KEY", "")
+	settings, err := LoadScheduler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.SchedulePollInterval != 15*time.Second || settings.ScheduleOperationTimeout != 5*time.Second {
+		t.Fatalf("unexpected scheduler defaults: %+v", settings)
+	}
+
+	t.Setenv("SCHEDULE_POLL_INTERVAL", "500ms")
+	t.Setenv("SCHEDULE_OP_TIMEOUT", "2m")
+	if _, err := LoadScheduler(); err == nil || !strings.Contains(err.Error(), "SCHEDULE_POLL_INTERVAL") || !strings.Contains(err.Error(), "SCHEDULE_OP_TIMEOUT") {
+		t.Fatalf("invalid scheduler bounds were not accumulated: %v", err)
+	}
+}
+
 func TestRecoveryConfigurationRejectsUnsafeOriginsAndInvalidKeys(t *testing.T) {
 	setValidRecoveryConfiguration(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/application")

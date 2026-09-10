@@ -9,14 +9,19 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"text/tabwriter"
+	"time"
 
 	"github.com/ShanilKoshitha/goforge/database/migrate"
 	"github.com/ShanilKoshitha/goforge/job"
 	jobpostgres "github.com/ShanilKoshitha/goforge/job/postgres"
+	"github.com/ShanilKoshitha/goforge/schedule"
+	schedulepostgres "github.com/ShanilKoshitha/goforge/schedule/postgres"
 
 	"[[.Module]]/database/migrations"
 	"[[.Module]]/internal/config"
 	appdatabase "[[.Module]]/internal/database"
+	"[[.Module]]/internal/schedules"
 )
 
 func main() {
@@ -28,7 +33,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: go run ./cmd/console <migrate|queue:failed|queue:retry|queue:forget>")
+		return errors.New("usage: go run ./cmd/console <migrate|queue:failed|queue:retry|queue:forget|schedule:list>")
 	}
 	settings, err := config.LoadDatabase()
 	if err != nil {
@@ -65,9 +70,58 @@ func run(args []string) error {
 			return fmt.Errorf("build job store: %w", err)
 		}
 		return runQueueCommand(ctx, store, args)
+	case "schedule:list":
+		if len(args) != 1 {
+			return errors.New("usage: go run ./cmd/console schedule:list")
+		}
+		registry, err := schedules.NewRegistry()
+		if err != nil {
+			return fmt.Errorf("build schedule registry: %w", err)
+		}
+		store, err := schedulepostgres.New(db)
+		if err != nil {
+			return fmt.Errorf("build schedule store: %w", err)
+		}
+		return listSchedules(ctx, store, registry.Definitions())
 	default:
 		return fmt.Errorf("unknown console command %q", args[0])
 	}
+}
+
+func listSchedules(ctx context.Context, store schedule.Store, definitions []schedule.Definition) error {
+	statuses, err := store.List(ctx, definitions)
+	if err != nil {
+		return err
+	}
+	if len(statuses) == 0 {
+		fmt.Println("No schedules registered.")
+		return nil
+	}
+	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	defer writer.Flush()
+	fmt.Fprintln(writer, "NAME\tCRON\tTIMEZONE\tJOB\tQUEUE\tNEXT RUN\tLAST OUTCOME\tLAST JOB\tFINGERPRINT")
+	for _, status := range statuses {
+		lastOutcome := "-"
+		if status.LastOutcome != "" {
+			lastOutcome = string(status.LastOutcome)
+		}
+		lastJob := "-"
+		if status.LastJobID != "" {
+			lastJob = string(status.LastJobID)
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			status.Name, status.Expression, status.TimeZone, status.JobName, status.Queue,
+			formatScheduleTime(status.NextRunAt), lastOutcome, lastJob, status.Fingerprint,
+		)
+	}
+	return nil
+}
+
+func formatScheduleTime(value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 func runQueueCommand(ctx context.Context, store job.AdminStore, args []string) error {

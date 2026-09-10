@@ -33,8 +33,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
 		t.Fatal("project name must be quoted YAML")
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 10") {
-		t.Fatal("fresh scaffold must declare format 10")
+	if !strings.Contains(files["forge.yaml"], "version: 11") {
+		t.Fatal("fresh scaffold must declare format 11")
 	}
 	if !strings.Contains(files["resources/views/pages/welcome.forge.html"], "{{.Title}}") {
 		t.Fatal("HTML template expression was altered")
@@ -43,8 +43,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		t.Fatal("local replacement path must be quoted")
 	}
 	for _, checksum := range []string{
-		"github.com/ShanilKoshitha/goforge v0.13.0 h1:ky4g5QeWdG2M3rZdeYd7pkD+8Cz1dVHHWlqewm/SMcw=",
-		"github.com/ShanilKoshitha/goforge v0.13.0/go.mod h1:o585rLjoR42pVE79JjdmwrIvum0C5QRRilYqZAJcAkM=",
+		"github.com/ShanilKoshitha/goforge v0.14.0 h1:Dt5aHth+6iG5ODwUL8mLGL0ye6piP1klyYoGgZ3TE7k=",
+		"github.com/ShanilKoshitha/goforge v0.14.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 	} {
 		if !strings.Contains(files["go.sum"], checksum) {
 			t.Errorf("generated go.sum omits released framework checksum %q", checksum)

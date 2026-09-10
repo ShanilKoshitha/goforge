@@ -1,0 +1,113 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/ShanilKoshitha/goforge/job"
+	jobpostgres "github.com/ShanilKoshitha/goforge/job/postgres"
+	"github.com/ShanilKoshitha/goforge/schedule"
+	schedulepostgres "github.com/ShanilKoshitha/goforge/schedule/postgres"
+
+	"[[.Module]]/internal/config"
+	appdatabase "[[.Module]]/internal/database"
+	"[[.Module]]/internal/schedules"
+)
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
+		slog.Error("scheduler stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	once, err := parseMode(args)
+	if err != nil {
+		return err
+	}
+	settings, err := config.LoadScheduler()
+	if err != nil {
+		return fmt.Errorf("load configuration: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	db, err := appdatabase.Open(ctx, settings.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	// The scheduler holds one short transaction per definition. This conservative
+	// default leaves bookkeeping capacity while remaining application-owned.
+	db.SetMaxOpenConns(6)
+	queueStore, err := jobpostgres.New(db)
+	if err != nil {
+		return fmt.Errorf("build job store: %w", err)
+	}
+	dispatcher, err := job.NewDispatcher(queueStore, db, job.DispatcherConfig{
+		Observer: job.SlogObserver(slog.Default()),
+	})
+	if err != nil {
+		return fmt.Errorf("build job dispatcher: %w", err)
+	}
+	store, err := schedulepostgres.New(db)
+	if err != nil {
+		return fmt.Errorf("build schedule store: %w", err)
+	}
+	registry, err := schedules.NewRegistry()
+	if err != nil {
+		return fmt.Errorf("build schedule registry: %w", err)
+	}
+	runner, err := schedule.NewScheduler(store, registry, dispatcher, schedule.Config{
+		PollInterval:     settings.SchedulePollInterval,
+		OperationTimeout: settings.ScheduleOperationTimeout,
+		Observer:         schedule.SlogObserver(slog.Default()),
+	})
+	if err != nil {
+		return fmt.Errorf("build scheduler: %w", err)
+	}
+	mode := "work"
+	if once {
+		mode = "once"
+	}
+	slog.Info("scheduler started", "event", "scheduler_started", "mode", mode, "schedules", len(registry.Definitions()))
+	if !once {
+		return runner.Run(ctx)
+	}
+	results, err := runner.RunOnce(ctx)
+	if err != nil {
+		return err
+	}
+	if len(results) == 0 {
+		fmt.Println("No schedules due.")
+		return nil
+	}
+	for _, result := range results {
+		scheduledAt := "-"
+		if !result.ScheduledAt.IsZero() {
+			scheduledAt = result.ScheduledAt.Format("2006-01-02T15:04:05Z07:00")
+		}
+		jobID := "-"
+		if result.JobID != "" {
+			jobID = string(result.JobID)
+		}
+		fmt.Printf("%s\t%s\t%s\t%s\n", result.Name, result.Outcome, scheduledAt, jobID)
+	}
+	return nil
+}
+
+func parseMode(args []string) (bool, error) {
+	switch {
+	case len(args) == 0:
+		return false, nil
+	case len(args) == 1 && args[0] == "--once":
+		return true, nil
+	default:
+		return false, errors.New("usage: go run ./cmd/scheduler [--once]")
+	}
+}
