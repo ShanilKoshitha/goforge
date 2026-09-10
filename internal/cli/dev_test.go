@@ -266,6 +266,40 @@ func TestDevStartupFailureCancelsAndWaitsForSiblings(t *testing.T) {
 	}
 }
 
+func TestDevDoesNotReportReadyAfterMarkedServiceAlreadyExited(t *testing.T) {
+	process := &developmentProcessStub{}
+	process.run = func(ctx context.Context, _ io.Reader, _ io.Writer, stderr io.Writer, _ string, args ...string) error {
+		switch strings.Join(args, " ") {
+		case "run ./cmd/worker":
+			_, _ = io.WriteString(stderr, "event=worker_started\n")
+			return errors.New("worker exited after its startup marker")
+		case "run ./cmd/scheduler":
+			<-ctx.Done()
+			_, _ = io.WriteString(stderr, "event=scheduler_started\n")
+			return ctx.Err()
+		default:
+			return errors.New("unexpected process")
+		}
+	}
+	stdout := &developmentTestBuffer{}
+	serve := func(ctx context.Context, _ io.Reader, serviceStdout, _ io.Writer, _ processRunner) error {
+		<-ctx.Done()
+		_, _ = io.WriteString(serviceStdout, "serving http://127.0.0.1:8080\n")
+		return nil
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- superviseDevelopmentServices(context.Background(), nil, stdout, io.Discard, process, serve)
+	}()
+	err := waitForDevelopmentResult(t, result)
+	if err == nil || !strings.Contains(err.Error(), "before all services were ready") {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.Contains(stdout.String(), developmentReadyMessage) {
+		t.Fatalf("reported ready after a service exited:\n%s", stdout.String())
+	}
+}
+
 func TestDevSteadyStateExitCancelsSiblingsAndPreservesCause(t *testing.T) {
 	want := errors.New("worker stopped")
 	releaseWorker := make(chan struct{})

@@ -36,6 +36,7 @@ func (output *synchronizedDevelopmentOutput) write(destination io.Writer, value 
 type developmentReadiness struct {
 	mu       sync.Mutex
 	ready    map[string]bool
+	stopped  map[string]bool
 	output   *synchronizedDevelopmentOutput
 	stdout   io.Writer
 	complete bool
@@ -43,16 +44,17 @@ type developmentReadiness struct {
 
 func newDevelopmentReadiness(output *synchronizedDevelopmentOutput, stdout io.Writer) *developmentReadiness {
 	return &developmentReadiness{
-		ready:  make(map[string]bool, 3),
-		output: output,
-		stdout: stdout,
+		ready:   make(map[string]bool, 3),
+		stopped: make(map[string]bool, 3),
+		output:  output,
+		stdout:  stdout,
 	}
 }
 
 func (readiness *developmentReadiness) mark(name string) {
 	readiness.mu.Lock()
 	defer readiness.mu.Unlock()
-	if readiness.ready[name] || readiness.complete {
+	if readiness.ready[name] || len(readiness.stopped) != 0 || readiness.complete {
 		return
 	}
 	readiness.ready[name] = true
@@ -61,6 +63,12 @@ func (readiness *developmentReadiness) mark(name string) {
 	}
 	readiness.complete = true
 	_, _ = readiness.output.write(readiness.stdout, []byte(developmentReadyMessage))
+}
+
+func (readiness *developmentReadiness) stop(name string) {
+	readiness.mu.Lock()
+	defer readiness.mu.Unlock()
+	readiness.stopped[name] = true
 }
 
 func (readiness *developmentReadiness) isComplete() bool {
@@ -225,6 +233,7 @@ func superviseDevelopmentServices(
 			serviceStdout := newDevelopmentLineWriter(service.name, service.marker, output, stdout, readiness)
 			serviceStderr := newDevelopmentLineWriter(service.name, service.marker, output, stderr, readiness)
 			err := service.run(childContext, serviceStdout, serviceStderr)
+			readiness.stop(service.name)
 			err = errors.Join(err, serviceStdout.Flush(), serviceStderr.Flush())
 			results <- developmentServiceResult{name: service.name, err: err}
 		}()
