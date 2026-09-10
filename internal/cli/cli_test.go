@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.14.1\n" {
+	if output.String() != "forge 0.14.2\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }

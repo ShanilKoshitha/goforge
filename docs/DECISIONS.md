@@ -1011,13 +1011,14 @@ absent accounts. Relaxing the old timing threshold or repeatedly sampling CI
 latency is not accepted evidence of enumeration resistance.
 
 Publication remains compile-safe. v0.14.2 publishes the backward-compatible
-runtime factory seam and deterministic acceptance first. v0.14.3 then pins that
-immutable module from fresh format-11 applications, uses `DynamicContext` in
-the generated journey, and activates dependency-free target validation. Neither
-stage changes project format or database schema.
+runtime factory seam, deterministic recovery acceptance, and dependency-free
+target-name validation, which uses APIs already present in the scaffold's
+v0.14.0 dependency. v0.14.3 then pins the immutable v0.14.2 module from fresh
+format-11 applications and uses `DynamicContext` in the generated journey.
+Neither stage changes project format or database schema.
 
 Reason: an operation timeout that application code cannot observe, a schedule
-target absent from generated worker wiring, and a flaky security stopwatch all weaken the
-north-star promise of production-shaped defaults. Explicit typed context,
-generated metadata, and deterministic invariants close those gaps without
-runtime magic or hidden state.
+target absent from generated worker wiring, and a flaky security stopwatch all
+weaken the north-star promise of production-shaped defaults. Explicit typed
+context, generated metadata, and deterministic invariants close those gaps
+without runtime magic or hidden state.

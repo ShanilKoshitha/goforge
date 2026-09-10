@@ -7,16 +7,16 @@ Target:
 > From a fresh format-11 application, bind a scheduled job through an explicit
 > worker registration contract, run an occurrence-aware payload factory that
 > cooperates with the scheduler operation deadline, and fail at startup before
-> dispatch when the target name is absent from generated worker wiring. Preserve the existing
-> durable cursor and public APIs, and prove password-recovery response
+> dispatch when the target name is absent from generated worker wiring.
+> Preserve the existing durable cursor and public APIs, and prove password-recovery response
 > equalization through deterministic control-flow invariants rather than noisy
 > sequential wall-clock comparisons.
 
 The release remains staged. v0.14.2 publishes the backward-compatible runtime
-factory seam and deterministic security acceptance. v0.14.3 then pins that
-immutable runtime from the generated format-11 application and activates the
-generated startup contract. No project-format or database migration boundary
-changes.
+factory seam, deterministic security acceptance, and generated target-name
+validation that compiles against v0.14.0. v0.14.3 then pins the immutable new
+runtime from generated format-11 applications and adopts `DynamicContext` in
+their schedule journey. No project-format or database migration boundary changes.
 
 ## Acceptance criteria
 

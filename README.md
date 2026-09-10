@@ -19,8 +19,8 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.14.1 is PostgreSQL-first and under acceptance against its written
-recurring-schedule milestone scorecard. It includes explicit database wiring,
+GoForge v0.14.2 is PostgreSQL-first and under acceptance against its written
+schedule-integration hardening scorecard. It includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -74,13 +74,17 @@ observers.
 Fresh format-11 scaffolds now own the schedule registry, PostgreSQL migration,
 isolated configuration, scheduler process, inspection command, and direct Go
 escape hatches while pinning the immutable public v0.14.0 runtime.
+The v0.14.2 source adds cancellation-aware dynamic schedule factories,
+dependency-free validation between generated schedule and worker registries,
+and deterministic password-recovery equalization acceptance without runtime
+discovery.
 
 ## Install and try it
 
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.1
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.14.2
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -135,7 +139,7 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.14.1 CLI. Fresh applications
+The command surface below is included in the v0.14.2 CLI. Fresh applications
 use format 11 and pin the immutable public v0.14.0 runtime.
 
 ```text
