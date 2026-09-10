@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ShanilKoshitha/goforge/asset"
 )
 
 type sourceWatchResult struct {
@@ -74,6 +76,28 @@ func TestSourceSnapshotExcludesGeneratedAndIgnoredDirectories(t *testing.T) {
 	writeWatchFile(t, root, "resources/views/other.go", "package views")
 	if current := mustSourceSnapshot(t, root); current == baseline {
 		t.Fatal("neighboring Go source was excluded with generated artifact")
+	}
+}
+
+func TestSourceSnapshotBoundsAssetInputsBeforeReading(t *testing.T) {
+	root := t.TempDir()
+	name := filepath.Join(root, filepath.FromSlash("resources/assets/files/oversized.css"))
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(asset.DefaultMaxFileBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := takeSourceSnapshot(root); err == nil || !strings.Contains(err.Error(), "per-file limit") {
+		t.Fatalf("oversized asset snapshot error = %v", err)
 	}
 }
 

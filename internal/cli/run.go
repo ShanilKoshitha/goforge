@@ -194,7 +194,7 @@ default; append :nullable to allow null. Without --field, resources retain the
 legacy name:string and versionless-update contract. Any explicit --field uses
 schema-driven output and requires a positive version on updates.
 
-Format-10 and format-11 projects may add repeatable required relationships with
+Format-10 through format-12 projects may add repeatable required relationships with
 --belongs-to <name>:<ExistingResource>. The target must already be a generated
 resource. Relationship IDs remain explicit, owner-scoped, and database-backed.
 

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ShanilKoshitha/goforge/asset"
 )
 
 const generatedViewSource = "resources/views/views_gen.go"
@@ -232,10 +235,13 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 	}
 
 	type sourceFile struct {
-		path string
-		full string
+		path  string
+		full  string
+		asset bool
 	}
 	var files []sourceFile
+	assetFiles := 0
+	var assetBytes int64
 	err = filepath.WalkDir(root, func(name string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// A file or directory disappearing during a scan is an ordinary
@@ -274,7 +280,21 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("source path %s is not a regular file", relative)
 		}
-		files = append(files, sourceFile{path: relative, full: name})
+		isAsset := strings.HasPrefix(relative, assetSourceRoot)
+		if isAsset {
+			assetFiles++
+			if assetFiles > asset.DefaultMaxFiles {
+				return fmt.Errorf("asset source count exceeds limit %d", asset.DefaultMaxFiles)
+			}
+			if info.Size() < 0 || info.Size() > asset.DefaultMaxFileBytes {
+				return fmt.Errorf("asset source %s exceeds per-file limit %d bytes", relative, asset.DefaultMaxFileBytes)
+			}
+			if info.Size() > asset.DefaultMaxTotalBytes-assetBytes {
+				return fmt.Errorf("asset source total exceeds limit %d bytes", asset.DefaultMaxTotalBytes)
+			}
+			assetBytes += info.Size()
+		}
+		files = append(files, sourceFile{path: relative, full: name, asset: isAsset})
 		return nil
 	})
 	if err != nil {
@@ -283,13 +303,20 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 	sort.Slice(files, func(left, right int) bool { return files[left].path < files[right].path })
 
 	digest := sha256.New()
+	var readAssetBytes int64
 	for _, file := range files {
-		content, err := os.ReadFile(file.full)
+		content, err := readSourceSnapshotFile(file.full, file.asset)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			return sourceSnapshot{}, fmt.Errorf("read source %s: %w", file.path, err)
+		}
+		if file.asset {
+			if int64(len(content)) > asset.DefaultMaxTotalBytes-readAssetBytes {
+				return sourceSnapshot{}, fmt.Errorf("asset source total exceeds limit %d bytes", asset.DefaultMaxTotalBytes)
+			}
+			readAssetBytes += int64(len(content))
 		}
 		writeSnapshotField(digest, []byte(file.path))
 		writeSnapshotField(digest, content)
@@ -297,6 +324,25 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 	var snapshot sourceSnapshot
 	copy(snapshot[:], digest.Sum(nil))
 	return snapshot, nil
+}
+
+func readSourceSnapshotFile(name string, isAsset bool) ([]byte, error) {
+	if !isAsset {
+		return os.ReadFile(name)
+	}
+	file, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	content, readErr := io.ReadAll(io.LimitReader(file, asset.DefaultMaxFileBytes+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil {
+		return nil, errors.Join(readErr, closeErr)
+	}
+	if int64(len(content)) > asset.DefaultMaxFileBytes {
+		return nil, fmt.Errorf("content exceeds per-file limit %d bytes", asset.DefaultMaxFileBytes)
+	}
+	return content, nil
 }
 
 // waitForChangedSourceSnapshot waits until source differs from previous and
