@@ -46,11 +46,12 @@ type fakeDevelopmentProxy struct {
 	address string
 	done    chan error
 
-	mu      sync.Mutex
-	targets []string
-	reloads int
-	closed  bool
-	onSwap  func(*url.URL)
+	mu       sync.Mutex
+	targets  []string
+	reloads  int
+	closed   bool
+	onSwap   func(*url.URL)
+	onReload func()
 }
 
 func newFakeDevelopmentProxy(address string, target *url.URL) *fakeDevelopmentProxy {
@@ -72,7 +73,11 @@ func (proxy *fakeDevelopmentProxy) SwapTarget(target *url.URL) error {
 func (proxy *fakeDevelopmentProxy) NotifyReload() {
 	proxy.mu.Lock()
 	proxy.reloads++
+	hook := proxy.onReload
 	proxy.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 }
 func (proxy *fakeDevelopmentProxy) Close(context.Context) error {
 	proxy.mu.Lock()
@@ -161,6 +166,8 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 	processes := make(map[string]*fakeDevelopmentProcess)
 	var processMu sync.Mutex
 	removed := make(chan string, 8)
+	var promotionMu sync.Mutex
+	var promotionEvents []string
 	var stdout, stderr synchronizedBuffer
 	proxyReady := make(chan *fakeDevelopmentProxy, 1)
 
@@ -178,9 +185,26 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 			if count == 2 {
 				return nil, errors.New("broken Go source")
 			}
-			return testDevelopmentBuild(string(rune('a' + count - 1))), nil
+			build := testDevelopmentBuild(string(rune('a' + count - 1)))
+			if count == 3 {
+				build.finalize = func() error {
+					promotionMu.Lock()
+					promotionEvents = append(promotionEvents, "commit:c")
+					promotionMu.Unlock()
+					return nil
+				}
+			}
+			return build, nil
 		},
-		removeBinary: func(path string) error { removed <- path; return nil },
+		removeBinary: func(path string) error {
+			if path == "a" {
+				promotionMu.Lock()
+				promotionEvents = append(promotionEvents, "cleanup:a")
+				promotionMu.Unlock()
+			}
+			removed <- path
+			return nil
+		},
 		start: func(_ context.Context, binary string) (*developmentCandidate, error) {
 			process := newFakeDevelopmentProcess()
 			processMu.Lock()
@@ -194,6 +218,11 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 		},
 		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
 			proxy := newFakeDevelopmentProxy(address, target)
+			proxy.onReload = func() {
+				promotionMu.Lock()
+				promotionEvents = append(promotionEvents, "reload")
+				promotionMu.Unlock()
+			}
 			proxyReady <- proxy
 			return proxy, nil
 		},
@@ -209,6 +238,12 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 		t.Fatalf("initial build = %d", count)
 	}
 	waitForText(t, &stdout, "serving http://127.0.0.1:8080 (watching for changes)")
+	proxy.mu.Lock()
+	initialReloads := proxy.reloads
+	proxy.mu.Unlock()
+	if initialReloads != 0 {
+		t.Fatalf("initial startup emitted %d reloads", initialReloads)
+	}
 
 	source.change(testSnapshot(2))
 	if count := <-builds; count != 2 {
@@ -250,6 +285,12 @@ func TestDevelopmentSupervisorKeepsLastGoodOnFailureAndRecovers(t *testing.T) {
 		t.Fatalf("successful recovery reloads = %d, want 1", proxy.reloads)
 	}
 	proxy.mu.Unlock()
+	promotionMu.Lock()
+	gotPromotionEvents := append([]string(nil), promotionEvents...)
+	promotionMu.Unlock()
+	if want := []string{"cleanup:a", "commit:c", "reload"}; !reflect.DeepEqual(gotPromotionEvents, want) {
+		t.Fatalf("promotion events = %v, want %v", gotPromotionEvents, want)
+	}
 
 	cancel()
 	select {
@@ -278,9 +319,11 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 	releaseSecond := make(chan struct{})
 	promoted := make(chan struct{}, 2)
 	removed := make(chan string, 8)
+	staleReloads := make(chan int, 1)
 	var buildCount int
 	var buildMu sync.Mutex
 	proxyReady := make(chan *fakeDevelopmentProxy, 1)
+	var startedProxy *fakeDevelopmentProxy
 	dependencies := developmentServeDependencies{
 		snapshot:      source.snapshot,
 		waitForChange: source.wait,
@@ -297,7 +340,15 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 			}
 			return testDevelopmentBuild(string(rune('0' + count))), nil
 		},
-		removeBinary: func(path string) error { removed <- path; return nil },
+		removeBinary: func(path string) error {
+			if path == "2" {
+				startedProxy.mu.Lock()
+				staleReloads <- startedProxy.reloads
+				startedProxy.mu.Unlock()
+			}
+			removed <- path
+			return nil
+		},
 		start: func(_ context.Context, binary string) (*developmentCandidate, error) {
 			return &developmentCandidate{
 				process: newFakeDevelopmentProcess(),
@@ -307,6 +358,7 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 		},
 		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
 			proxy := newFakeDevelopmentProxy(address, target)
+			startedProxy = proxy
 			proxyReady <- proxy
 			return proxy, nil
 		},
@@ -343,9 +395,15 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 		t.Fatalf("build count = %d, want initial + stale + newest", buildCount)
 	}
 	buildMu.Unlock()
+	if got := <-staleReloads; got != 0 {
+		t.Fatalf("stale build emitted %d reloads", got)
+	}
 	proxy.mu.Lock()
 	if got, want := proxy.targets, []string{"http://candidate-1", "http://candidate-3"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("targets = %v, want %v", got, want)
+	}
+	if proxy.reloads != 1 {
+		t.Fatalf("committed newest build reloads = %d, want 1", proxy.reloads)
 	}
 	proxy.mu.Unlock()
 	select {
@@ -404,18 +462,26 @@ func TestDevelopmentSupervisorRebuildsEditDuringInitialProxyStartup(t *testing.T
 	second := <-proxyReady
 	first.mu.Lock()
 	firstClosed := first.closed
+	firstReloads := first.reloads
 	first.mu.Unlock()
 	if !firstClosed {
 		t.Fatal("stale initial proxy was not closed")
 	}
+	if firstReloads != 0 {
+		t.Fatalf("stale initial startup emitted %d reloads", firstReloads)
+	}
 	second.mu.Lock()
 	gotTargets := append([]string(nil), second.targets...)
+	secondReloads := second.reloads
 	second.mu.Unlock()
 	if want := []string{"http://server-2"}; !reflect.DeepEqual(gotTargets, want) {
 		t.Fatalf("replacement proxy targets = %v, want %v", gotTargets, want)
 	}
 	if buildCount != 2 {
 		t.Fatalf("build count = %d, want stale plus current", buildCount)
+	}
+	if secondReloads != 0 {
+		t.Fatalf("accepted initial startup emitted %d reloads", secondReloads)
 	}
 	cancel()
 	if err := <-result; !errors.Is(err, context.Canceled) {
@@ -510,9 +576,78 @@ func TestDevelopmentSupervisorDoesNotPromoteCandidateThatAlreadyExited(t *testin
 	if len(proxy.targets) != 1 {
 		t.Fatalf("failed candidate was promoted: %v", proxy.targets)
 	}
+	if proxy.reloads != 0 {
+		t.Fatalf("crashed candidate emitted %d reloads", proxy.reloads)
+	}
 	proxy.mu.Unlock()
 	cancel()
 	<-result
+}
+
+func TestDevelopmentSupervisorDoesNotReloadUnhealthyCandidate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot, 2)}
+	initial := newFakeDevelopmentProcess()
+	var starts int
+	var stdout, stderr synchronizedBuffer
+	proxyReady := make(chan *fakeDevelopmentProxy, 1)
+	dependencies := developmentServeDependencies{
+		snapshot:      source.snapshot,
+		waitForChange: source.wait,
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build: func(context.Context) (*developmentBuild, error) {
+			return testDevelopmentBuild("server"), nil
+		},
+		removeBinary: func(string) error { return nil },
+		start: func(context.Context, string) (*developmentCandidate, error) {
+			starts++
+			if starts == 2 {
+				return nil, errors.New("candidate failed health check")
+			}
+			return &developmentCandidate{
+				process: initial,
+				target:  &url.URL{Scheme: "http", Host: "candidate"},
+				binary:  "server",
+			}, nil
+		},
+		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
+			proxy := newFakeDevelopmentProxy(address, target)
+			proxyReady <- proxy
+			return proxy, nil
+		},
+		publicAddress: "127.0.0.1:8080",
+		stdout:        &stdout,
+		stderr:        &stderr,
+	}
+	result := make(chan error, 1)
+	go func() { result <- superviseDevelopmentServer(ctx, dependencies) }()
+	proxy := <-proxyReady
+	waitForText(t, &stdout, "serving http://127.0.0.1:8080 (watching for changes)")
+	source.change(testSnapshot(2))
+	waitForText(t, &stderr, "candidate failed health check")
+
+	select {
+	case <-initial.Done():
+		t.Fatal("unhealthy candidate stopped the last-good server")
+	default:
+	}
+	proxy.mu.Lock()
+	targets := append([]string(nil), proxy.targets...)
+	reloads := proxy.reloads
+	proxy.mu.Unlock()
+	if want := []string{"http://candidate"}; !reflect.DeepEqual(targets, want) {
+		t.Fatalf("targets after unhealthy candidate = %v, want %v", targets, want)
+	}
+	if reloads != 0 {
+		t.Fatalf("unhealthy candidate emitted %d reloads", reloads)
+	}
+
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("supervisor cancellation = %v", err)
+	}
 }
 
 func TestDevelopmentSupervisorRejectsInitialProcessExitDuringProxyStartup(t *testing.T) {
@@ -545,9 +680,13 @@ func TestDevelopmentSupervisorRejectsInitialProcessExitDuringProxyStartup(t *tes
 	}
 	proxy.mu.Lock()
 	closed := proxy.closed
+	reloads := proxy.reloads
 	proxy.mu.Unlock()
 	if !closed {
 		t.Fatal("proxy was not closed after initial process exited")
+	}
+	if reloads != 0 {
+		t.Fatalf("failed initial process emitted %d reloads", reloads)
 	}
 }
 
@@ -581,14 +720,94 @@ func TestDevelopmentSupervisorClosesProxyWhenInitialCommitFails(t *testing.T) {
 	}
 	proxy.mu.Lock()
 	closed := proxy.closed
+	reloads := proxy.reloads
 	proxy.mu.Unlock()
 	if !closed {
 		t.Fatal("proxy was not closed after initial commit failure")
+	}
+	if reloads != 0 {
+		t.Fatalf("failed initial commit emitted %d reloads", reloads)
 	}
 	select {
 	case <-process.Done():
 	default:
 		t.Fatal("server was not stopped after initial commit failure")
+	}
+}
+
+func TestDevelopmentSupervisorDoesNotReloadWhenPromotionCommitFails(t *testing.T) {
+	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot, 2)}
+	commitErr := errors.New("commit compiled views failed")
+	var buildCount int
+	var processes []*fakeDevelopmentProcess
+	var stdout synchronizedBuffer
+	proxyReady := make(chan *fakeDevelopmentProxy, 1)
+	dependencies := developmentServeDependencies{
+		snapshot:      source.snapshot,
+		waitForChange: source.wait,
+		stabilize:     source.stabilize,
+		generation:    source.generation.Load,
+		build: func(context.Context) (*developmentBuild, error) {
+			buildCount++
+			build := testDevelopmentBuild(fmt.Sprintf("server-%d", buildCount))
+			if buildCount == 2 {
+				build.finalize = func() error { return commitErr }
+			}
+			return build, nil
+		},
+		removeBinary: func(string) error { return nil },
+		start: func(_ context.Context, binary string) (*developmentCandidate, error) {
+			process := newFakeDevelopmentProcess()
+			processes = append(processes, process)
+			return &developmentCandidate{
+				process: process,
+				target:  &url.URL{Scheme: "http", Host: "candidate-" + binary},
+				binary:  binary,
+			}, nil
+		},
+		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
+			proxy := newFakeDevelopmentProxy(address, target)
+			proxyReady <- proxy
+			return proxy, nil
+		},
+		publicAddress: "127.0.0.1:8080",
+		stdout:        &stdout,
+		stderr:        io.Discard,
+	}
+	result := make(chan error, 1)
+	go func() { result <- superviseDevelopmentServer(context.Background(), dependencies) }()
+	proxy := <-proxyReady
+	waitForText(t, &stdout, "serving http://127.0.0.1:8080 (watching for changes)")
+	source.change(testSnapshot(2))
+	select {
+	case err := <-result:
+		if !errors.Is(err, commitErr) {
+			t.Fatalf("promotion commit error = %v, want %v", err, commitErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("promotion commit failure did not stop supervisor")
+	}
+
+	proxy.mu.Lock()
+	targets := append([]string(nil), proxy.targets...)
+	reloads := proxy.reloads
+	closed := proxy.closed
+	proxy.mu.Unlock()
+	if want := []string{"http://candidate-server-1", "http://candidate-server-2"}; !reflect.DeepEqual(targets, want) {
+		t.Fatalf("promotion targets = %v, want %v", targets, want)
+	}
+	if reloads != 0 {
+		t.Fatalf("failed promotion commit emitted %d reloads", reloads)
+	}
+	if !closed {
+		t.Fatal("proxy was not closed after promotion commit failure")
+	}
+	for index, process := range processes {
+		select {
+		case <-process.Done():
+		default:
+			t.Fatalf("process %d remained running after promotion commit failure", index+1)
+		}
 	}
 }
 
@@ -646,10 +865,14 @@ func TestDevelopmentSupervisorRevertsCandidateExitDuringPromotion(t *testing.T) 
 	}
 	proxy.mu.Lock()
 	targets := append([]string(nil), proxy.targets...)
+	reloads := proxy.reloads
 	proxy.mu.Unlock()
 	want := []string{"http://candidate-1", "http://candidate-2", "http://candidate-1"}
 	if !reflect.DeepEqual(targets, want) {
 		t.Fatalf("promotion targets = %v, want %v", targets, want)
+	}
+	if reloads != 0 {
+		t.Fatalf("reverted promotion emitted %d reloads", reloads)
 	}
 	cancel()
 	if err := <-result; !errors.Is(err, context.Canceled) {
