@@ -1195,7 +1195,8 @@ another typed policy, replace constructor wiring, call the repository directly,
 or replace the entire controller/repository path with ordinary Go.
 
 Authorization happens after authentication and before application work. A
-missing user remains 401. Denied access becomes `ErrForbidden` and then 403. A
+missing JSON user remains 401, while browser authentication retains its 303
+redirect to `/login`. Denied access becomes `ErrForbidden` and then 403. A
 nil function, invalid authenticated user, unknown access, invalid scope, or
 authorization error fails closed and is not treated as a grant.
 Repository lookup applies the returned scope, so a missing record and a record

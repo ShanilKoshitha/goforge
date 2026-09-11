@@ -362,7 +362,97 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	}
 }
 
-[[if .AuthorizationPolicies]]func TestBrowserAuthorizationMatchesJSONAndRunsAfterValidCSRF(t *testing.T) {
+[[if .AuthorizationPolicies]]func TestBrowserAuthorizationPrecedesParsingAndPersistence(t *testing.T) {
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := fakeUsers{user: auth.User{ID: 9, Name: "Ada", Email: "ada@example.com", CredentialVersion: 1}}
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &fakeRepository{}
+	denied := false
+	authorizationCalls := 0
+	var gotAction resource.Action
+	authorize := func(_ context.Context, _ auth.User, action resource.Action) (resource.Access, error) {
+		authorizationCalls++
+		gotAction = action
+		if denied {
+			return resource.AccessDenied, nil
+		}
+		return resource.AccessOwner, nil
+	}
+	controller, err := resource.NewWebController(repository, renderer, authorize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := httpx.NewRouter()
+	router.Use(httpx.MethodOverride("/app/"))
+	browserRoute := func(handler httpx.Handler) httpx.Handler {
+		return web.Sessions(manager)(auth.RequireWeb(users)(web.CSRF()(handler)))
+	}
+	router.GET("/app/[[.Plural]]", browserRoute(controller.Index))
+	router.GET("/app/[[.Plural]]/new", browserRoute(controller.New))
+	router.POST("/app/[[.Plural]]", browserRoute(controller.Create))
+	router.GET("/app/[[.Plural]]/{id}", browserRoute(controller.Show))
+	router.GET("/app/[[.Plural]]/{id}/edit", browserRoute(controller.Edit))
+	router.PUT("/app/[[.Plural]]/{id}", browserRoute(controller.Update))
+	router.DELETE("/app/[[.Plural]]/{id}", browserRoute(controller.Delete))
+
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", int64(9)); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", int64(1)); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := seed.Result().Cookies()[0]
+	newPage := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/new", nil, cookie)
+	if newPage.Code != http.StatusOK {
+		t.Fatalf("seed CSRF page: %d: %s", newPage.Code, newPage.Body.String())
+	}
+	token := browserCSRFToken(t, newPage.Body.String())
+	cookie = responseCookie(newPage, cookie)
+	denied = true
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		values url.Values
+		action resource.Action
+	}{
+		{name: "index", method: http.MethodGet, target: "/app/[[.Plural]]?page=bad", action: resource.ActionList},
+		{name: "new", method: http.MethodGet, target: "/app/[[.Plural]]/new", action: resource.ActionCreate},
+		{name: "create", method: http.MethodPost, target: "/app/[[.Plural]]", values: url.Values{"_token": {token}}, action: resource.ActionCreate},
+		{name: "show", method: http.MethodGet, target: "/app/[[.Plural]]/not-an-id", action: resource.ActionView},
+		{name: "edit", method: http.MethodGet, target: "/app/[[.Plural]]/not-an-id/edit", action: resource.ActionUpdate},
+		{name: "update", method: http.MethodPost, target: "/app/[[.Plural]]/not-an-id", values: url.Values{"_token": {token}, "_method": {http.MethodPut}}, action: resource.ActionUpdate},
+		{name: "delete", method: http.MethodPost, target: "/app/[[.Plural]]/not-an-id", values: url.Values{"_token": {token}, "_method": {http.MethodDelete}}, action: resource.ActionDelete},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			authorizationCalls = 0
+			gotAction = ""
+			repository.repositoryCalls = 0
+			response := browserRequest(router, test.method, test.target, test.values, cookie)
+			if response.Code != http.StatusForbidden || authorizationCalls != 1 || gotAction != test.action || repository.repositoryCalls != 0 {
+				t.Fatalf("browser authorization: status=%d calls=%d action=%q repository=%d: %s", response.Code, authorizationCalls, gotAction, repository.repositoryCalls, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestBrowserAuthorizationMatchesJSONAndRunsAfterValidCSRF(t *testing.T) {
 	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
 	if err != nil {
 		t.Fatal(err)

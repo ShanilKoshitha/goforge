@@ -99,6 +99,10 @@ func TestGeneratedResourceAuthorizationPostgresWorkflow(t *testing.T) {
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("guest JSON list: got %d, want 401: %s", response.StatusCode, body)
 	}
+	response, body = requestBrowser(t, guest, http.MethodGet, baseURL+"/app/issues", nil)
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/login" {
+		t.Fatalf("guest browser list: got %d location=%q, want 303 /login: %s", response.StatusCode, response.Header.Get("Location"), body)
+	}
 
 	ownerOneClient := clientWithCookiesNoRedirect(t)
 	ownerTwoClient := clientWithCookiesNoRedirect(t)
@@ -145,6 +149,14 @@ func TestGeneratedResourceAuthorizationPostgresWorkflow(t *testing.T) {
 	unchangedOwnerTwo := decodeAuthorizationIssue(t, body)
 	if response.StatusCode != http.StatusOK || unchangedOwnerTwo.Title != "owner two" || unchangedOwnerTwo.Version != ownerTwo.Version {
 		t.Fatalf("cross-owner mutations changed foreign row: status=%d issue=%#v body=%s", response.StatusCode, unchangedOwnerTwo, body)
+	}
+	response, crossOwnerBrowserView := requestBrowser(t, ownerOneClient, http.MethodGet, fmt.Sprintf("%s/app/issues/%d", baseURL, ownerTwo.ID), nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-owner browser view: got %d, want 404: %s", response.StatusCode, crossOwnerBrowserView)
+	}
+	response, missingBrowserView := requestBrowser(t, ownerOneClient, http.MethodGet, fmt.Sprintf("%s/app/issues/%d", baseURL, missingID), nil)
+	if response.StatusCode != http.StatusNotFound || crossOwnerBrowserView != missingBrowserView {
+		t.Fatalf("cross-owner and missing browser views were distinguishable: status=%d cross-owner=%s missing=%s", response.StatusCode, crossOwnerBrowserView, missingBrowserView)
 	}
 
 	response, body = requestJSON(t, adminClient, http.MethodGet, baseURL+"/issues", "")

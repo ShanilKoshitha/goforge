@@ -82,6 +82,42 @@ jobs:
           cmp "$RUNNER_TEMP/released-go.mod" go.mod
           cmp "$RUNNER_TEMP/released-go.sum" go.sum
           cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
+      - name: Public v0.12.1 format-9 upgrade compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format9-cli"
+          GOBIN="$RUNNER_TEMP/released-format9-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.12.1
+          "$RUNNER_TEMP/released-format9-cli/forge" new "$RUNNER_TEMP/released-format9-app" --module example.com/releasedformat9
+          cd "$RUNNER_TEMP/released-format9-app"
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string
+          test ! -e internal/resources/subsequentissue/authorization.go
+          test "$("$RUNNER_TEMP/released-format9-cli/forge" version)" = 'forge 0.12.1'
+          grep -q '^version: 9$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.12.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
+      - name: Public v0.13.1 format-10 relationship upgrade compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format10-cli"
+          GOBIN="$RUNNER_TEMP/released-format10-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.13.1
+          "$RUNNER_TEMP/released-format10-cli/forge" new "$RUNNER_TEMP/released-format10-app" --module example.com/releasedformat10
+          cd "$RUNNER_TEMP/released-format10-app"
+          "$RUNNER_TEMP/released-format10-cli/forge" make:resource Category --field title:string
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string --belongs-to category:Category
+          test ! -e internal/resources/category/authorization.go
+          test ! -e internal/resources/subsequentissue/authorization.go
+          test "$("$RUNNER_TEMP/released-format10-cli/forge" version)" = 'forge 0.13.1'
+          grep -q '^version: 10$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.13.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
       - name: Public v0.14.1 format-11 upgrade compatibility
         run: |
           mkdir -p "$RUNNER_TEMP/released-format11-cli"
