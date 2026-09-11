@@ -38,7 +38,7 @@ func TestGeneratedResourceAuthorizationPostgresWorkflow(t *testing.T) {
 	}
 
 	directory := filepath.Join(scratch, "authorization")
-	if output, err := authorizationWorkflowCommand(scratch, baseEnvironment, forgeBinary, "new", "authorization", "--module", "example.com/authorization", "--replace", root); err != nil {
+	if output, err := authorizationWorkflowCommand(scratch, baseEnvironment, forgeBinary, "new", "authorization", "--module", "example.com/issueboard", "--replace", root); err != nil {
 		t.Fatalf("forge new: %v\n%s", err, output)
 	}
 	if output, err := authorizationWorkflowCommand(directory, baseEnvironment, forgeBinary, "make:resource", "Issue", "--field", "title:string"); err != nil {
