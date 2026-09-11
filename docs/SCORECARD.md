@@ -12,7 +12,7 @@ Target:
 > authorized scope in SQL, and hidden, cross-owner, and missing records must
 > remain indistinguishable.
 
-The smallest complete workflow adds one typed policy and scope contract to each
+The smallest complete workflow adds one typed authorization and scope contract to each
 new resource. It is deliberately not a role database, permission DSL, global
 gate registry, reflection system, or row-by-row authorization callback. Teams
 own the policy source and constructor wiring and can replace the generated
@@ -23,7 +23,7 @@ controllers, repositories, or route registration with ordinary Go.
 | Criterion | State | Required evidence |
 | --- | --- | --- |
 | The secure default remains owner-only | candidate | A fresh resource's default policy scopes list, pagination, show, edit, update, delete, relationship loading, and relationship choices to the authenticated owner; create remains explicitly authorized and assigns the authenticated owner |
-| Policy decisions are explicit application code | candidate | The generated resource owns a typed policy with named action methods and closed owner/all scopes; routes visibly construct and inject it into both controllers without reflection, runtime registration, annotations, or a role DSL |
+| Policy decisions are explicit application code | candidate | The generated resource owns typed action/access values, one editable authorization function, and closed owner/all scopes; routes visibly inject the same function into both controllers without reflection, runtime registration, annotations, or a role DSL |
 | HTTP denial semantics are coherent | candidate | Unauthenticated requests remain 401; an authenticated action-level denial is 403; records outside the authorized scope and absent records are both 404; malformed or zero policy/scope values never grant access |
 | JSON and browser behavior stays in parity | candidate | Index/new/create/show/edit/update/delete exercise the same policy contract in both transports, including validation and stale-write paths, without leaking hidden record existence |
 | Persistence enforces authorization atomically | candidate | List/find/paginate predicates and update/delete predicates include the validated scope in the executed SQL; no fetch-authorize-mutate window can write a record outside that scope, and optimistic concurrency retains 404-versus-409 behavior inside the authorized scope |

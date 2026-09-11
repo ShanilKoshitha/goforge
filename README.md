@@ -40,6 +40,11 @@ boundary adds typed composable validation, exact JSON/form failure semantics,
 bounded HTTP timeouts and headers, correlated completion logs, validated CORS
 and security policy, trusted-proxy parsing, and PostgreSQL authentication
 throttles shared across processes and restarts.
+Current source is the v0.18.0 format-13 authorization candidate. Newly generated
+resources own a typed action/access function shared by their JSON and browser
+controllers. Owner-only remains the default; application code can explicitly
+grant all-record access or deny an action, while repositories apply the derived
+scope in the same SQL statement as every read and mutation.
 Account integrity now includes JSON and browser password change, transparent
 hash upgrades, immediate cross-process session revocation, and independently
 configured idle and absolute session lifetimes. Credential writes are ordinary
@@ -73,7 +78,7 @@ IANA civil time and DST behavior, bounded misfire coalescing, conservative
 active-job overlap suppression, fail-closed definition fingerprints,
 competing-process row coordination, read-only inspection, and payload-free
 observers.
-Fresh format-11 and format-12 scaffolds own the schedule registry, PostgreSQL
+Fresh format-11 through format-13 scaffolds own the schedule registry, PostgreSQL
 migration, isolated configuration, scheduler process, inspection command, and
 direct Go escape hatches. The v0.16.0 release pinned the immutable public
 v0.14.2 runtime and demonstrated its cancellation-aware dynamic schedule
@@ -153,8 +158,10 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.17.1 release. Fresh
-applications use format 12 and pin the matching asset runtime.
+The command surface below is included in current v0.18.0 source. Fresh
+applications use format 13 while continuing to pin the public v0.17.0 asset
+runtime; the authorization slice is generated application code and needs no
+new runtime package.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
@@ -206,7 +213,7 @@ runtime schema. Updates replace the complete writable resource: a missing,
 `null`, or empty nullable value clears that column to SQL `NULL`, while numeric
 `0` and boolean `false` remain present values.
 
-Format-10 through format-12 applications can generate a required owner-scoped
+Format-10 through format-13 applications can generate a required owner-scoped
 relationship to an existing resource:
 
 ```sh
@@ -221,9 +228,19 @@ protected foreign key, association value, validation, eager loading, browser
 choices, and presentation; generated SQL owns the composite owner/target
 constraint. No relationship registry or runtime schema is added.
 
+Format-13 resources also own `authorization.go`. Its `AuthorizeFunc` receives a
+typed list, create, view, update, or delete action and returns denied, owner, or
+all-record access. `Authorize` is the editable owner-only default, and the same
+function is visibly injected into both controllers in `routes/resources_gen.go`.
+Denied authenticated actions return 403 before repository work. Owner-scoped
+missing and cross-owner records both return 404. Repository update and delete
+queries include the validated scope directly, so authorization is not a
+fetch-then-write race. Edit this ordinary Go file, inject another function, or
+replace the controller/repository wiring when the closed scope is insufficient.
+
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-12 projects. Both non-mutating preflights check the
-generated ORM first, compiled views second, and format-12 embedded assets third.
+format-4 through format-13 projects. Both non-mutating preflights check the
+generated ORM first, compiled views second, and format-12-or-newer embedded assets third.
 Testing then runs exactly `go test ./...`. Building stages a trimmed
 `./cmd/server` executable and publishes
 it atomically as `bin/app` on Unix or `bin/app.exe` on Windows, so a failed build
@@ -243,7 +260,7 @@ go run ./cmd/scheduler --once
 ```
 
 Use direct Go commands for custom packages, flags, tags, targets, output paths,
-or worker and console builds. `forge dev` is the complete format-11/12 development
+or worker and console builds. `forge dev` is the complete format-11-through-13 development
 default: it labels and supervises `forge serve`, the application-owned worker,
 and the scheduler under one cancellation boundary, and reports ready only after
 all three startup contracts succeed. Any service exit stops its peers. It does

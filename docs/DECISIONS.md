@@ -1180,35 +1180,39 @@ contracts.
 
 **Status:** accepted for v0.18 implementation
 
-Format-13 resources own a small typed policy next to their controllers and
-repository. Its named methods cover listing, viewing, creating, updating, and
-deleting. The generated owner policy is the secure default. It returns a closed
-resource scope for record-bearing actions and a direct decision for creation.
-The only generated scopes are one validated owner or the conspicuous all-record
-scope; the zero value is invalid. Policies cannot inject arbitrary SQL.
+Format-13 resources own a small typed authorization contract next to their
+controllers and repository. One editable `AuthorizeFunc` receives the
+authenticated user and a closed list, create, view, update, or delete action,
+then returns denied, owner, or all-record access. The generated `Authorize`
+function is the secure owner-only default. Access denial is the zero value;
+unknown nonzero access is invalid. Authorization code cannot inject arbitrary
+SQL.
 
-Routes visibly construct one policy and pass it to both JSON and browser
+Routes visibly bind one authorization function and pass it to both JSON and browser
 controllers. There is no package scan, annotation, role table, permission DSL,
 global gate, or reflection. Application teams may edit the policy, implement
 another typed policy, replace constructor wiring, call the repository directly,
 or replace the entire controller/repository path with ordinary Go.
 
 Authorization happens after authentication and before application work. A
-missing user remains 401. `ErrForbidden` from a policy becomes 403. A nil policy,
-invalid scope, or policy error fails closed and is not treated as a grant.
+missing user remains 401. Denied access becomes `ErrForbidden` and then 403. A
+nil function, invalid authenticated user, unknown access, invalid scope, or
+authorization error fails closed and is not treated as a grant.
 Repository lookup applies the returned scope, so a missing record and a record
 outside that scope both remain 404. Both transports use the same policy methods:
 browser edit requires update authority, and browser new requires create
 authority rather than merely the ability to render a form.
 
-Repositories accept the closed scope instead of a raw caller identity for
-list, pagination, find, update, and delete. They validate it again and translate
+Controllers derive the closed scope from the authenticated user rather than
+allowing policy code to choose an owner. Repositories accept that scope instead
+of a raw caller identity for list, pagination, create, find, update, and delete.
+They validate it again and translate
 it into ORM predicates in the executed statement. Update and delete therefore
 cannot cross an authorization boundary between a preliminary fetch and the
 write. Optimistic-version existence checks reuse the same scope, preserving 404
-for hidden rows and 409 only for a stale visible row. Create remains owned by
-the authenticated user after a separate create decision; ownership transfer is
-not added.
+for hidden rows and 409 only for a stale visible row. Create always uses the
+scope's authenticated actor even when all-record access was granted; ownership
+transfer is not added.
 
 Required belongs-to keys retain their same-owner database invariant. Owner
 scopes filter relationship loads normally. An all-record resource scope may
@@ -1225,6 +1229,6 @@ separate milestones.
 
 Reason: authentication without an explicit authorization seam forces normal
 administrator, editor, and read-only requirements to fork both transport and
-persistence code. A generated policy with closed SQL scopes provides the
+persistence code. Generated authorization with closed SQL scopes provides the
 familiar policy experience while keeping access rules visible, fail-closed, and
 atomic in conventional Go.

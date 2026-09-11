@@ -44,6 +44,16 @@ templates under `resources/views/pages/issues` and regenerates the clearly
 marked route and compiled-view registries. Human-owned files are preflighted and
 never overwritten.
 
+Fresh format-13 resources also contain `authorization.go`. Its typed
+`AuthorizeFunc` handles list, create, view, update, and delete decisions for both
+controllers. The generated function grants owner access for every known action;
+return `AccessAll` for a deliberate privileged action or `AccessDenied` to stop
+an authenticated action with HTTP 403. The controller derives the repository
+scope from the authenticated user, and update/delete apply it in their SQL rather
+than trusting a prior fetch. Unknown decisions and invalid scopes fail closed.
+The policy, route injection, repository predicates, and tests are ordinary
+application Go and can be edited or replaced directly.
+
 Run the generated migrations and development server through the project
 commands:
 
@@ -52,8 +62,8 @@ forge migrate
 forge dev
 ```
 
-`forge migrate` delegates to the application-owned console. Format-11 and
-format-12
+`forge migrate` delegates to the application-owned console. Format-11 through
+format-13
 `forge dev` starts the watched HTTP server, durable queue worker, and recurring
 scheduler together. It labels each service's output and reports the stack ready
 only after all three existing startup signals succeed. Any unexpected service
@@ -63,7 +73,7 @@ exit stops its peers, and Ctrl-C waits for the complete owned process tree.
 compiles views with the application's own function map, stages an ordinary Go
 server binary outside the repository, and keeps one public address while it
 watches Go, `.forge.html`, SQL, module, environment, project-manifest, and every
-regular format-12 file below `resources/assets/files`. Eligible full HTML browser pages carry a development-only same-origin
+regular format-12-or-newer file below `resources/assets/files`. Eligible full HTML browser pages carry a development-only same-origin
 client and reload automatically after a valid replacement is completely
 committed. Failed edits leave the last-good page and server in place. The proxy
 does not rewrite compressed, streamed, ranged, downloadable, `no-transform`,
@@ -95,7 +105,7 @@ Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 `/issues`; handlers do not silently switch behavior based on content negotiation.
 
-Fresh format-10 through format-12 JSON resource indexes are bounded and paginated. `GET /issues`
+Fresh format-10 through format-13 JSON resource indexes are bounded and paginated. `GET /issues`
 defaults to `page=1&per_page=20`; each parameter must appear at most once and be
 a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
 The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,
@@ -118,7 +128,7 @@ standard-library escape hatches.
 
 ## Ship frontend assets
 
-Fresh format-12 applications keep opaque production inputs in
+Fresh format-12-or-newer applications keep opaque production inputs in
 `resources/assets/files`. The visible `resources/assets` package embeds the
 exact bytes, validates a bounded inventory at startup, resolves logical names,
 and supplies the standard `http.Handler` mounted in `routes/routes.go`. The
@@ -142,8 +152,8 @@ application into a private temporary source tree, revalidates that exact copy,
 and compiles only the validated copy before publication. Tool output, VCS/cache
 directories, `node_modules`, and symlinks are excluded; keep Node-produced
 browser output in an application directory such as `public/dist` when using
-this format-12 gate. Formats 4–11 retain their in-place build behavior. Use the
-direct Go command for a format-12 monorepo that relies on relative external
+this format-12-or-newer gate. Formats 4–11 retain their in-place build behavior. Use the
+direct Go command for a format-12-or-newer monorepo that relies on relative external
 replacements, an implicit parent workspace, or symlink traversal.
 Replace the application package or route with ordinary
 `net/http`, a CDN, or a Node-backed pipeline when those tradeoffs fit.
@@ -158,9 +168,9 @@ forge test
 forge build
 ```
 
-Both commands support project formats 4 through 12 and accept no arguments. They
+Both commands support project formats 4 through 13 and accept no arguments. They
 first check `internal/models/zz_orm_gen.go`, then
-`resources/views/views_gen.go`, and for format 12 the embedded asset inventory,
+`resources/views/views_gen.go`, and for format 12 or newer the embedded asset inventory,
 without rewriting application files. A missing, stale, or invalid input stops
 before tests or compilation and reports the explicit repair or check command.
 
