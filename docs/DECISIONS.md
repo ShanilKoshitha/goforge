@@ -1275,7 +1275,7 @@ database mutation.
 
 ## D043 — Personal API tokens are opaque application-owned credentials
 
-**Status:** accepted for v0.20 implementation
+**Status:** accepted in v0.20
 
 Format-14 applications add personal API tokens as an explicit authentication
 path for machine clients. A session-authenticated user manages named tokens

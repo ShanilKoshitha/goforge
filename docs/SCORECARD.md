@@ -1,6 +1,6 @@
 # v0.20 personal API tokens scorecard
 
-Status: **active** — 2026-09-11
+Status: **accepted** — 2026-09-11
 
 Target:
 
@@ -23,16 +23,16 @@ authorization system. The existing resource policy stays authoritative.
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| Token management is a complete user workflow | pending | A session-authenticated user can list, create, and revoke only their tokens through strict JSON endpoints and CSRF-protected browser account security; creation requires the current password, a unique trimmed 1–80 byte name, and a 1–90 day lifetime |
-| Raw secrets are one-time values | pending | Creation returns `goforge_pat_<selector>.<secret>` exactly once with `no-store`/privacy headers; PostgreSQL stores only the selector and 32-byte digest, while lists, later pages, errors, logs, and session payloads disclose neither complete tokens nor fragments |
-| Bearer authentication is strict and deterministic | pending | One exact bounded `Authorization: Bearer` credential authenticates `/auth/me` and generated JSON resources; a present malformed, duplicated, wrong-scheme, wrong-secret, expired, revoked, or unknown credential returns the same 401 and never falls back to a valid cookie, touches a session, or emits `Set-Cookie` |
-| Existing policy and transport boundaries remain authoritative | pending | Token requests receive the same `auth.User`, action policy, owner/all SQL scope, 401/403/404 behavior, validation, optimistic concurrency, and relationship invariants as session JSON requests; browser and credential-management routes reject Bearer-only callers |
-| Revocation is durable and coherent | pending | User-scoped deletion makes a token unusable for every subsequent request across processes and restart; password change, password reset, and sign-out-everywhere invalidate all tokens issued under the prior credential generation without storing or scanning token secrets |
-| Issuance fails atomically under pressure | pending | User-row serialization enforces at most ten live tokens across concurrent creators; duplicate names, stale credentials, invalid expiry, entropy failure, storage failure, cancellation, and rollback leave no token or partial secret state |
-| Persistence is bounded, indexed, and application-owned | pending | Plain `000006` SQL enforces the user foreign key, canonical selector/digest shape, credential generation, bounded name, expiry, uniqueness, and lookup indexes; expired rows are excluded and pruned without runtime schemas or ORM exposure of credential material |
-| Existing applications remain compatible | pending | Formats 4–13 retain their source and cookie-authenticated behavior; only fresh format 14 receives token migration, source, routes, UI, and token-aware resource wiring, and older applications can adopt the visible code manually |
-| The workflow remains conventional and replaceable | pending | Generated interfaces, repository, service, middleware, controller, routes, view, migration, and tests are readable application code; direct middleware replacement, direct repositories, `database/sql`, `html/template`, and direct Go test/build/run remain complete escape hatches |
-| The milestone passes twice without regression | pending | Framework normal/race/vet/build, frozen and public compatibility, a fresh no-replace format-14 application, live PostgreSQL token/auth/resource journeys, native Windows checks, and independent security/architecture review pass twice on the final revision |
+| Token management is a complete user workflow | passing | Generated unit and live PostgreSQL journeys list, create, and user-scope revoke through strict JSON and CSRF-protected browser routes; current-password, unique trimmed 1–80 byte name, and 1–90 day lifetime boundaries pass |
+| Raw secrets are one-time values | passing | Live creation returns `goforge_pat_<selector>.<secret>` once with `no-store` and privacy headers; database rows contain only canonical selectors and 32-byte digests, and list/page/error/log/session probes find no token material |
+| Bearer authentication is strict and deterministic | passing | `/auth/me` and generated resources accept one exact Bearer credential; malformed, duplicate, wrong-scheme, wrong-secret, expired, revoked, and unknown credentials share the generic 401 path without cookie fallback, session mutation, or `Set-Cookie` |
+| Existing policy and transport boundaries remain authoritative | passing | The live resource journey proves owner/all/deny policy scopes, 401/403/404 behavior, validation, optimistic concurrency, and belongs-to ownership under Bearer auth; browser and credential-management routes remain session-only |
+| Revocation is durable and coherent | passing | User-scoped revoke survives process restart, while password change, password reset, and sign-out-everywhere invalidate every credential issued under the prior generation without secret scans |
+| Issuance fails atomically under pressure | passing | Twelve concurrent correct issuances commit exactly ten tokens and return two `token.limit` validation failures; duplicate names, stale credentials, invalid expiry, entropy/storage/cancellation failures, and rollback paths leave no partial credential state |
+| Persistence is bounded, indexed, and application-owned | passing | Plain `000006` SQL enforces the user foreign key, base64url selector and digest shape, credential generation, bounded name, expiry, uniqueness, and lookup indexes; expired rows are excluded and pruned outside the ORM |
+| Existing applications remain compatible | passing | Public format 7 and released formats 8–13 pass unchanged compatibility gates; only fresh format 14 receives token source, migration, routes, UI, and token-aware resource wiring |
+| The workflow remains conventional and replaceable | passing | Generated interfaces, repository, middleware, controllers, routes, view, migration, and tests remain readable application-owned Go and SQL using `database/sql`, `html/template`, and ordinary test/build/run commands |
+| The milestone passes twice without regression | passing | Final revision `a8243f6` passed complete push and pull-request CI, including Linux/PostgreSQL and native Windows, and merge `ef091b4` passed the same exact-main matrix; two independent reviews report no P0–P2 finding |
 
 ## Runnable baseline — 2026-09-11
 
@@ -53,7 +53,7 @@ authorization system. The existing resource policy stays authoritative.
   `auth.User` into closed owner/all SQL scopes. Token authentication must feed
   that seam rather than add scopes, claims, or policy discovery.
 
-## Candidate progress — 2026-09-11
+## Acceptance evidence — 2026-09-11
 
 - Fresh format-14 scaffolds now contain the plain `000006` migration,
   digest-only PostgreSQL repository, dedicated current-password limiter,
@@ -62,24 +62,35 @@ authorization system. The existing resource policy stays authoritative.
   its original session middleware and receives no token source or migration.
 - A fresh generated application passes its complete Go test suite. Focused
   framework checks also pass scaffold formatting, generated-app inspection,
-  format-13/14 middleware compatibility, and compilation of the live token
-  journey when PostgreSQL is unavailable locally.
+  format-13/14 middleware compatibility, and compilation plus live execution
+  of the PostgreSQL token journey.
 - Independent review found and the candidate fixed an eight-attempt limiter
   conflict with the ten-token concurrency cap, a selector-alphabet constraint
   gap, and missing live evidence for authorization/relationship parity and all
   three credential-generation invalidation paths.
-- The strengthened PostgreSQL journey now requires explicit 403 and all-record
+- The strengthened PostgreSQL journey requires explicit 403 and all-record
   policy results, owner-safe belongs-to writes, stale-write conflict, password
   change/reset/logout-all invalidation, canonical selector rejection, exact
   cap errors, durable restart behavior, and secret-leak checks. Hosted
-  PostgreSQL execution and two complete hosted final-revision passes remain
-  pending.
-- The integrated candidate passes `go test ./... -count=1` (CLI matrix
-  168.611s), `go test -race ./... -count=1` (CLI matrix 257.902s), `go vet
-  ./...`, and a trimmed CLI build. A separately generated no-replace format-14
-  application pinned to public v0.19.0 generated related schema-driven
+  execution passed in both final-revision workflows and again on exact main.
+- The integrated final revision passes `go test ./... -count=1` (CLI matrix
+  174.740s), `go vet ./...`, and a trimmed CLI build. A separately generated
+  no-replace format-14 application pinned to public v0.19.0 generated related schema-driven
   resources and passed ORM/view/asset freshness, module verification, zero
   tidy diff, every generated test, vet, and server build.
+- Final revision `a8243f6` passed public push run
+  [34644607658](https://github.com/ShanilKoshitha/goforge/actions/runs/34644607658)
+  and pull-request run
+  [34644611048](https://github.com/ShanilKoshitha/goforge/actions/runs/34644611048).
+  Each ran the Linux/PostgreSQL matrix, repeated generated application journeys,
+  every released-format compatibility gate, and native Windows tests. Merge
+  `ef091b4` then passed the exact-main run
+  [34646266620](https://github.com/ShanilKoshitha/goforge/actions/runs/34646266620)
+  with Linux/PostgreSQL in 14m56s and Windows in 6m43s.
+- A hosted failure exposed a real nested-template binding defect in token revoke
+  forms: `@csrf` resolved against a token row instead of the root page. Commit
+  `a8243f6` uses the explicit root form token and adds a generated-app regression
+  that renders a non-empty token list; all three final public runs pass it.
 - The second independent review reports no remaining P0, P1, or P2 finding.
   It rechecked limiter separation, canonical persistence, strict Bearer/session
   precedence, policy and relationship parity, every generation-invalidation
