@@ -1,6 +1,7 @@
 # v0.18 explicit resource authorization scorecard
 
-Status: **in progress** — 2026-09-11
+Status: **candidate** — local acceptance complete; hosted PostgreSQL and native
+Windows evidence pending — 2026-09-11
 
 Target:
 
@@ -22,14 +23,14 @@ controllers, repositories, or route registration with ordinary Go.
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| The secure default remains owner-only | candidate | A fresh resource's default policy scopes list, pagination, show, edit, update, delete, relationship loading, and relationship choices to the authenticated owner; create remains explicitly authorized and assigns the authenticated owner |
-| Policy decisions are explicit application code | candidate | The generated resource owns typed action/access values, one editable authorization function, and closed owner/all scopes; routes visibly inject the same function into both controllers without reflection, runtime registration, annotations, or a role DSL |
-| HTTP denial semantics are coherent | candidate | Unauthenticated JSON requests remain 401 while browser requests retain the 303 redirect to `/login`; an authenticated action-level denial is 403; records outside the authorized scope and absent records are both 404; malformed or zero policy/scope values never grant access |
-| JSON and browser behavior stays in parity | candidate | Index/new/create/show/edit/update/delete exercise the same policy contract in both transports, including validation and stale-write paths, without leaking hidden record existence |
-| Persistence enforces authorization atomically | candidate | List/find/paginate predicates and update/delete predicates include the validated scope in the executed SQL; no fetch-authorize-mutate window can write a record outside that scope, and optimistic concurrency retains 404-versus-409 behavior inside the authorized scope |
-| A privileged scope is useful without framework surgery | candidate | Replacing the default policy with application-owned Go can list, view, update, and delete another owner's resource while preserving its owner and same-owner relationship invariants; denying one action requires no controller or repository rewrite |
-| Existing applications remain compatible | candidate | Formats 4–12 retain their generated source and behavior; only format 13 receives the policy contract, and released-format compatibility plus fresh no-replace application checks remain green |
-| The workflow remains conventional and replaceable | candidate | Generated policy, controller, repository, route wiring, ORM predicates, and tests are gofmt'd readable Go; direct package tests and direct `go run`/`go build` paths work without the CLI runtime |
+| The secure default remains owner-only | passing | A fresh resource's default policy scopes list, pagination, show, edit, update, delete, relationship loading, and relationship choices to the authenticated owner; create remains explicitly authorized and assigns the authenticated owner |
+| Policy decisions are explicit application code | passing | The generated resource owns typed action/access values, one editable authorization function, and closed owner/all scopes; routes visibly inject the same function into both controllers without reflection, runtime registration, annotations, or a role DSL |
+| HTTP denial semantics are coherent | passing | Unauthenticated JSON requests remain 401 while browser requests retain the 303 redirect to `/login`; an authenticated action-level denial is 403; records outside the authorized scope and absent records are both 404; malformed or zero policy/scope values never grant access |
+| JSON and browser behavior stays in parity | passing | Index/new/create/show/edit/update/delete exercise the same policy contract in both transports, including validation and stale-write paths, without leaking hidden record existence |
+| Persistence enforces authorization atomically | passing | List/find/paginate predicates and update/delete predicates include the validated scope in the executed SQL; no fetch-authorize-mutate window can write a record outside that scope, and optimistic concurrency retains 404-versus-409 behavior inside the authorized scope |
+| A privileged scope is useful without framework surgery | passing | Replacing the default policy with application-owned Go can list, view, update, and delete another owner's resource while preserving its owner and same-owner relationship invariants; denying one action requires no controller or repository rewrite |
+| Existing applications remain compatible | passing | Formats 4–12 retain their generated source and behavior; only format 13 receives the policy contract, and released-format compatibility plus fresh no-replace application checks remain green |
+| The workflow remains conventional and replaceable | passing | Generated policy, controller, repository, route wiring, ORM predicates, and tests are gofmt'd readable Go; direct package tests and direct `go run`/`go build` paths work without the CLI runtime |
 | The milestone passes twice without regression | candidate | Framework normal/race/vet/build, frozen compatibility, current scaffold, fresh generated PostgreSQL authorization journey, native Windows checks, and independent adversarial review pass twice on the final revision |
 
 ## Runnable baseline — 2026-09-11
@@ -52,6 +53,33 @@ controllers, repositories, or route registration with ordinary Go.
   and optimistic updates already distinguish a hidden row from a stale visible
   row. Those secure behaviors are the compatibility floor, not functionality to
   remove.
+
+## Candidate acceptance evidence — 2026-09-11
+
+- Final local candidate `e50a688` passes `go test ./... -count=1` with the CLI
+  matrix completing in 147.398 seconds and `go test -race ./... -count=1` with
+  the CLI matrix completing in 257.487 seconds. `go vet ./...`,
+  `go mod tidy -diff`, formatting, and `git diff --check` are clean.
+- A fresh format-13 application generated scalar `Category` and required
+  belongs-to `Issue` resources. The generated application passed direct
+  `go test ./...`, direct `go vet ./...`, `forge assets:check`, `forge test`,
+  and the isolated `forge build`; inspection confirmed its visible policy,
+  shared controller injection, and scoped repository predicates.
+- The PostgreSQL authorization journey compiles locally and is wired into the
+  hosted database matrix twice. It proves JSON 401 and browser login redirect,
+  owner-hidden 404 parity in both transports, privileged cross-owner JSON and
+  browser operations, owner preservation, denied deletes with valid CSRF, and
+  final database state. The existing belongs-to PostgreSQL helper was migrated
+  to format-13 scopes and reproduced through successful helper compilation.
+- Public upgrade gates now create real format-8, format-9, format-10,
+  format-11, and format-12 applications with their released CLIs, run current
+  compatible generators, assert that authorization is not backported, and test,
+  vet, and build the results. The fresh no-replace format-13 application also
+  runs its generated tests under the race detector.
+- Independent adversarial review found no remaining P0, P1, or P2 issue after
+  the acceptance-helper, browser parity, documentation, compatibility, and
+  no-replace race-evidence corrections. Hosted Linux/PostgreSQL and native
+  Windows runs remain required before acceptance.
 
 ## Explicit non-goals
 
