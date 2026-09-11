@@ -14,6 +14,7 @@ import (
 	"github.com/ShanilKoshitha/goforge/session"
 
 	"[[.Module]]/internal/config"
+	appassets "[[.Module]]/resources/assets"
 	views "[[.Module]]/resources/views"
 	"[[.Module]]/routes"
 )
@@ -25,7 +26,11 @@ func TestRegisterWiresBrowserMiddlewareAndViews(t *testing.T) {
 	}
 	router := httpx.NewRouter()
 	router.Use(httpx.MethodOverride("/app/"))
-	err = routes.Register(router, renderer, &sql.DB{}, session.NewMemoryStore(), ratelimit.NewMemoryStore(20_000), config.Config{
+	staticAssets, err := appassets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = routes.Register(router, renderer, staticAssets, &sql.DB{}, session.NewMemoryStore(), ratelimit.NewMemoryStore(20_000), config.Config{
 		Environment: "local", SessionSecret: strings.Repeat("s", 32), ShutdownTimeout: time.Second,
 		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
 		ApplicationURL: "http://localhost:8080", PasswordResetTTL: 30 * time.Minute,
@@ -33,6 +38,29 @@ func TestRegisterWiresBrowserMiddlewareAndViews(t *testing.T) {
 	}, passwordRecoveryStub{})
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	stylesheet := httptest.NewRecorder()
+	router.ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	if stylesheet.Code != http.StatusOK || !strings.Contains(stylesheet.Header().Get("Content-Type"), "text/css") || !strings.Contains(stylesheet.Body.String(), ":root") {
+		t.Fatalf("application stylesheet route: %d %q: %s", stylesheet.Code, stylesheet.Header().Get("Content-Type"), stylesheet.Body.String())
+	}
+	stylesheetHead := httptest.NewRecorder()
+	router.ServeHTTP(stylesheetHead, httptest.NewRequest(http.MethodHead, "/assets/app.css", nil))
+	if stylesheetHead.Code != http.StatusOK || stylesheetHead.Body.Len() != 0 || stylesheetHead.Header().Get("Content-Length") == "" {
+		t.Fatalf("application stylesheet HEAD: %d length=%q body=%q", stylesheetHead.Code, stylesheetHead.Header().Get("Content-Length"), stylesheetHead.Body.String())
+	}
+	stylesheetRange := httptest.NewRecorder()
+	rangeRequest := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
+	rangeRequest.Header.Set("Range", "bytes=0-3")
+	router.ServeHTTP(stylesheetRange, rangeRequest)
+	if stylesheetRange.Code != http.StatusPartialContent || stylesheetRange.Body.String() != ":roo" {
+		t.Fatalf("application stylesheet range: %d %q", stylesheetRange.Code, stylesheetRange.Body.String())
+	}
+	stylesheetPost := httptest.NewRecorder()
+	router.ServeHTTP(stylesheetPost, httptest.NewRequest(http.MethodPost, "/assets/app.css", nil))
+	if stylesheetPost.Code != http.StatusMethodNotAllowed || stylesheetPost.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("application stylesheet method: %d allow=%q", stylesheetPost.Code, stylesheetPost.Header().Get("Allow"))
 	}
 
 	registration := httptest.NewRecorder()
@@ -110,7 +138,11 @@ func TestRegisterRejectsInvalidTrustedProxyCIDRs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = routes.Register(httpx.NewRouter(), renderer, &sql.DB{}, session.NewMemoryStore(), ratelimit.NewMemoryStore(10), config.Config{
+	staticAssets, err := appassets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = routes.Register(httpx.NewRouter(), renderer, staticAssets, &sql.DB{}, session.NewMemoryStore(), ratelimit.NewMemoryStore(10), config.Config{
 		Environment: "local", SessionSecret: strings.Repeat("s", 32), TrustedProxies: "127.0.0.1",
 		SessionIdleLifetime: time.Hour, SessionAbsoluteLifetime: 24 * time.Hour,
 		ApplicationURL: "http://localhost:8080", PasswordResetTTL: 30 * time.Minute,

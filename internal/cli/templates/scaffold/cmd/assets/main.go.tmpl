@@ -1,0 +1,27 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+
+	"[[.Module]]/resources/assets"
+)
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	if len(args) != 0 {
+		return errors.New("usage: go run ./cmd/assets")
+	}
+	if _, err := assets.Load(); err != nil {
+		return fmt.Errorf("validate application assets: %w", err)
+	}
+	fmt.Println("resources/assets/files is valid")
+	return nil
+}

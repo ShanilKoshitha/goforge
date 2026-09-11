@@ -15,6 +15,7 @@ import (
 	"[[.Module]]/internal/config"
 	"[[.Module]]/internal/http/controllers"
 	httperrors "[[.Module]]/internal/http/errors"
+	"[[.Module]]/resources/assets"
 	views "[[.Module]]/resources/views"
 	"[[.Module]]/routes"
 )
@@ -89,12 +90,16 @@ func New(settings config.Config, dependencies Dependencies) (*forge.App, error) 
 		httpx.MethodOverride("/app/"),
 		timeout,
 	)
+	staticAssets, err := assets.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load application assets: %w", err)
+	}
 	renderer, err := views.New()
 	if err != nil {
 		return nil, err
 	}
 	app.Router.OnError(httperrors.New(renderer))
-	if err := routes.Register(app.Router, renderer, dependencies.DB, dependencies.Sessions, attemptStore, settings, dependencies.PasswordRecovery, registration); err != nil {
+	if err := routes.Register(app.Router, renderer, staticAssets, dependencies.DB, dependencies.Sessions, attemptStore, settings, dependencies.PasswordRecovery, registration); err != nil {
 		return nil, err
 	}
 	return app, nil

@@ -1133,23 +1133,39 @@ semantics. The default allowlist is deliberately narrow; applications can
 replace or separately mount `net/http`, object storage, a CDN, or their own
 asset package when they need different media or caching policy.
 
-The format-12 adoption patch will treat every regular file below the asset input
-root as source, independent of extension. The server binary build will capture
+The format-12 adoption treats every regular file below the asset input root as
+source, independent of extension. The server binary build captures
 asset bytes in the same candidate as application Go and compiled views. The
 existing promotion boundary remains authoritative: failed, stale, or reverted
 candidates preserve the last-good server and do not notify the browser; a
 successful asset replacement emits the same single committed LiveReload
 generation.
 
-Format-12 applications will also own `cmd/assets`, a read-only executable that
-loads the same embedded set. `forge assets:check`, `forge test`, and `forge
-build` will delegate to it so quiescent invalid source fails before publication;
-the build will also refuse a source set that changes during its transaction.
-Application startup remains the final fail-closed boundary. This is validation,
-not an asset compiler: it writes nothing, and direct `go build` plus fail-closed
-application startup remain the ordinary Go escape path.
+Only format-12 projects add the asset root to development snapshots. The
+poller caches bounded asset digests by size and modification time, so unchanged
+inventories are not re-read every 100 milliseconds. It periodically revalidates
+cached content, while non-asset source is always content-checked, so preserved
+metadata cannot hide an edit forever. Metadata-only touches do not reload. Files
+beyond the default runtime bounds use a cheap metadata marker; the
+application-owned validator remains authoritative whenever a build is attempted,
+including when an application deliberately raises its visible asset limits.
 
-The adoption patch will let `forge dev` accept both formats 11 and 12 because
+Format-12 applications also own `cmd/assets`, a read-only executable that loads
+the same embedded set. `forge assets:check`, `forge test`, and `forge build`
+delegate to it so invalid source fails before publication. The application-owned
+required-name list catches view dependencies. To close edit/revert races, the
+opinionated build copies application source into a private temporary tree,
+rechecks ORM, views, and assets there, and compiles only that isolated validated
+tree. VCS state, tool output, caches, `node_modules`, and symlinks are excluded;
+ordinary compiled frontend output elsewhere remains part of the copy. Formats
+4–11 retain in-place builds; format-12 monorepos needing relative external
+replacements, implicit parent workspaces, or symlink traversal use direct Go.
+Startup remains
+the final fail-closed boundary. This is validation, not an asset compiler: it
+writes no application source, and direct `go build` plus fail-closed application
+startup remain the ordinary Go escape path.
+
+`forge dev` accepts both formats 11 and 12 because
 the server, worker, and scheduler process contract is unchanged; format 12 only
 adds embedded inputs to the watched server. Formats 10 and earlier remain
 explicitly unsupported by the three-process command.

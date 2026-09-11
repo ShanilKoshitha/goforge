@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.17.0\n" {
+	if output.String() != "forge 0.17.1\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -38,7 +38,12 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"cmd/server/main.go",
 		"cmd/worker/main.go",
 		"cmd/scheduler/main.go",
+		"cmd/assets/main.go",
 		"cmd/views/main.go",
+		"resources/assets/assets.go",
+		"resources/assets/assets_test.go",
+		"resources/assets/files/app.css",
+		"resources/assets/files/app.js",
 		"routes/routes.go",
 		"internal/application/application.go",
 		"internal/models/user.go",
@@ -88,8 +93,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "version: 11") {
-		t.Fatalf("fresh scaffold is not format 11:\n%s", manifest)
+	if !strings.Contains(string(manifest), "version: 12") {
+		t.Fatalf("fresh scaffold is not format 12:\n%s", manifest)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {
@@ -97,6 +102,9 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	}
 	if !strings.Contains(string(compiledViews), `Name: "pages/welcome"`) || strings.Contains(string(compiledViews), "@extends") {
 		t.Fatalf("generated views are not compiled into inspectable standard templates:\n%s", compiledViews)
+	}
+	if !strings.Contains(string(compiledViews), `asset \"app.css\"`) || !strings.Contains(string(compiledViews), `asset \"app.js\"`) {
+		t.Fatalf("generated layout does not use the application asset resolver:\n%s", compiledViews)
 	}
 	generatedORM, err := os.ReadFile(filepath.Join(directory, "internal", "models", "zz_orm_gen.go"))
 	if err != nil {
@@ -110,8 +118,20 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.14.2") {
-		t.Fatalf("scaffold does not pin GoForge v0.14.2:\n%s", moduleFile)
+	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.17.0") {
+		t.Fatalf("scaffold does not pin GoForge v0.17.0:\n%s", moduleFile)
+	}
+	moduleSums, err := os.ReadFile(filepath.Join(directory, "go.sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"github.com/ShanilKoshitha/goforge v0.17.0 h1:r3JWPwcB8YNNU9+22v4K3Bx6M7S8fbQ4HIB3rXRdlDY=",
+		"github.com/ShanilKoshitha/goforge v0.17.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+	} {
+		if !strings.Contains(string(moduleSums), want) {
+			t.Errorf("scaffold is missing public runtime checksum %q", want)
+		}
 	}
 	requestPath, requestContent, err := requestFile("CreateUser")
 	if err != nil {
@@ -137,6 +157,34 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	}
 	if err := Run([]string{"views:compile", "--check"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold views are not current: %v\n%s", err, checkOutput.String())
+	}
+	if err := Run([]string{"assets:check"}, &checkOutput, &checkOutput); err != nil {
+		t.Fatalf("fresh scaffold assets are invalid: %v\n%s", err, checkOutput.String())
+	}
+	if err := Run([]string{"build"}, &checkOutput, &checkOutput); err != nil {
+		t.Fatalf("fresh scaffold cannot publish its production binary: %v\n%s", err, checkOutput.String())
+	}
+	buildPath := workflowBuildDestination()
+	lastGoodBuild, err := os.ReadFile(buildPath)
+	if err != nil {
+		t.Fatalf("read production binary: %v", err)
+	}
+	cssPath := filepath.Join("resources", "assets", "files", "app.css")
+	css, err := os.ReadFile(cssPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cssPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run([]string{"build"}, &checkOutput, &checkOutput); err == nil || !strings.Contains(checkOutput.String(), "required application asset") {
+		t.Fatalf("build accepted a missing template asset: %v\n%s", err, checkOutput.String())
+	}
+	if current, err := os.ReadFile(buildPath); err != nil || !bytes.Equal(current, lastGoodBuild) {
+		t.Fatalf("failed asset build replaced last-good binary: %v", err)
+	}
+	if err := os.WriteFile(cssPath, css, 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if err := Run([]string{"make:job", "SendWelcome"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold cannot generate a job: %v\n%s", err, checkOutput.String())
@@ -257,7 +305,7 @@ func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
-			if err := os.WriteFile("forge.yaml", []byte("version: 12\n"), 0o644); err != nil {
+			if err := os.WriteFile("forge.yaml", []byte("version: 13\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer

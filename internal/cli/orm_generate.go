@@ -94,11 +94,19 @@ func runORMGenerate(ctx context.Context, args []string, stdout io.Writer) (err e
 }
 
 func generateORM(check bool, stdout io.Writer) error {
-	return generateORMWith(check, stdout, renderORMArtifact, writeManagedFile)
+	return generateORMAt(".", check, stdout)
 }
 
 func generateORMWith(check bool, stdout io.Writer, render ormArtifactRenderer, write ormArtifactWriter) error {
-	schema, err := parseModelSchema(filepath.Join("internal", "models"))
+	return generateORMAtWith(".", check, stdout, render, write)
+}
+
+func generateORMAt(root string, check bool, stdout io.Writer) error {
+	return generateORMAtWith(root, check, stdout, renderORMArtifact, writeManagedFile)
+}
+
+func generateORMAtWith(root string, check bool, stdout io.Writer, render ormArtifactRenderer, write ormArtifactWriter) error {
+	schema, err := parseModelSchema(filepath.Join(root, "internal", "models"))
 	if err != nil {
 		return fmt.Errorf("parse ORM models: %w", err)
 	}
@@ -106,7 +114,7 @@ func generateORMWith(check bool, stdout io.Writer, render ormArtifactRenderer, w
 	if err != nil {
 		return fmt.Errorf("generate ORM artifact: %w", err)
 	}
-	path := filepath.FromSlash(generatedORMPath)
+	path := filepath.Join(root, filepath.FromSlash(generatedORMPath))
 	current, readErr := os.ReadFile(path)
 	if readErr == nil && bytes.Equal(current, []byte(artifact)) {
 		fmt.Fprintf(stdout, "%s is current\n", generatedORMPath)

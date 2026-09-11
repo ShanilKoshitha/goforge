@@ -92,7 +92,10 @@ func compileViewArtifactWithValidation(files map[string]string, validate bool) (
 		return "", fmt.Errorf("compile generated views: %w", err)
 	}
 	if validate {
-		if _, err := view.ParseCompiled(compiled, template.FuncMap{"headline": strings.TrimSpace}); err != nil {
+		if _, err := view.ParseCompiled(compiled, template.FuncMap{
+			"asset":    func(string) (string, error) { return "/assets/example", nil },
+			"headline": strings.TrimSpace,
+		}); err != nil {
 			return "", fmt.Errorf("validate generated views: %w", err)
 		}
 	}

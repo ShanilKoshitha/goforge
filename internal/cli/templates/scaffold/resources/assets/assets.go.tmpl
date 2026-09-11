@@ -1,0 +1,57 @@
+// Package assets owns the application's embedded production asset set.
+package assets
+
+import (
+	"embed"
+	"fmt"
+	"sync"
+
+	"github.com/ShanilKoshitha/goforge/asset"
+)
+
+// Files contains the exact opaque bytes included in the production binary.
+// Replace this package or its route with ordinary net/http or external storage
+// when the application needs a different asset policy.
+//
+//go:embed all:files
+var Files embed.FS
+
+// Required lists the logical assets referenced by application-owned views.
+// Keep this explicit list in sync when adding or removing asset calls.
+var Required = [...]string{"app.css", "app.js"}
+
+var (
+	loadOnce sync.Once
+	loaded   *asset.Set
+	loadErr  error
+)
+
+// Load validates and returns the bounded application asset set.
+func Load() (*asset.Set, error) {
+	loadOnce.Do(func() {
+		loaded, loadErr = asset.New(Files, asset.Config{
+			Root:      "files",
+			URLPrefix: "/assets",
+		})
+		if loadErr != nil {
+			return
+		}
+		for _, name := range Required {
+			if _, err := loaded.URL(name); err != nil {
+				loadErr = fmt.Errorf("required application asset %q: %w", name, err)
+				loaded = nil
+				return
+			}
+		}
+	})
+	return loaded, loadErr
+}
+
+// URL resolves a logical name for the Forge asset function.
+func URL(name string) (string, error) {
+	assets, err := Load()
+	if err != nil {
+		return "", err
+	}
+	return assets.URL(name)
+}

@@ -1,14 +1,14 @@
 # v0.17 embedded production assets scorecard
 
-Status: **staged** — runtime bridge candidate on 2026-09-10; format-12 adoption
-follows only after the v0.17.0 module is publicly resolvable.
+Status: **candidate** — the v0.17.0 runtime bridge is public and resolvable;
+format-12 adoption is staged for v0.17.1 acceptance.
 
 Release boundary: v0.17.0 adds and verifies the backward-compatible public
 `asset` package while retaining the format-11 scaffold and its public v0.14.2
-pin. The format-12 scaffold, commands, watcher integration, and end-to-end
-acceptance criteria below are intentionally deferred to the next patch release.
-This prevents a merged generator from producing applications that depend on an
-unpublished framework version.
+pin. The v0.17.1 candidate now adopts format 12 against that published runtime,
+including official proxy checksums, commands, watcher integration, and the
+end-to-end acceptance criteria below. This prevents a merged generator from
+producing applications that depend on an unpublished framework version.
 
 Target:
 
@@ -43,9 +43,10 @@ old HTML across rolling deployments unless prior generations are retained.
 
 ## Runnable baseline — 2026-09-10
 
-- Public v0.16.0 and `origin/main` are merge `479fb2b`. Its main and tag
-  workflows passed the complete Linux/PostgreSQL and native Windows matrices,
-  and public `go install` reports `forge 0.16.0`.
+- Public v0.17.0 and `origin/main` are merge `f7f4c54`. Both pull-request
+  Linux/PostgreSQL and native Windows matrices passed twice. The public Go
+  proxy resolves the exact tag with module checksum
+  `h1:r3JWPwcB8YNNU9+22v4K3Bx6M7S8fbQ4HIB3rXRdlDY=`.
 - The merged framework suite passes from a clean worktree. Fresh format-11
   applications compile Blade/Twig-class Forge views and LiveReload accepted HTML
   edits, but the layout references no stylesheet or script, the application
@@ -54,6 +55,23 @@ old HTML across rolling deployments unless prior generations are retained.
   files. CSS, JavaScript, images, and fonts cannot trigger a last-good rebuild.
 - v0.16 explicitly excludes static-file conventions, production assets,
   manifests, fingerprints, transforms, and Node integration.
+
+## Candidate verification — 2026-09-10
+
+- Final candidate revision `7e20f5c` passes `go test ./... -count=1` in
+  180.039 seconds and `go test -race ./... -count=1` in 235.847 seconds;
+  `go vet ./...` also passes.
+- The complete CLI suite creates and inspects a fresh format-12 application,
+  checks the application-owned asset inventory, builds the isolated validated
+  source tree, exercises the exact routed GET/HEAD/range/method semantics, and
+  proves that a missing required asset fails without replacing the last binary.
+- Watcher regressions cover unchanged bounded-asset caching, periodic content
+  revalidation even when an edit preserves size and modification time,
+  immediate non-asset content detection, cheap metadata tracking beyond the
+  default asset bounds, and exclusion of the asset root from formats 4–11.
+- Independent adversarial review is clean at P0–P2 after the watcher fixes.
+  Remote Linux/PostgreSQL and native Windows matrices remain required before
+  this candidate can be accepted or tagged v0.17.1.
 
 ## Explicit non-goals
 

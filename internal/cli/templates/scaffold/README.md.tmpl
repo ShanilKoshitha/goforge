@@ -135,17 +135,24 @@ forge test
 forge build
 ```
 
-Both commands first check the generated ORM and then the compiled views without
-rewriting either artifact. `forge test` then runs exactly `go test ./...`.
-`forge build` stages a trimmed server executable and publishes it only after a
-successful compile as `bin/app` on Unix or `bin/app.exe` on Windows. A failed or
-cancelled build preserves the last-good binary.
+Both commands first check the generated ORM, compiled views, and embedded asset
+inventory without rewriting application files. `forge test` then runs exactly
+`go test ./...`.
+`forge build` copies application inputs to a private temporary tree, revalidates
+that exact copy, stages a trimmed server executable, and publishes it only after
+a successful compile as `bin/app` on Unix or `bin/app.exe` on Windows. VCS,
+cache/tool outputs, `node_modules`, and symlinks are excluded; put Node-produced
+browser output in an application directory such as `public/dist`. Use direct Go
+build for a monorepo that depends on relative external replacements, an implicit
+parent workspace, or symlink traversal. A failed or cancelled build preserves
+the last-good binary.
 
 Use the exact underlying workflow whenever the default is not suitable:
 
 ```sh
 forge orm:generate --check
 forge views:compile --check
+forge assets:check
 go test ./...
 go build -trimpath -o bin/app ./cmd/server
 go run ./cmd/server
@@ -157,7 +164,8 @@ Compose, apply migrations, select a test database, or change `.env`. `forge
 dev` supervises the watched server, worker, and scheduler with labelled output
 and reports ready only after all three have started. It starts no external
 service and applies no migration. `forge serve` watches Go, Forge view, SQL,
-module, environment, and manifest inputs. It
+module, environment, manifest, and every regular file below
+`resources/assets/files`. It
 builds candidates outside the repository, proves `/health` on a private
 loopback address, and promotes only a healthy replacement behind one stable
 public address. Invalid source leaves the last-good server reachable and
@@ -173,6 +181,34 @@ separate future work. Candidate
 promotion proves `/health` liveness, while `/ready` continues to reflect the
 database and exact migration state; run `forge migrate` explicitly after SQL
 changes.
+
+## Frontend assets
+
+Application-owned production assets live below `resources/assets/files` and
+are embedded as exact bytes by the ordinary `resources/assets` Go package. The
+default layout references `app.css` and `app.js` through the Forge `asset`
+function. Their explicit handler is mounted in `routes/routes.go`.
+The editable `assets.Required` list declares every logical name that must exist
+for application views, so `forge assets:check`, startup, and the build gate fail
+closed when a required file is missing.
+
+`forge serve` and `forge dev` compile a valid asset edit into the same
+last-good candidate server and trigger one browser reload only after promotion.
+Unsupported or invalid asset inventories leave the previous server reachable.
+Direct `go build ./cmd/server` and `go run ./cmd/server` embed the same bytes and
+require no asset compiler or generated manifest.
+
+Default asset URLs are stable and return strong content ETags with
+`Cache-Control: public, max-age=0, must-revalidate`. They do not claim immutable
+fingerprints that could break old HTML during a rolling deployment. Stable
+paths preserve availability but do not pair exact HTML and asset generations
+across instances; keep changes backward compatible during a roll or use
+deployment stickiness until retained generations are available. The default
+allowlist covers common CSS, JavaScript, image, font, JSON, WebAssembly files
+while refusing active HTML, SVG, and XML. Replace `resources/assets`, pass
+another standard `http.Handler`, or mount external storage when the application
+needs transforms, a CDN, different media types, or retained fingerprinted
+generations.
 
 Listener ownership needs no extra tool on Linux or Windows. macOS and other
 supported Unix targets use the system `lsof`; use `go run ./cmd/server`

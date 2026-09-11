@@ -21,18 +21,16 @@ func TestFormatElevenScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 		"database/migrations/000005_create_schedules.down.sql",
 	} {
 		if files[path] == "" {
-			t.Errorf("format-11 scaffold omits %s", path)
+			t.Errorf("format-12 scaffold omits %s", path)
 		}
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 11") {
-		t.Fatal("fresh scaffold must declare format 11")
+	if !strings.Contains(files["forge.yaml"], "version: 12") {
+		t.Fatal("fresh scaffold must declare format 12")
 	}
-	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.14.2") {
-		t.Fatal("fresh scaffold must pin the public schedule runtime")
+	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.17.0") {
+		t.Fatal("fresh scaffold must pin the format-12 asset runtime")
 	}
 	for _, checksum := range []string{
-		"github.com/ShanilKoshitha/goforge v0.14.2 h1:HIjhuU2nsE17gLc6C537lmILYB5aRkfs2dWlXFEuLYA=",
-		"github.com/ShanilKoshitha/goforge v0.14.2/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 		"github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=",
 		"github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=",
 	} {

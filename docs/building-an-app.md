@@ -52,7 +52,8 @@ forge migrate
 forge dev
 ```
 
-`forge migrate` delegates to the application-owned console. Format-11
+`forge migrate` delegates to the application-owned console. Format-11 and
+format-12
 `forge dev` starts the watched HTTP server, durable queue worker, and recurring
 scheduler together. It labels each service's output and reports the stack ready
 only after all three existing startup signals succeed. Any unexpected service
@@ -61,8 +62,8 @@ exit stops its peers, and Ctrl-C waits for the complete owned process tree.
 `forge serve` remains the HTTP-only development command. It
 compiles views with the application's own function map, stages an ordinary Go
 server binary outside the repository, and keeps one public address while it
-watches Go, `.forge.html`, SQL, module, environment, and project-manifest
-inputs. Eligible full HTML browser pages carry a development-only same-origin
+watches Go, `.forge.html`, SQL, module, environment, project-manifest, and every
+regular format-12 file below `resources/assets/files`. Eligible full HTML browser pages carry a development-only same-origin
 client and reload automatically after a valid replacement is completely
 committed. Failed edits leave the last-good page and server in place. The proxy
 does not rewrite compressed, streamed, ranged, downloadable, `no-transform`,
@@ -76,7 +77,7 @@ remains the exact one-shot escape hatch when watching or the development proxy
 does not fit.
 
 `forge dev` does not start Compose/PostgreSQL/Mailpit, apply migrations,
-generate a stale ORM artifact, change `.env`, or compile frontend assets. Its
+generate a stale ORM artifact, change `.env`, or run a hidden frontend build. Its
 browser reload client exists only at the development proxy; generated source
 and production binaries remain unchanged. Worker and scheduler source or
 registry changes require restarting `forge dev`; the server retains its
@@ -94,7 +95,7 @@ Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 `/issues`; handlers do not silently switch behavior based on content negotiation.
 
-Fresh format-10 and format-11 JSON resource indexes are bounded and paginated. `GET /issues`
+Fresh format-10 through format-12 JSON resource indexes are bounded and paginated. `GET /issues`
 defaults to `page=1&per_page=20`; each parameter must appear at most once and be
 a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
 The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,
@@ -115,6 +116,38 @@ and production renderer use that same editable `template.FuncMap`. See the
 [view language reference](view-language.md) for the complete bounded grammar and
 standard-library escape hatches.
 
+## Ship frontend assets
+
+Fresh format-12 applications keep opaque production inputs in
+`resources/assets/files`. The visible `resources/assets` package embeds the
+exact bytes, validates a bounded inventory at startup, resolves logical names,
+and supplies the standard `http.Handler` mounted in `routes/routes.go`. The
+default layout calls `asset "app.css"` and `asset "app.js"`; those names are
+declared in the application-owned `assets.Required` list so the build gate and
+startup fail before serving a binary with a missing required asset.
+
+The default stable `/assets/<logical-name>` URLs use strong SHA-256 ETags and
+`Cache-Control: public, max-age=0, must-revalidate`, with GET, HEAD, conditional,
+and byte-range semantics. Stable revalidation is deliberate: current-only
+fingerprinted URLs can break old HTML across rolling deployments unless prior
+asset generations are retained. Stable paths preserve availability, not exact
+generation consistency: keep asset changes backward compatible across a roll
+or use deployment stickiness. A future retained-publication contract may add
+immutable fingerprints with exact HTML/asset version pairing.
+
+There is no asset compile command because v0.17 performs no transformations.
+`go build ./cmd/server` is the complete direct production path and fails closed
+at application startup. The opinionated `forge build` additionally copies the
+application into a private temporary source tree, revalidates that exact copy,
+and compiles only the validated copy before publication. Tool output, VCS/cache
+directories, `node_modules`, and symlinks are excluded; keep Node-produced
+browser output in an application directory such as `public/dist` when using
+this format-12 gate. Formats 4–11 retain their in-place build behavior. Use the
+direct Go command for a format-12 monorepo that relies on relative external
+replacements, an implicit parent workspace, or symlink traversal.
+Replace the application package or route with ordinary
+`net/http`, a CDN, or a Node-backed pipeline when those tradeoffs fit.
+
 ## Test and build
 
 Run the complete generated application test suite and publish the production
@@ -125,11 +158,11 @@ forge test
 forge build
 ```
 
-Both commands support project formats 4 through 11 and accept no arguments. They
-first check `internal/models/zz_orm_gen.go` and then
-`resources/views/views_gen.go` without rewriting either file. A missing, stale,
-or invalid artifact stops before tests or compilation and reports the explicit
-generation command needed to repair it.
+Both commands support project formats 4 through 12 and accept no arguments. They
+first check `internal/models/zz_orm_gen.go`, then
+`resources/views/views_gen.go`, and for format 12 the embedded asset inventory,
+without rewriting application files. A missing, stale, or invalid input stops
+before tests or compilation and reports the explicit repair or check command.
 
 After preflight, `forge test` executes exactly:
 
@@ -147,6 +180,7 @@ checks and commands are:
 ```sh
 forge orm:generate --check
 forge views:compile --check
+forge assets:check
 go test ./...
 go build -trimpath -o bin/app ./cmd/server
 go build -trimpath -o bin/scheduler ./cmd/scheduler

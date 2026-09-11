@@ -33,8 +33,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
 		t.Fatal("project name must be quoted YAML")
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 11") {
-		t.Fatal("fresh scaffold must declare format 11")
+	if !strings.Contains(files["forge.yaml"], "version: 12") {
+		t.Fatal("fresh scaffold must declare format 12")
 	}
 	if !strings.Contains(files["resources/views/pages/welcome.forge.html"], "{{.Title}}") {
 		t.Fatal("HTML template expression was altered")
@@ -42,13 +42,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["go.mod"], `=> "`) {
 		t.Fatal("local replacement path must be quoted")
 	}
-	for _, checksum := range []string{
-		"github.com/ShanilKoshitha/goforge v0.14.2 h1:HIjhuU2nsE17gLc6C537lmILYB5aRkfs2dWlXFEuLYA=",
-		"github.com/ShanilKoshitha/goforge v0.14.2/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
-	} {
-		if !strings.Contains(files["go.sum"], checksum) {
-			t.Errorf("generated go.sum omits released framework checksum %q", checksum)
-		}
+	if strings.Contains(files["go.sum"], "github.com/ShanilKoshitha/goforge v0.14.2") {
+		t.Fatal("fresh scaffold retains a stale framework checksum")
 	}
 	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {
 		t.Fatal("PostgreSQL 18 volume must contain its versioned data directory")

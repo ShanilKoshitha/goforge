@@ -1,0 +1,49 @@
+package assets
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestEmbeddedApplicationAssetsAreResolvableAndRevalidated(t *testing.T) {
+	if Required != [...]string{"app.css", "app.js"} {
+		t.Fatalf("required assets = %v", Required)
+	}
+	assets, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssURL, err := assets.URL("app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cssURL != "/assets/app.css" {
+		t.Fatalf("CSS URL = %q", cssURL)
+	}
+	if _, err := assets.URL("missing.css"); err == nil {
+		t.Fatal("unknown application asset resolved")
+	}
+
+	response := httptest.NewRecorder()
+	assets.ServeHTTP(response, httptest.NewRequest(http.MethodGet, cssURL, nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), ":root") {
+		t.Fatalf("CSS response: %d %q", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "public, max-age=0, must-revalidate" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	etag := response.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("CSS response has no strong ETag")
+	}
+
+	revalidated := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, cssURL, nil)
+	request.Header.Set("If-None-Match", etag)
+	assets.ServeHTTP(revalidated, request)
+	if revalidated.Code != http.StatusNotModified || revalidated.Body.Len() != 0 {
+		t.Fatalf("conditional CSS response: %d %q", revalidated.Code, revalidated.Body.String())
+	}
+}

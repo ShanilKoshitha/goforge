@@ -29,8 +29,29 @@ func runProjectBuild(
 	stdout, stderr io.Writer,
 	processes processRunner,
 ) error {
+	if err := requireProjectRoot(); err != nil {
+		return err
+	}
+	if err := requireProjectFormatRange(minimumWorkflowFormat, currentProjectFormat); err != nil {
+		return err
+	}
 	if err := checkProjectArtifacts(ctx, stdin, stdout, stderr, processes); err != nil {
 		return err
+	}
+	format, err := projectFormat()
+	if err != nil {
+		return err
+	}
+	stagedRoot := ""
+	if format >= 12 {
+		stagedRoot, err = stageProjectSource(ctx, ".")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(stagedRoot)
+		if err := checkStagedProjectArtifacts(ctx, stdin, stdout, stderr, processes, stagedRoot, format); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll("bin", 0o755); err != nil {
 		return fmt.Errorf("create build output directory: %w", err)
@@ -53,8 +74,15 @@ func runProjectBuild(
 		return fmt.Errorf("prepare temporary build artifact: %w", err)
 	}
 	defer os.Remove(temporaryPath)
-
-	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "build", "-trimpath", "-o", temporaryPath, "./cmd/server"); err != nil {
+	buildArgs := []string{"build", "-trimpath", "-o", temporaryPath, "./cmd/server"}
+	if stagedRoot != "" {
+		absoluteTemporaryPath, err := filepath.Abs(temporaryPath)
+		if err != nil {
+			return fmt.Errorf("resolve temporary build artifact: %w", err)
+		}
+		buildArgs = []string{"-C", stagedRoot, "build", "-trimpath", "-o", absoluteTemporaryPath, "./cmd/server"}
+	}
+	if err := processes.Run(ctx, stdin, stdout, stderr, "go", buildArgs...); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -72,6 +100,26 @@ func runProjectBuild(
 		return fmt.Errorf("publish build artifact %s: %w", filepath.ToSlash(destination), err)
 	}
 	fmt.Fprintf(stdout, "built %s\n", filepath.ToSlash(destination))
+	return nil
+}
+
+func checkStagedProjectArtifacts(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	processes processRunner,
+	root string,
+	format int,
+) error {
+	if err := generateORMAt(root, true, stdout); err != nil {
+		return err
+	}
+	if err := processes.Run(ctx, stdin, stdout, stderr, "go", "-C", root, "run", "./cmd/views", "--check"); err != nil {
+		return err
+	}
+	if format >= 12 {
+		return processes.Run(ctx, stdin, stdout, stderr, "go", "-C", root, "run", "./cmd/assets")
+	}
 	return nil
 }
 
@@ -96,5 +144,30 @@ func checkProjectArtifacts(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return runProjectViewCompiler(ctx, stdin, stdout, stderr, processes, true)
+	if err := runProjectViewCompiler(ctx, stdin, stdout, stderr, processes, true); err != nil {
+		return err
+	}
+	format, err := projectFormat()
+	if err != nil {
+		return err
+	}
+	if format >= 12 {
+		return runProjectAssetCheck(ctx, stdin, stdout, stderr, processes)
+	}
+	return nil
+}
+
+func runProjectAssetCheck(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	processes processRunner,
+) error {
+	if err := requireProjectRoot(); err != nil {
+		return err
+	}
+	if err := requireProjectFormatRange(12, currentProjectFormat); err != nil {
+		return err
+	}
+	return processes.Run(ctx, stdin, stdout, stderr, "go", "run", "./cmd/assets")
 }

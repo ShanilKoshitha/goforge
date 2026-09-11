@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,9 +14,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ShanilKoshitha/goforge/asset"
 )
 
 const generatedViewSource = "resources/views/views_gen.go"
+
+const assetSnapshotRevalidationInterval = 5 * time.Second
+const assetSourceRoot = "resources/assets/files/"
 
 const sourceWatchErrorTolerance = 500 * time.Millisecond
 
@@ -31,9 +37,33 @@ var excludedSourceDirectories = map[string]struct{}{
 }
 
 // sourceSnapshot identifies the paths and contents that can affect a
-// development server. File metadata is deliberately excluded so touching a
-// source file without changing it does not cause a rebuild.
+// development server. Within the default asset bounds, metadata is only a
+// cache key and content remains authoritative, so touching an unchanged file
+// does not cause a rebuild. Oversized/default-overflow assets use a metadata
+// marker until application-owned validation accepts or rejects the candidate.
 type sourceSnapshot [sha256.Size]byte
+
+type sourceDigestCacheEntry struct {
+	size     int64
+	modified int64
+	digest   [sha256.Size]byte
+	checked  time.Time
+}
+
+type sourceSnapshotReader struct {
+	includeAssets bool
+	cache         map[string]sourceDigestCacheEntry
+	hashes        int
+	now           func() time.Time
+}
+
+func newSourceSnapshotReader(includeAssets bool) *sourceSnapshotReader {
+	return &sourceSnapshotReader{
+		includeAssets: includeAssets,
+		cache:         make(map[string]sourceDigestCacheEntry),
+		now:           time.Now,
+	}
+}
 
 type sourceGenerationTracker struct {
 	cancel     context.CancelFunc
@@ -54,6 +84,18 @@ func startSourceGenerationTracker(
 	initial sourceSnapshot,
 	pollInterval time.Duration,
 ) *sourceGenerationTracker {
+	reader := newSourceSnapshotReader(true)
+	return startSourceGenerationTrackerWithReader(ctx, initial, pollInterval, func() (sourceSnapshot, error) {
+		return reader.Read(root)
+	})
+}
+
+func startSourceGenerationTrackerWithReader(
+	ctx context.Context,
+	initial sourceSnapshot,
+	pollInterval time.Duration,
+	read func() (sourceSnapshot, error),
+) *sourceGenerationTracker {
 	trackContext, cancel := context.WithCancel(ctx)
 	tracker := &sourceGenerationTracker{
 		cancel:    cancel,
@@ -71,7 +113,7 @@ func startSourceGenerationTracker(
 			case <-trackContext.Done():
 				return
 			case <-poll.C:
-				current, err := takeSourceSnapshot(root)
+				current, err := read()
 				if err != nil {
 					tracker.recordError(err)
 					continue
@@ -222,6 +264,10 @@ func (tracker *sourceGenerationTracker) Close() {
 // takeSourceSnapshot returns a deterministic digest of application source.
 // Paths are relative to root and normalized with forward slashes.
 func takeSourceSnapshot(root string) (sourceSnapshot, error) {
+	return newSourceSnapshotReader(true).Read(root)
+}
+
+func (reader *sourceSnapshotReader) Read(root string) (sourceSnapshot, error) {
 	rootInfo, err := os.Stat(root)
 	if err != nil {
 		return sourceSnapshot{}, fmt.Errorf("inspect source root: %w", err)
@@ -231,10 +277,17 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 	}
 
 	type sourceFile struct {
-		path string
-		full string
+		path         string
+		full         string
+		size         int64
+		modified     int64
+		asset        bool
+		metadataOnly bool
 	}
 	var files []sourceFile
+	assetFiles := 0
+	var assetBytes int64
+	assetTotalExceeded := false
 	err = filepath.WalkDir(root, func(name string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// A file or directory disappearing during a scan is an ordinary
@@ -258,12 +311,12 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 			if isRootSourceFile(relative) {
 				return fmt.Errorf("source path %s is not a regular file", relative)
 			}
-			if _, excluded := excludedSourceDirectories[entry.Name()]; excluded {
+			if _, excluded := excludedSourceDirectories[entry.Name()]; excluded && !(reader.includeAssets && strings.HasPrefix(relative, assetSourceRoot)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !isWatchedSourcePath(relative) {
+		if !isWatchedSourcePath(relative, reader.includeAssets) {
 			return nil
 		}
 		info, err := entry.Info()
@@ -273,7 +326,22 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("source path %s is not a regular file", relative)
 		}
-		files = append(files, sourceFile{path: relative, full: name})
+		isAsset := strings.HasPrefix(relative, assetSourceRoot)
+		metadataOnly := false
+		if isAsset {
+			assetFiles++
+			metadataOnly = assetFiles > asset.DefaultMaxFiles || info.Size() > asset.DefaultMaxFileBytes || assetTotalExceeded || info.Size() > asset.DefaultMaxTotalBytes-assetBytes
+			if info.Size() > asset.DefaultMaxTotalBytes-assetBytes {
+				assetTotalExceeded = true
+			}
+			if !metadataOnly {
+				assetBytes += info.Size()
+			}
+		}
+		files = append(files, sourceFile{
+			path: relative, full: name, size: info.Size(), modified: info.ModTime().UnixNano(),
+			asset: isAsset, metadataOnly: metadataOnly,
+		})
 		return nil
 	})
 	if err != nil {
@@ -282,20 +350,55 @@ func takeSourceSnapshot(root string) (sourceSnapshot, error) {
 	sort.Slice(files, func(left, right int) bool { return files[left].path < files[right].path })
 
 	digest := sha256.New()
+	nextCache := make(map[string]sourceDigestCacheEntry, len(files))
+	now := reader.now()
 	for _, file := range files {
-		content, err := os.ReadFile(file.full)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
+		entry := sourceDigestCacheEntry{size: file.size, modified: file.modified, checked: now}
+		if file.metadataOnly {
+			metadata := sha256.New()
+			writeSnapshotField(metadata, []byte("asset-metadata-only"))
+			writeSnapshotSize(metadata, file.size)
+			writeSnapshotSize(metadata, file.modified)
+			copy(entry.digest[:], metadata.Sum(nil))
+		} else if cached, ok := reader.cache[file.path]; file.asset && ok && cached.size == file.size && cached.modified == file.modified && now.Sub(cached.checked) < assetSnapshotRevalidationInterval {
+			entry.digest = cached.digest
+			entry.checked = cached.checked
+		} else {
+			fileDigest, err := hashSourceFile(file.full, file.size)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				return sourceSnapshot{}, fmt.Errorf("read source %s: %w", file.path, err)
 			}
-			return sourceSnapshot{}, fmt.Errorf("read source %s: %w", file.path, err)
+			entry.digest = fileDigest
+			reader.hashes++
+		}
+		if file.asset {
+			nextCache[file.path] = entry
 		}
 		writeSnapshotField(digest, []byte(file.path))
-		writeSnapshotField(digest, content)
+		writeSnapshotField(digest, entry.digest[:])
 	}
+	reader.cache = nextCache
 	var snapshot sourceSnapshot
 	copy(snapshot[:], digest.Sum(nil))
 	return snapshot, nil
+}
+
+func hashSourceFile(name string, size int64) (result [sha256.Size]byte, err error) {
+	opened, err := os.Open(name)
+	if err != nil {
+		return result, err
+	}
+	content := sha256.New()
+	copied, readErr := io.CopyN(content, opened, size)
+	closeErr := opened.Close()
+	if readErr != nil || closeErr != nil || copied != size {
+		return result, errors.Join(readErr, closeErr)
+	}
+	copy(result[:], content.Sum(nil))
+	return result, nil
 }
 
 // waitForChangedSourceSnapshot waits until source differs from previous and
@@ -483,9 +586,12 @@ func validateSourceWatchDurations(pollInterval, debounce, errorTolerance time.Du
 	return nil
 }
 
-func isWatchedSourcePath(relative string) bool {
+func isWatchedSourcePath(relative string, includeAssets bool) bool {
 	if relative == generatedViewSource {
 		return false
+	}
+	if includeAssets && strings.HasPrefix(relative, assetSourceRoot) {
+		return true
 	}
 	if isRootSourceFile(relative) {
 		return true
@@ -505,10 +611,14 @@ func isRootSourceFile(relative string) bool {
 }
 
 func writeSnapshotField(digest interface{ Write([]byte) (int, error) }, value []byte) {
-	var size [8]byte
-	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
-	_, _ = digest.Write(size[:])
+	writeSnapshotSize(digest, int64(len(value)))
 	_, _ = digest.Write(value)
+}
+
+func writeSnapshotSize(digest interface{ Write([]byte) (int, error) }, value int64) {
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(value))
+	_, _ = digest.Write(size[:])
 }
 
 func stopAndDrainTimer(timer *time.Timer) {

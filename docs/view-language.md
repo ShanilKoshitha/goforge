@@ -138,6 +138,12 @@ Format-5 applications own `resources/views/functions.go`. Its
 renderer. Adding a function therefore changes ordinary application code, and a
 missing function fails before a stale artifact is published.
 
+Fresh format-12 applications also register an `asset` function from their
+ordinary `resources/assets` package. `{{asset "app.css"}}` resolves only a known,
+validated logical name and remains a string subject to `html/template`'s
+contextual URL escaping. Applications can replace that function and handler
+without changing the Forge compiler.
+
 `forge views:compile` refreshes the generated artifact. The `--check` form never
 writes: it succeeds only when sources, mappings, and generated Go are current.
 

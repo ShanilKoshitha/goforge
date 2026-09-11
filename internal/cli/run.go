@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.17.0"
+const Version = "0.17.1"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -60,6 +60,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return errors.New("usage: forge build")
 		}
 		return runProjectBuild(ctx, stdin, stdout, stderr, processes)
+	case "assets:check":
+		if len(args) != 1 {
+			return errors.New("usage: forge assets:check")
+		}
+		return runProjectAssetCheck(ctx, stdin, stdout, stderr, processes)
 	case "views:compile":
 		if len(args) > 2 || len(args) == 2 && args[1] != "--check" {
 			return errors.New("usage: forge views:compile [--check]")
@@ -156,6 +161,7 @@ Usage:
   forge dev
   forge test
   forge build
+  forge assets:check
   forge migrate
   forge queue:work
   forge queue:failed
@@ -188,7 +194,7 @@ default; append :nullable to allow null. Without --field, resources retain the
 legacy name:string and versionless-update contract. Any explicit --field uses
 schema-driven output and requires a positive version on updates.
 
-Format-10 and format-11 projects may add repeatable required relationships with
+Format-10 through format-12 projects may add repeatable required relationships with
 --belongs-to <name>:<ExistingResource>. The target must already be a generated
 resource. Relationship IDs remain explicit, owner-scoped, and database-backed.
 
