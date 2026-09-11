@@ -1,7 +1,6 @@
 # v0.18 explicit resource authorization scorecard
 
-Status: **candidate** — local acceptance complete; hosted PostgreSQL and native
-Windows evidence pending — 2026-09-11
+Status: **accepted** — 2026-09-11
 
 Target:
 
@@ -31,7 +30,7 @@ controllers, repositories, or route registration with ordinary Go.
 | A privileged scope is useful without framework surgery | passing | Replacing the default policy with application-owned Go can list, view, update, and delete another owner's resource while preserving its owner and same-owner relationship invariants; denying one action requires no controller or repository rewrite |
 | Existing applications remain compatible | passing | Formats 4–12 retain their generated source and behavior; only format 13 receives the policy contract, and released-format compatibility plus fresh no-replace application checks remain green |
 | The workflow remains conventional and replaceable | passing | Generated policy, controller, repository, route wiring, ORM predicates, and tests are gofmt'd readable Go; direct package tests and direct `go run`/`go build` paths work without the CLI runtime |
-| The milestone passes twice without regression | candidate | Framework normal/race/vet/build, frozen compatibility, current scaffold, fresh generated PostgreSQL authorization journey, native Windows checks, and independent adversarial review pass twice on the final revision |
+| The milestone passes twice without regression | passing | Framework normal/race/vet/build, frozen compatibility, current scaffold, fresh generated PostgreSQL authorization journey, native Windows checks, and independent adversarial review pass twice on the final revision |
 
 ## Runnable baseline — 2026-09-11
 
@@ -54,9 +53,9 @@ controllers, repositories, or route registration with ordinary Go.
   row. Those secure behaviors are the compatibility floor, not functionality to
   remove.
 
-## Candidate acceptance evidence — 2026-09-11
+## Acceptance evidence — 2026-09-11
 
-- Final local candidate `e50a688` passes `go test ./... -count=1` with the CLI
+- Local candidate `e50a688` passes `go test ./... -count=1` with the CLI
   matrix completing in 147.398 seconds and `go test -race ./... -count=1` with
   the CLI matrix completing in 257.487 seconds. `go vet ./...`,
   `go mod tidy -diff`, formatting, and `git diff --check` are clean.
@@ -78,8 +77,17 @@ controllers, repositories, or route registration with ordinary Go.
   runs its generated tests under the race detector.
 - Independent adversarial review found no remaining P0, P1, or P2 issue after
   the acceptance-helper, browser parity, documentation, compatibility, and
-  no-replace race-evidence corrections. Hosted Linux/PostgreSQL and native
-  Windows runs remain required before acceptance.
+  no-replace race-evidence corrections. The first hosted database run exposed a
+  mismatched generated module name in the new journey's reused schema helper;
+  `20b47fd` aligned the module contract, reproduced helper compilation locally,
+  and passed a separate final review with no P0–P2 finding.
+- [PR #24](https://github.com/ShanilKoshitha/goforge/pull/24) merged the final
+  candidate at `c889dea`. Its corrected
+  [push run](https://github.com/ShanilKoshitha/goforge/actions/runs/34605593740)
+  and [pull-request run](https://github.com/ShanilKoshitha/goforge/actions/runs/34605598255)
+  independently passed Linux/PostgreSQL and native Windows. The exact merged
+  [main run](https://github.com/ShanilKoshitha/goforge/actions/runs/34607290670)
+  passed the same complete matrix.
 
 ## Explicit non-goals
 
