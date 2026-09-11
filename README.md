@@ -87,7 +87,7 @@ The v0.15 CLI composes the watched server, durable worker, and recurring
 scheduler behind one labelled, truthful development lifecycle. The v0.16
 release closes the server-rendered browser loop with a randomized same-origin
 client and committed-generation SSE while keeping all reload machinery outside
-generated and production application code. The v0.17 candidate gives fresh
+generated and production application code. The v0.17 release gives fresh
 applications an ordinary embedded CSS/JavaScript package, explicit route and
 Forge `asset` helper. Direct Go builds contain the exact application-owned
 bytes; stable URLs use strong ETags and mandatory revalidation without a hidden

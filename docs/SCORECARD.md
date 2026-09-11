@@ -1,3 +1,69 @@
+# v0.18 explicit resource authorization scorecard
+
+Status: **in progress** — 2026-09-11
+
+Target:
+
+> From a fresh format-13 application, generate an authenticated resource whose
+> application-owned policy is visibly injected into both JSON and browser
+> controllers. Keep the secure owner-only default, then replace it with ordinary
+> Go to grant an explicit all-record scope or deny one action. Both transports
+> must enforce the same decision, every database read and mutation must apply the
+> authorized scope in SQL, and hidden, cross-owner, and missing records must
+> remain indistinguishable.
+
+The smallest complete workflow adds one typed policy and scope contract to each
+new resource. It is deliberately not a role database, permission DSL, global
+gate registry, reflection system, or row-by-row authorization callback. Teams
+own the policy source and constructor wiring and can replace the generated
+controllers, repositories, or route registration with ordinary Go.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| The secure default remains owner-only | candidate | A fresh resource's default policy scopes list, pagination, show, edit, update, delete, relationship loading, and relationship choices to the authenticated owner; create remains explicitly authorized and assigns the authenticated owner |
+| Policy decisions are explicit application code | candidate | The generated resource owns a typed policy with named action methods and closed owner/all scopes; routes visibly construct and inject it into both controllers without reflection, runtime registration, annotations, or a role DSL |
+| HTTP denial semantics are coherent | candidate | Unauthenticated requests remain 401; an authenticated action-level denial is 403; records outside the authorized scope and absent records are both 404; malformed or zero policy/scope values never grant access |
+| JSON and browser behavior stays in parity | candidate | Index/new/create/show/edit/update/delete exercise the same policy contract in both transports, including validation and stale-write paths, without leaking hidden record existence |
+| Persistence enforces authorization atomically | candidate | List/find/paginate predicates and update/delete predicates include the validated scope in the executed SQL; no fetch-authorize-mutate window can write a record outside that scope, and optimistic concurrency retains 404-versus-409 behavior inside the authorized scope |
+| A privileged scope is useful without framework surgery | candidate | Replacing the default policy with application-owned Go can list, view, update, and delete another owner's resource while preserving its owner and same-owner relationship invariants; denying one action requires no controller or repository rewrite |
+| Existing applications remain compatible | candidate | Formats 4–12 retain their generated source and behavior; only format 13 receives the policy contract, and released-format compatibility plus fresh no-replace application checks remain green |
+| The workflow remains conventional and replaceable | candidate | Generated policy, controller, repository, route wiring, ORM predicates, and tests are gofmt'd readable Go; direct package tests and direct `go run`/`go build` paths work without the CLI runtime |
+| The milestone passes twice without regression | candidate | Framework normal/race/vet/build, frozen compatibility, current scaffold, fresh generated PostgreSQL authorization journey, native Windows checks, and independent adversarial review pass twice on the final revision |
+
+## Runnable baseline — 2026-09-11
+
+- `origin/main` is merge `1667f16`. GitHub Actions run
+  [34546193006](https://github.com/ShanilKoshitha/goforge/actions/runs/34546193006)
+  passed the Linux/PostgreSQL and native Windows matrices. A clean worktree at
+  that exact commit passes `go test ./... -count=1` and `go vet ./...`.
+- The repository root had remained on `feature/v0.12-auth-recovery`, 86 commits
+  behind `origin/main`, which made local results appear inconsistent with the
+  merged branch. It is now fast-forwarded to the exact merged commit while the
+  original untracked `Agents.md` remains untouched. Milestone work stays in an
+  isolated format-13 branch.
+- Generated routes require authentication, but controllers accept only a
+  repository and repositories take a raw `userID`. Owner predicates are
+  repeated directly in every query. There is no policy, voter, gate, permission,
+  or typed scope seam to express an editor, administrator, or read-only user
+  without rewriting controllers and persistence together.
+- The current owner predicate already prevents cross-owner reads and writes,
+  and optimistic updates already distinguish a hidden row from a stale visible
+  row. Those secure behaviors are the compatibility floor, not functionality to
+  remove.
+
+## Explicit non-goals
+
+- A complete RBAC/ABAC product, role or permission schema, administrator UI,
+  persisted grants, policy discovery, annotations, or a global gate registry.
+- Row-state callbacks that authorize after fetching a record, implicit tenant
+  discovery, arbitrary SQL supplied by policies, or in-memory filtering.
+- Field-level visibility or mutation rules, ownership transfer, bulk actions,
+  soft deletion, audit trails, impersonation, or authorization caching.
+- Updating already-generated application resources in place. Existing source
+  remains application-owned; teams can adopt the explicit seam manually.
+
 # v0.17 embedded production assets scorecard
 
 Status: **accepted** — 2026-09-10
@@ -368,7 +434,7 @@ their schedule journey. No project-format or database migration boundary changes
 
 # v0.14 durable recurring schedules scorecard
 
-Status: **in progress** — 2026-09-09
+Status: **accepted** — 2026-09-10
 
 Target:
 
@@ -409,10 +475,10 @@ module tag.
 | Multiple scheduler processes are safe | passing | Concurrent runners coordinate per schedule without a global leader; one occurrence creates at most one queue row while unrelated schedule rows can progress independently |
 | Missed-run and overlap policy are bounded | passing | Missed occurrences coalesce to the latest occurrence inside a bounded grace window, older windows record a skip, and the default active-job deduplication policy suppresses overlap while advancing the cursor |
 | Definition drift fails closed | passing | A canonical declarative fingerprint is stored durably; a same-name mismatch stops without rewriting state or dispatching, dormant rows absent from the explicit registry never run, and changed-registry deployment boundaries are explicit |
-| Operational commands form one inspectable workflow | candidate | `schedule:list`, one-shot `schedule:run`, daemon `schedule:work`, direct `go run ./cmd/scheduler`, deterministic output, signal cancellation, and bounded configuration all work from outside the source directory |
-| Fresh and existing applications remain coherent | candidate | Format 11 includes visible registry, scheduler binary, config, migrations, and docs; formats 8–10 retain compatible commands; format 10 belongs-to remains supported; server, worker, scheduler, console, views, and ORM all compile |
-| Escape hatches stay complete | candidate | Public registry, scheduler, store/coordinator, observer, and PostgreSQL primitives are usable directly; application teams can replace cron registration, payload factories, process wiring, SQL adapter, or the entire scheduler |
-| The milestone passes twice without regression | in progress | Full framework race/vet/build, fresh generated application, competing-process PostgreSQL acceptance, native Windows CLI coverage, and independent architecture/adversarial review pass twice on the final revision |
+| Operational commands form one inspectable workflow | passing | `schedule:list`, one-shot `schedule:run`, daemon `schedule:work`, direct `go run ./cmd/scheduler`, deterministic output, signal cancellation, and bounded configuration all work from outside the source directory |
+| Fresh and existing applications remain coherent | passing | Format 11 includes visible registry, scheduler binary, config, migrations, and docs; formats 8–10 retain compatible commands; format 10 belongs-to remains supported; server, worker, scheduler, console, views, and ORM all compile |
+| Escape hatches stay complete | passing | Public registry, scheduler, store/coordinator, observer, and PostgreSQL primitives are usable directly; application teams can replace cron registration, payload factories, process wiring, SQL adapter, or the entire scheduler |
+| The milestone passes twice without regression | passing | Full framework race/vet/build, fresh generated application, competing-process PostgreSQL acceptance, native Windows CLI coverage, and independent architecture/adversarial review passed twice on the accepted v0.14.3 adoption revision |
 
 ## Runnable baseline — 2026-09-09
 
@@ -473,7 +539,7 @@ module tag.
   `h1:Dt5aHth+6iG5ODwUL8mLGL0ye6piP1klyYoGgZ3TE7k=` and module-file checksum
   `h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`.
 
-## Stage B format-11 candidate evidence — 2026-09-09
+## Stage B format-11 adoption evidence — 2026-09-09
 
 - Unsigned commits `59722eb`, `c962cae`, and `045f2d6` add the centralized
   format-11 compatibility boundary and schedule commands, the generated
@@ -495,8 +561,12 @@ module tag.
 - Independent audit found no P0/P1 scheduler-core design blocker. It required and
   verified format-10 relationship compatibility, format-12 future refusal,
   same-database queue/schedule transactions, worker registration, synchronous
-  startup signalling, exact schema/checksums, and process-level acceptance. The
-  final two clean CI runs remain pending.
+  startup signalling, exact schema/checksums, and process-level acceptance.
+- The subsequent accepted v0.14.2–v0.14.3 hardening directly above records the
+  final public runtime/adoption boundary, two consecutive local suites,
+  independent review, and passing push/pull-request Linux/PostgreSQL and native
+  Windows matrices. Public v0.14.3 is fixed at merge `f1550c0`, as independently
+  recorded by the accepted v0.15 baseline.
 
 ## Explicit non-goals for v0.14
 

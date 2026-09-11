@@ -1175,3 +1175,56 @@ but opaque assets need no artificial build pipeline. Direct embedding produces
 the smallest inspectable Go workflow today while leaving transforms, retained
 fingerprints, external hosting, and Node-based adapters as honest independent
 contracts.
+
+## D041 — Resource authorization is an application-owned policy plus a closed SQL scope
+
+**Status:** accepted for v0.18 implementation
+
+Format-13 resources own a small typed policy next to their controllers and
+repository. Its named methods cover listing, viewing, creating, updating, and
+deleting. The generated owner policy is the secure default. It returns a closed
+resource scope for record-bearing actions and a direct decision for creation.
+The only generated scopes are one validated owner or the conspicuous all-record
+scope; the zero value is invalid. Policies cannot inject arbitrary SQL.
+
+Routes visibly construct one policy and pass it to both JSON and browser
+controllers. There is no package scan, annotation, role table, permission DSL,
+global gate, or reflection. Application teams may edit the policy, implement
+another typed policy, replace constructor wiring, call the repository directly,
+or replace the entire controller/repository path with ordinary Go.
+
+Authorization happens after authentication and before application work. A
+missing user remains 401. `ErrForbidden` from a policy becomes 403. A nil policy,
+invalid scope, or policy error fails closed and is not treated as a grant.
+Repository lookup applies the returned scope, so a missing record and a record
+outside that scope both remain 404. Both transports use the same policy methods:
+browser edit requires update authority, and browser new requires create
+authority rather than merely the ability to render a form.
+
+Repositories accept the closed scope instead of a raw caller identity for
+list, pagination, find, update, and delete. They validate it again and translate
+it into ORM predicates in the executed statement. Update and delete therefore
+cannot cross an authorization boundary between a preliminary fetch and the
+write. Optimistic-version existence checks reuse the same scope, preserving 404
+for hidden rows and 409 only for a stale visible row. Create remains owned by
+the authenticated user after a separate create decision; ownership transfer is
+not added.
+
+Required belongs-to keys retain their same-owner database invariant. Owner
+scopes filter relationship loads normally. An all-record resource scope may
+load the relationships of visible records, but create choices remain scoped to
+the new record's authenticated owner and edit choices to the existing record's
+owner. The composite foreign key remains the atomic authority for association
+writes, including privileged updates.
+
+Only format 13 receives this generated contract. Formats 4–12 retain their
+current source and raw owner-ID repository interfaces, and existing generated
+resources are not rewritten. A role schema, persisted permissions, row-state
+callbacks, field authorization, ownership transfer, and bulk authorization are
+separate milestones.
+
+Reason: authentication without an explicit authorization seam forces normal
+administrator, editor, and read-only requirements to fork both transport and
+persistence code. A generated policy with closed SQL scopes provides the
+familiar policy experience while keeping access rules visible, fail-closed, and
+atomic in conventional Go.
