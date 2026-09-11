@@ -44,9 +44,9 @@ templates under `resources/views/pages/issues` and regenerates the clearly
 marked route and compiled-view registries. Human-owned files are preflighted and
 never overwritten.
 
-Fresh format-13 resources also contain `authorization.go`. Its typed
-`AuthorizeFunc` handles list, create, view, update, and delete decisions for both
-controllers. The generated function grants owner access for every known action;
+Fresh format-13 and format-14 resources also contain `authorization.go`. Its
+typed `AuthorizeFunc` handles list, create, view, update, and delete decisions
+for both controllers. The generated function grants owner access for every known action;
 return `AccessAll` for a deliberate privileged action or `AccessDenied` to stop
 an authenticated action with HTTP 403. The controller derives the repository
 scope from the authenticated user, and update/delete apply it in their SQL rather
@@ -63,7 +63,7 @@ forge dev
 ```
 
 `forge migrate` delegates to the application-owned console. Format-11 through
-format-13
+format-14
 `forge dev` starts the watched HTTP server, durable queue worker, and recurring
 scheduler together. It labels each service's output and reports the stack ready
 only after all three existing startup signals succeed. Any unexpected service
@@ -105,7 +105,24 @@ Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 `/issues`; handlers do not silently switch behavior based on content negotiation.
 
-Fresh format-10 through format-13 JSON resource indexes are bounded and paginated. `GET /issues`
+## Authenticate a machine client
+
+Fresh format-14 applications let a signed-in user create a named, expiring
+personal API token at `/settings/security` or with `POST /auth/tokens`. Creation
+requires the current password and returns the complete
+`goforge_pat_<selector>.<secret>` value once. Send that value as one exact
+`Authorization: Bearer ...` header to `/auth/me` or generated JSON resources.
+The request then uses the same application-owned user, policy, and repository
+scope as cookie authentication.
+
+Token management stays session-only, and browser management is CSRF protected.
+An invalid Authorization header is authoritative: it never falls back to a
+valid cookie or touches its session. The generated migration stores only the
+public selector and SHA-256 digest. Read the
+[personal API token guide](api-tokens.md) for lifecycle, revocation, and
+replacement seams.
+
+Fresh format-10 through format-14 JSON resource indexes are bounded and paginated. `GET /issues`
 defaults to `page=1&per_page=20`; each parameter must appear at most once and be
 a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
 The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,

@@ -1286,6 +1286,12 @@ days. At most ten live tokens may exist per user. Issuance locks the user row,
 revalidates the observed credential generation, prunes expired rows, checks the
 cap, and inserts the new row in one transaction.
 
+Current-password confirmation uses a dedicated account-keyed limiter with a
+twenty-attempt, fifteen-minute window. It remains bounded against a stolen
+session while allowing the ten-token transactional cap to stay authoritative
+under concurrent valid issuance. Login, password change, and recovery retain
+their stricter independent limiter policies.
+
 The displayed wire value is `goforge_pat_<selector>.<secret>`. GoForge's
 existing `security/token` primitive generates the selector and high-entropy
 secret, supplies only a SHA-256 digest for persistence, parses the exact

@@ -53,6 +53,39 @@ authorization system. The existing resource policy stays authoritative.
   `auth.User` into closed owner/all SQL scopes. Token authentication must feed
   that seam rather than add scopes, claims, or policy discovery.
 
+## Candidate progress — 2026-09-11
+
+- Fresh format-14 scaffolds now contain the plain `000006` migration,
+  digest-only PostgreSQL repository, dedicated current-password limiter,
+  strict token-aware API middleware, session-only JSON/browser management,
+  account-security UI, unit tests, and visible route wiring. Format 13 keeps
+  its original session middleware and receives no token source or migration.
+- A fresh generated application passes its complete Go test suite. Focused
+  framework checks also pass scaffold formatting, generated-app inspection,
+  format-13/14 middleware compatibility, and compilation of the live token
+  journey when PostgreSQL is unavailable locally.
+- Independent review found and the candidate fixed an eight-attempt limiter
+  conflict with the ten-token concurrency cap, a selector-alphabet constraint
+  gap, and missing live evidence for authorization/relationship parity and all
+  three credential-generation invalidation paths.
+- The strengthened PostgreSQL journey now requires explicit 403 and all-record
+  policy results, owner-safe belongs-to writes, stale-write conflict, password
+  change/reset/logout-all invalidation, canonical selector rejection, exact
+  cap errors, durable restart behavior, and secret-leak checks. Hosted
+  PostgreSQL execution and two complete hosted final-revision passes remain
+  pending.
+- The integrated candidate passes `go test ./... -count=1` (CLI matrix
+  168.611s), `go test -race ./... -count=1` (CLI matrix 257.902s), `go vet
+  ./...`, and a trimmed CLI build. A separately generated no-replace format-14
+  application pinned to public v0.19.0 generated related schema-driven
+  resources and passed ORM/view/asset freshness, module verification, zero
+  tidy diff, every generated test, vet, and server build.
+- The second independent review reports no remaining P0, P1, or P2 finding.
+  It rechecked limiter separation, canonical persistence, strict Bearer/session
+  precedence, policy and relationship parity, every generation-invalidation
+  path, cap error identity, format-13 compatibility, the public module pin, and
+  documentation honesty.
+
 ## Explicit non-goals
 
 - OAuth2, OpenID Connect, JWTs, refresh tokens, authorization codes, device
