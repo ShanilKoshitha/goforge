@@ -37,6 +37,28 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: go build -o "$RUNNER_TEMP/forge" ./cmd/forge
+      - name: Public v0.7.0 format-7 model compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format7-cli"
+          GOBIN="$RUNNER_TEMP/released-format7-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.7.0
+          "$RUNNER_TEMP/released-format7-cli/forge" new "$RUNNER_TEMP/released-format7-app" --module example.com/releasedformat7
+          cd "$RUNNER_TEMP/released-format7-app"
+          # v0.7.0 did not write its direct module checksums during scaffold creation.
+          # Normalize that historical baseline before proving the current generator
+          # leaves the released application's dependency graph tidy and unchanged.
+          go mod tidy
+          "$RUNNER_TEMP/forge" make:model Customer --field name:string
+          "$RUNNER_TEMP/forge" make:model Invoice --field number:string --field notes:text:nullable --belongs-to customer:Customer
+          test "$("$RUNNER_TEMP/released-format7-cli/forge" version)" = 'forge 0.7.0'
+          grep -q '^version: 7$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.7.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          "$RUNNER_TEMP/forge" orm:generate --check
+          go mod verify
+          go mod tidy -diff
+          go test ./...
+          go vet ./...
+          go build ./cmd/server
       - name: Released format-8 compatibility
         run: |
           mkdir -p "$RUNNER_TEMP/released-cli"
@@ -152,6 +174,8 @@ jobs:
           cd "$RUNNER_TEMP/released-format12-app"
           "$RUNNER_TEMP/released-format12-cli/forge" make:resource ExistingIssue --field title:string
           "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string
+          "$RUNNER_TEMP/forge" make:model Customer --field name:string
+          "$RUNNER_TEMP/forge" make:model Invoice --field number:string --field notes:text:nullable --belongs-to customer:Customer
           test "$("$RUNNER_TEMP/released-format12-cli/forge" version)" = 'forge 0.17.1'
           grep -q '^version: 12$' forge.yaml
           grep -q 'github.com/ShanilKoshitha/goforge v0.17.0' go.mod
@@ -166,7 +190,7 @@ jobs:
           "$RUNNER_TEMP/forge" build
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.18.0'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.19.0'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.17.0' go.mod
@@ -174,6 +198,8 @@ jobs:
           grep -Fqx 'github.com/ShanilKoshitha/goforge v0.17.0 h1:r3JWPwcB8YNNU9+22v4K3Bx6M7S8fbQ4HIB3rXRdlDY=' go.sum
           grep -Fqx 'github.com/ShanilKoshitha/goforge v0.17.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
           grep -q '^version: 13$' forge.yaml
+          "$RUNNER_TEMP/forge" make:model Customer --field name:string
+          "$RUNNER_TEMP/forge" make:model Invoice --field number:string --field notes:text:nullable --belongs-to customer:Customer
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           test -f internal/resources/legacyissue/authorization.go
           grep -q 'legacyissueAuthorize := legacyissueresource.AuthorizeFunc(legacyissueresource.Authorize)' routes/resources_gen.go
@@ -246,7 +272,7 @@ jobs:
           stop_dev
           trap - EXIT
       - name: Generated PostgreSQL applications
-        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow|TestGeneratedResourceAuthorizationPostgresWorkflow)$' -count=2 -v
+        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow|TestGeneratedResourceAuthorizationPostgresWorkflow|TestGeneratedModelPostgresWorkflow)$' -count=2 -v
 
   windows:
     runs-on: windows-latest

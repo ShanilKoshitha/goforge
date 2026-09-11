@@ -1,6 +1,12 @@
 CREATE TABLE [[.Table]] (
     id BIGSERIAL PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+[[range .Relationships]]    [[.ForeignKey]] [[.SQLType]] NOT NULL,
+[[end]][[range .Fields]]    [[.Name]] [[.SQLType]][[if .Required]] NOT NULL[[end]],
+[[end]]    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    version BIGINT NOT NULL DEFAULT 1
-);
+    version BIGINT NOT NULL DEFAULT 1[[range .Relationships]],
+    CONSTRAINT [[.ConstraintName]] FOREIGN KEY ([[.ForeignKey]])
+        REFERENCES [[.TargetTable]] ([[.TargetColumn]]) ON DELETE NO ACTION[[end]]
+);[[range .Relationships]]
+CREATE INDEX [[.IndexName]] ON [[$.Table]] ([[.ForeignKey]]);
+[[end]]

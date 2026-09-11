@@ -16,23 +16,53 @@ type modelSpec struct {
 	File             string
 	Table            string
 	MigrationVersion string
+	Fields           []resourceTemplateField
+	Relationships    []modelRelationship
+}
+
+// modelRelationship is the resolved, one-shot relationship contract used to
+// render ordinary model and migration source. It is never stored as metadata.
+type modelRelationship struct {
+	resourceBelongsTo
+	TargetTable    string
+	TargetKey      string
+	TargetColumn   string
+	ForeignKeyType string
+	SQLType        string
+	IndexName      string
+	ConstraintName string
 }
 
 type modelExclusiveWriter func(string, string) error
 
 func makeModel(name string, stdout io.Writer) error {
+	return makeModelWithOptions(name, nil, nil, stdout)
+}
+
+func makeModelWithOptions(name string, fields []resourceField, relationships []resourceBelongsTo, stdout io.Writer) error {
 	if err := requireProjectFormatRange(4, currentProjectFormat); err != nil {
 		return err
 	}
-	return makeModelWithWriters(name, stdout, writeExclusive, writeManagedFile)
+	return makeModelWithOptionsAndWriters(name, fields, relationships, stdout, writeExclusive, writeManagedFile)
 }
 
 func makeModelWithWriters(name string, stdout io.Writer, exclusive modelExclusiveWriter, managed ormArtifactWriter) error {
+	return makeModelWithOptionsAndWriters(name, nil, nil, stdout, exclusive, managed)
+}
+
+func makeModelWithOptionsAndWriters(name string, fields []resourceField, relationships []resourceBelongsTo, stdout io.Writer, exclusive modelExclusiveWriter, managed ormArtifactWriter) error {
 	state, err := loadMigrationResourceState()
 	if err != nil {
 		return err
 	}
 	spec, err := newModelSpec(name, state)
+	if err != nil {
+		return err
+	}
+	for _, field := range fields {
+		spec.Fields = append(spec.Fields, projectResourceTemplateField(field))
+	}
+	spec.Relationships, err = resolveModelRelationships(spec, relationships)
 	if err != nil {
 		return err
 	}
@@ -114,6 +144,62 @@ func makeModelWithWriters(name string, stdout io.Writer, exclusive modelExclusiv
 	return nil
 }
 
+func resolveModelRelationships(child modelSpec, requested []resourceBelongsTo) ([]modelRelationship, error) {
+	if len(requested) == 0 {
+		return nil, nil
+	}
+	schema, err := parseModelSchema(filepath.Join("internal", "models"))
+	if err != nil {
+		return nil, fmt.Errorf("inspect belongs-to targets: %w", err)
+	}
+	models := make(map[string]modelDefinition, len(schema.Models))
+	for _, model := range schema.Models {
+		models[model.Name] = model
+	}
+	resolved := make([]modelRelationship, 0, len(requested))
+	for _, relation := range requested {
+		target, exists := models[relation.Target]
+		if !exists {
+			return nil, fmt.Errorf("belongs-to relationship %q targets %s, which is not an existing model", relation.Name, relation.Target)
+		}
+		var targetKey *modelField
+		for index := range target.Fields {
+			field := &target.Fields[index]
+			if field.Name == "ID" && field.Primary && field.Required && !field.Nullable {
+				targetKey = field
+				break
+			}
+		}
+		if targetKey == nil {
+			return nil, fmt.Errorf("belongs-to target %s must have a required primary ID field", target.Name)
+		}
+		if targetKey.GoImportPath != "" {
+			return nil, fmt.Errorf("belongs-to target %s ID type %s requires an imported package", target.Name, targetKey.GoType)
+		}
+		indexName := child.Table + "_" + relation.ForeignKey + "_idx"
+		constraintName := child.Table + "_" + relation.ForeignKey + "_fkey"
+		for _, identifier := range []struct{ kind, value string }{
+			{kind: "index", value: indexName},
+			{kind: "constraint", value: constraintName},
+		} {
+			if !safeIdentifier(identifier.value) || len(identifier.value) > maximumResourceIdentifier {
+				return nil, fmt.Errorf("belongs-to relationship %q produces %s name %q longer than PostgreSQL's %d-byte identifier limit", relation.Name, identifier.kind, identifier.value, maximumResourceIdentifier)
+			}
+		}
+		resolved = append(resolved, modelRelationship{
+			resourceBelongsTo: relation,
+			TargetTable:       target.Table,
+			TargetKey:         targetKey.Name,
+			TargetColumn:      targetKey.Column,
+			ForeignKeyType:    targetKey.GoType,
+			SQLType:           strings.ToUpper(targetKey.DBType),
+			IndexName:         indexName,
+			ConstraintName:    constraintName,
+		})
+	}
+	return resolved, nil
+}
+
 func newModelSpec(name string, state resourceState) (modelSpec, error) {
 	typeName, err := pascal(name)
 	if err != nil {
@@ -147,17 +233,13 @@ func newModelSpec(name string, state resourceState) (modelSpec, error) {
 }
 
 func modelFiles(spec modelSpec) ([]plannedFile, error) {
-	data := struct {
-		Name  string
-		Table string
-	}{Name: spec.Name, Table: spec.Table}
 	modelPath := filepath.Join("internal", "models", spec.File+".go")
-	model, err := renderTemplate("templates/model/model.go.tmpl", modelPath, data)
+	model, err := renderTemplate("templates/model/model.go.tmpl", modelPath, spec)
 	if err != nil {
 		return nil, err
 	}
 	migrationBase := filepath.Join("database", "migrations", spec.MigrationVersion+"_create_"+spec.Table)
-	up, err := renderTemplate("templates/model/up.sql.tmpl", migrationBase+".up.sql", data)
+	up, err := renderTemplate("templates/model/up.sql.tmpl", migrationBase+".up.sql", spec)
 	if err != nil {
 		return nil, err
 	}
