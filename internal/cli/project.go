@@ -11,7 +11,7 @@ import (
 	modmodule "golang.org/x/mod/module"
 )
 
-const currentProjectFormat = 13
+const currentProjectFormat = 14
 
 func requireProjectFormatRange(minimum, maximum int) error {
 	version, err := projectFormat()

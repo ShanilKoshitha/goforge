@@ -1,0 +1,234 @@
+package auth
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	frameworkdatabase "github.com/ShanilKoshitha/goforge/database"
+	securitytoken "github.com/ShanilKoshitha/goforge/security/token"
+)
+
+const (
+	personalTokenPrefix       = "goforge_pat_"
+	maximumLivePersonalTokens = 10
+	maximumPersonalTokenDays  = 90
+)
+
+var (
+	ErrInvalidPersonalToken  = errors.New("personal access token is invalid")
+	ErrPersonalTokenLimit    = errors.New("personal access token limit reached")
+	ErrPersonalTokenName     = errors.New("personal access token name is already in use")
+	ErrPersonalTokenNotFound = errors.New("personal access token not found")
+)
+
+// PersonalToken is the complete safe representation returned after issuance.
+// Selector, digest, credential generation, and the one-time secret stay private.
+type PersonalToken struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// IssuedPersonalToken contains the raw token exactly once. Callers must not
+// persist Token, copy it into a session, or include it in logs and errors.
+type IssuedPersonalToken struct {
+	PersonalToken
+	Token string `json:"token"`
+}
+
+type PersonalTokenAuthentication struct {
+	TokenID int64
+	User    User
+}
+
+type PersonalTokenAuthenticator interface {
+	Authenticate(context.Context, string) (PersonalTokenAuthentication, error)
+}
+
+type PersonalTokenManager interface {
+	PersonalTokenAuthenticator
+	Issue(context.Context, User, string, int) (IssuedPersonalToken, error)
+	List(context.Context, User) ([]PersonalToken, error)
+	Revoke(context.Context, int64, int64) error
+}
+
+// PostgresPersonalTokens is ordinary application-owned credential storage.
+// It deliberately uses database/sql rather than generated ORM mutation inputs.
+type PostgresPersonalTokens struct{ DB *sql.DB }
+
+func NewPostgresPersonalTokens(db *sql.DB) (*PostgresPersonalTokens, error) {
+	if db == nil {
+		return nil, errors.New("personal access token database is required")
+	}
+	return &PostgresPersonalTokens{DB: db}, nil
+}
+
+func (tokens *PostgresPersonalTokens) Issue(ctx context.Context, user User, name string, days int) (IssuedPersonalToken, error) {
+	name = strings.TrimSpace(name)
+	if user.ID < 1 || user.CredentialVersion < 1 || len(name) < 1 || len(name) > 80 || days < 1 || days > maximumPersonalTokenDays {
+		return IssuedPersonalToken{}, errors.New("invalid personal access token issuance")
+	}
+	issued, err := securitytoken.Issue()
+	if err != nil {
+		return IssuedPersonalToken{}, errors.New("issue personal access token")
+	}
+
+	var result PersonalToken
+	err = frameworkdatabase.Transaction(ctx, tokens.DB, nil, func(tx *sql.Tx) error {
+		var credentialVersion int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT credential_version
+			FROM users
+			WHERE id = $1
+			FOR UPDATE
+		`, user.ID).Scan(&credentialVersion)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && credentialVersion != user.CredentialVersion {
+			return ErrCredentialsChanged
+		}
+		if err != nil {
+			return errors.New("lock personal access token account")
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM personal_access_tokens
+			WHERE user_id = $1 AND (expires_at <= NOW() OR credential_version <> $2)
+		`, user.ID, credentialVersion); err != nil {
+			return errors.New("prune personal access tokens")
+		}
+		var nameExists bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM personal_access_tokens WHERE user_id = $1 AND name = $2
+			)
+		`, user.ID, name).Scan(&nameExists); err != nil {
+			return errors.New("inspect personal access token name")
+		}
+		if nameExists {
+			return ErrPersonalTokenName
+		}
+		var live int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM personal_access_tokens WHERE user_id = $1
+		`, user.ID).Scan(&live); err != nil {
+			return errors.New("count personal access tokens")
+		}
+		if live >= maximumLivePersonalTokens {
+			return ErrPersonalTokenLimit
+		}
+		return tx.QueryRowContext(ctx, `
+			INSERT INTO personal_access_tokens (
+				user_id, name, selector, secret_digest, credential_version, expires_at, created_at
+			)
+			VALUES ($1, $2, $3, $4, $5, NOW() + ($6 * INTERVAL '1 day'), NOW())
+			RETURNING id, name, expires_at, created_at
+		`, user.ID, name, issued.Selector, issued.Digest(), credentialVersion, days).Scan(
+			&result.ID, &result.Name, &result.ExpiresAt, &result.CreatedAt,
+		)
+	})
+	if err != nil {
+		return IssuedPersonalToken{}, personalTokenOperationError("create", err)
+	}
+	return IssuedPersonalToken{PersonalToken: result, Token: personalTokenPrefix + issued.Presented}, nil
+}
+
+func (tokens *PostgresPersonalTokens) List(ctx context.Context, user User) ([]PersonalToken, error) {
+	if user.ID < 1 || user.CredentialVersion < 1 {
+		return nil, errors.New("invalid personal access token owner")
+	}
+	rows, err := tokens.DB.QueryContext(ctx, `
+		SELECT id, name, expires_at, created_at
+		FROM personal_access_tokens
+		WHERE user_id = $1 AND credential_version = $2 AND expires_at > NOW()
+		ORDER BY created_at DESC, id DESC
+		LIMIT 10
+	`, user.ID, user.CredentialVersion)
+	if err != nil {
+		return nil, personalTokenOperationError("list", err)
+	}
+	defer rows.Close()
+	result := make([]PersonalToken, 0)
+	for rows.Next() {
+		var item PersonalToken
+		if err := rows.Scan(&item.ID, &item.Name, &item.ExpiresAt, &item.CreatedAt); err != nil {
+			return nil, errors.New("scan personal access token")
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, personalTokenOperationError("list", err)
+	}
+	return result, nil
+}
+
+func (tokens *PostgresPersonalTokens) Revoke(ctx context.Context, userID, tokenID int64) error {
+	if userID < 1 || tokenID < 1 {
+		return ErrPersonalTokenNotFound
+	}
+	result, err := tokens.DB.ExecContext(ctx, `
+		DELETE FROM personal_access_tokens WHERE id = $1 AND user_id = $2
+	`, tokenID, userID)
+	if err != nil {
+		return personalTokenOperationError("revoke", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return errors.New("inspect personal access token revocation")
+	}
+	if deleted != 1 {
+		return ErrPersonalTokenNotFound
+	}
+	return nil
+}
+
+func (tokens *PostgresPersonalTokens) Authenticate(ctx context.Context, presented string) (PersonalTokenAuthentication, error) {
+	if !strings.HasPrefix(presented, personalTokenPrefix) {
+		return PersonalTokenAuthentication{}, ErrInvalidPersonalToken
+	}
+	parsed, err := securitytoken.Parse(strings.TrimPrefix(presented, personalTokenPrefix))
+	if err != nil {
+		return PersonalTokenAuthentication{}, ErrInvalidPersonalToken
+	}
+	var authentication PersonalTokenAuthentication
+	var digest []byte
+	err = tokens.DB.QueryRowContext(ctx, `
+		SELECT token.id, token.secret_digest,
+		       users.id, users.name, users.email, users.password_hash,
+		       users.credential_version, users.created_at, users.updated_at
+		FROM personal_access_tokens AS token
+		JOIN users ON users.id = token.user_id
+		WHERE token.selector = $1
+		  AND token.expires_at > NOW()
+		  AND token.credential_version = users.credential_version
+	`, parsed.Selector).Scan(
+		&authentication.TokenID, &digest,
+		&authentication.User.ID, &authentication.User.Name, &authentication.User.Email,
+		&authentication.User.PasswordHash, &authentication.User.CredentialVersion,
+		&authentication.User.CreatedAt, &authentication.User.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PersonalTokenAuthentication{}, ErrInvalidPersonalToken
+	}
+	if err != nil {
+		return PersonalTokenAuthentication{}, personalTokenOperationError("authenticate", err)
+	}
+	if authentication.TokenID < 1 || authentication.User.ID < 1 || !securitytoken.MatchDigest(digest, parsed) {
+		return PersonalTokenAuthentication{}, ErrInvalidPersonalToken
+	}
+	return authentication, nil
+}
+
+func personalTokenOperationError(action string, err error) error {
+	for _, known := range []error{
+		context.Canceled, context.DeadlineExceeded, ErrCredentialsChanged,
+		ErrPersonalTokenLimit, ErrPersonalTokenName, ErrPersonalTokenNotFound,
+	} {
+		if errors.Is(err, known) {
+			return known
+		}
+	}
+	return fmt.Errorf("%s personal access token", action)
+}

@@ -138,7 +138,7 @@ func TestMakeResourceGeneratesCompleteSafeVerticalSlices(t *testing.T) {
 	registryBefore, _ := os.ReadFile(filepath.Join("routes", "resources_gen.go"))
 	stateBefore, _ := os.ReadFile(filepath.Join(".forge", "resources.json"))
 	ormBefore, _ := os.ReadFile(filepath.FromSlash(generatedORMPath))
-	if !strings.Contains(string(registryBefore), `"/issues/{id}"`) || !strings.Contains(string(registryBefore), `"/app/issues/{id}/edit"`) || !strings.Contains(string(registryBefore), "requireAuth") ||
+	if !strings.Contains(string(registryBefore), `"/issues/{id}"`) || !strings.Contains(string(registryBefore), `"/app/issues/{id}/edit"`) || !strings.Contains(string(registryBefore), "requireAPI") ||
 		!strings.Contains(string(registryBefore), "issueAuthorize := issueresource.AuthorizeFunc(issueresource.Authorize)") ||
 		!strings.Contains(string(registryBefore), "issueresource.NewController(issueRepository, issueAuthorize)") ||
 		!strings.Contains(string(registryBefore), "issueresource.NewWebController(issueRepository, renderer, issueAuthorize)") {
@@ -1004,6 +1004,30 @@ func TestFormatThirteenRejectsResourceAuthorizationDeclarationCollisions(t *test
 	}
 }
 
+func TestFormatFourteenUsesTokenAwareAPIAuthenticationWithoutChangingFormatThirteen(t *testing.T) {
+	state := resourceState{Resources: []resourceSpec{{Name: "Issue", Package: "issue", Plural: "issues"}}}
+	formatThirteen, err := generatedResourceRegistryForFormat("example.com/app", state, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	formatFourteen, err := generatedResourceRegistryForFormat("example.com/app", state, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(formatThirteen, "requireAuth, requireWebAuth httpx.Middleware") ||
+		!strings.Contains(formatThirteen, "requireAuth(issueController.Index)") ||
+		strings.Contains(formatThirteen, "requireAPI") {
+		t.Fatalf("format 13 authentication wiring changed:\n%s", formatThirteen)
+	}
+	if !strings.Contains(formatFourteen, "requireAPI, requireWebAuth httpx.Middleware") ||
+		!strings.Contains(formatFourteen, "requireAPI(issueController.Index)") ||
+		!strings.Contains(formatFourteen, "requireAPI(issueController.Create)") ||
+		!strings.Contains(formatFourteen, "requireAPI(issueController.Delete)") ||
+		strings.Contains(formatFourteen, "requireAuth") {
+		t.Fatalf("format 14 does not use token-aware API authentication:\n%s", formatFourteen)
+	}
+}
+
 func assertGeneratedResourceSetEqual(t *testing.T, got, want map[string]string) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -1019,7 +1043,7 @@ func assertGeneratedResourceSetEqual(t *testing.T, got, want map[string]string) 
 func TestMakeResourceRefusesNewerProjectFormatBeforeWriting(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 14\n"), 0o644); err != nil {
+	if err := os.WriteFile("forge.yaml", []byte("version: 15\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := makeResource("Issue", &bytes.Buffer{})

@@ -222,7 +222,7 @@ func TestMakeModelRequiresSupportedProjectFormat(t *testing.T) {
 		want    string
 	}{
 		{version: "3", want: "upgrade the project to format 4"},
-		{version: "14", want: "newer than this CLI supports"},
+		{version: "15", want: "newer than this CLI supports"},
 	} {
 		t.Run(test.version, func(t *testing.T) {
 			directory := t.TempDir()

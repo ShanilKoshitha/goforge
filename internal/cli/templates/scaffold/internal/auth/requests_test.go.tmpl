@@ -42,6 +42,51 @@ func TestPasswordChangeRequiresConfirmedDifferentPassword(t *testing.T) {
 	}
 }
 
+func TestPersonalTokenRequestUsesExactBounds(t *testing.T) {
+	valid := auth.PersonalTokenRequest{Name: strings.Repeat("é", 40), CurrentPassword: "correct horse battery staple", ExpiresInDays: 90}
+	if problems := valid.Validate(); !problems.Empty() {
+		t.Fatalf("valid request problems = %+v", problems)
+	}
+	for _, test := range []struct {
+		name    string
+		request auth.PersonalTokenRequest
+		field   string
+	}{
+		{name: "blank name", request: auth.PersonalTokenRequest{Name: "  ", CurrentPassword: "password", ExpiresInDays: 1}, field: "name"},
+		{name: "name over bytes", request: auth.PersonalTokenRequest{Name: strings.Repeat("é", 41), CurrentPassword: "password", ExpiresInDays: 1}, field: "name"},
+		{name: "missing password", request: auth.PersonalTokenRequest{Name: "deploy", ExpiresInDays: 1}, field: "current_password"},
+		{name: "zero lifetime", request: auth.PersonalTokenRequest{Name: "deploy", CurrentPassword: "password"}, field: "expires_in_days"},
+		{name: "long lifetime", request: auth.PersonalTokenRequest{Name: "deploy", CurrentPassword: "password", ExpiresInDays: 91}, field: "expires_in_days"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if issues := test.request.Validate().For(test.field); len(issues) == 0 {
+				t.Fatalf("expected %s validation error", test.field)
+			}
+		})
+	}
+}
+
+func TestPersonalTokenJSONRejectsUnknownAndNonIntegerValues(t *testing.T) {
+	router := httpx.NewRouter()
+	router.POST("/request", func(ctx *httpx.Context) error {
+		var request auth.PersonalTokenRequest
+		return request.DecodeJSON(ctx)
+	})
+	for _, body := range []string{
+		`{"name":"deploy","current_password":"password","expires_in_days":1,"scope":"admin"}`,
+		`{"name":"deploy","current_password":"password","expires_in_days":1.5}`,
+		`{"name":"deploy","current_password":"password","expires_in_days":"30"}`,
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/request", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("body %s status = %d: %s", body, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestPasswordChangeJSONBoundaryHasExactFailures(t *testing.T) {
 	router := httpx.NewRouter()
 	router.PUT("/request", func(ctx *httpx.Context) error {

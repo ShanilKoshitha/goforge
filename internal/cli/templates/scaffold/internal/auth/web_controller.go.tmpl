@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/ShanilKoshitha/goforge/httpx"
 	"github.com/ShanilKoshitha/goforge/session"
@@ -24,10 +25,12 @@ type DashboardPage struct {
 }
 
 type SecurityPage struct {
-	Title  string
-	Form   view.Form
-	Notice string
-	User   User
+	Title        string
+	Form         view.Form
+	Notice       string
+	User         User
+	Tokens       []PersonalToken
+	CreatedToken string
 }
 
 type WebController struct {
@@ -205,6 +208,88 @@ func (controller *WebController) RevokeAll(ctx *httpx.Context) error {
 	return web.Redirect(ctx, "/login")
 }
 
+func (controller *WebController) CreatePersonalToken(ctx *httpx.Context) error {
+	personalTokenPrivacy(ctx)
+	var request PersonalTokenRequest
+	if err := request.DecodeForm(ctx); err != nil {
+		return err
+	}
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	page := SecurityPage{
+		Title: "Account security",
+		User:  user,
+		Form: view.Form{OldValues: map[string]string{
+			"name":            request.Name,
+			"expires_in_days": strconv.FormatInt(request.ExpiresInDays, 10),
+		}},
+	}
+	if problems := request.Validate(); !problems.Empty() {
+		page.Form.ValidationErrors = problems.Messages()
+		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
+	}
+	issued, err := controller.auth.issuePersonalToken(ctx, user, request)
+	if errors.Is(err, ErrInvalidCurrentPassword) {
+		page.Form.ValidationErrors = currentPasswordProblem().Messages()
+		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
+	}
+	if errors.Is(err, ErrPersonalTokenName) {
+		page.Form.ValidationErrors = personalTokenNameProblem().Messages()
+		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
+	}
+	if errors.Is(err, ErrPersonalTokenLimit) {
+		page.Form.ValidationErrors = personalTokenLimitProblem().Messages()
+		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
+	}
+	if errors.Is(err, ErrCredentialsChanged) {
+		if destroyErr := web.Invalidate(ctx); destroyErr != nil {
+			return destroyErr
+		}
+		return web.Redirect(ctx, "/login")
+	}
+	if limited, response := controller.renderSecurityRateLimit(ctx, err, page); limited {
+		return response
+	}
+	if err != nil {
+		return err
+	}
+	page.Form.OldValues = nil
+	page.Notice = "Copy this token now. It will not be shown again."
+	page.CreatedToken = issued.Token
+	return controller.renderSecurity(ctx, http.StatusCreated, page)
+}
+
+func (controller *WebController) RevokePersonalToken(ctx *httpx.Context) error {
+	personalTokenPrivacy(ctx)
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return httpx.NewHTTPError(http.StatusNotFound, "personal access token not found")
+	}
+	if controller.auth.tokens == nil {
+		return errors.New("personal access tokens are unavailable")
+	}
+	if err := controller.auth.tokens.Revoke(ctx.Request.Context(), user.ID, id); err != nil {
+		if errors.Is(err, ErrPersonalTokenNotFound) {
+			return httpx.NewHTTPError(http.StatusNotFound, "personal access token not found")
+		}
+		return err
+	}
+	current, ok := web.Session(ctx)
+	if !ok {
+		return errors.New("browser session is unavailable")
+	}
+	if err := current.Flash("notice", "Personal access token revoked."); err != nil {
+		return err
+	}
+	return web.Redirect(ctx, "/settings/security")
+}
+
 func (controller *WebController) Logout(ctx *httpx.Context) error {
 	if err := web.Destroy(ctx); err != nil {
 		return err
@@ -241,6 +326,7 @@ func (controller *WebController) renderRateLimit(ctx *httpx.Context, err error, 
 }
 
 func (controller *WebController) renderSecurity(ctx *httpx.Context, status int, page SecurityPage) error {
+	personalTokenPrivacy(ctx)
 	token, err := web.CSRFToken(ctx)
 	if err != nil {
 		return err
@@ -248,6 +334,15 @@ func (controller *WebController) renderSecurity(ctx *httpx.Context, status int, 
 	page.Form.CSRFToken = token
 	if page.Form.ValidationErrors == nil {
 		page.Form.ValidationErrors = make(validation.Errors)
+	}
+	if page.Form.OldValues == nil {
+		page.Form.OldValues = make(map[string]string)
+	}
+	if page.User.ID > 0 && controller.auth.tokens != nil {
+		page.Tokens, err = controller.auth.tokens.List(ctx.Request.Context(), page.User)
+		if err != nil {
+			return err
+		}
 	}
 	return web.Render(ctx, controller.views, status, "auth/security", page)
 }

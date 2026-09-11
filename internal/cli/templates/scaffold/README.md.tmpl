@@ -50,6 +50,20 @@ atomic signup transaction. Replacing either store requires supplying an
 application-specific `RegistrationTransaction`; startup fails outside tests if
 no cross-store transaction coordinator is configured.
 
+Personal API tokens are managed by a signed-in user at `/settings/security` or
+through `GET`, `POST`, and `DELETE /auth/tokens`. Creation requires the current
+password, a unique name, and a 1–90 day lifetime, then displays the complete
+`goforge_pat_<selector>.<secret>` value once. Send it as one exact
+`Authorization: Bearer ...` header to `/auth/me` or generated JSON resources.
+Those requests use the same `auth.User`, authorization function, and SQL scope
+as cookie-authenticated requests. Token-management and browser routes remain
+session-only; browser forms are CSRF protected. The ordinary
+`internal/auth/personal_tokens.go`, `internal/auth/api_middleware.go`, route
+wiring, tests, and `000006_create_personal_access_tokens` migration are the
+complete implementation and replacement seams. PostgreSQL stores only a
+selector and SHA-256 digest, and password rotation or sign-out-everywhere
+invalidates prior token generations.
+
 Create a persistence model without an HTTP resource using repeatable typed
 fields and required belongs-to relationships:
 

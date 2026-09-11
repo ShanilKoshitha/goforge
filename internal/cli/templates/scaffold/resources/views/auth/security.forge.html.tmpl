@@ -4,6 +4,45 @@
     @component("components/card", title=.Title)
       <p>Signed in as {{.User.Email}}</p>
       @if(.Notice)<p role="status">{{.Notice}}</p>@endif
+      @if(.CreatedToken)
+      <section aria-labelledby="created-token-heading">
+        <h2 id="created-token-heading">New personal access token</h2>
+        <p>Copy this token now. It will not be shown again.</p>
+        <output aria-label="New personal access token"><code>{{.CreatedToken}}</code></output>
+      </section>
+      @endif
+      <section aria-labelledby="personal-tokens-heading">
+        <h2 id="personal-tokens-heading">Personal access tokens</h2>
+        <form action="/settings/tokens" method="post">
+          @csrf
+          <label for="token_name">Name</label>
+          <input id="token_name" name="name" type="text" value="@old("name")" maxlength="80" required>
+          @errors("name")<p role="alert">{{.}}</p>@enderrors
+          <label for="expires_in_days">Expires in days</label>
+          <input id="expires_in_days" name="expires_in_days" type="number" value="@old("expires_in_days")" min="1" max="90" required>
+          @errors("expires_in_days")<p role="alert">{{.}}</p>@enderrors
+          <label for="token_current_password">Current password</label>
+          <input id="token_current_password" name="current_password" type="password" autocomplete="current-password" required>
+          @errors("current_password")<p role="alert">{{.}}</p>@enderrors
+          <button type="submit">Create token</button>
+        </form>
+        @if(.Tokens)
+        <ul>
+          @for(.Tokens)<li>
+            <strong>{{.Name}}</strong>
+            <span>Expires <time datetime="{{.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.ExpiresAt.Format "2006-01-02"}}</time></span>
+            <form action="/settings/tokens/{{.ID}}/revoke" method="post">
+              @csrf
+              <button type="submit">Revoke {{.Name}}</button>
+            </form>
+          </li>@endfor
+        </ul>
+        @else
+        <p>No active personal access tokens.</p>
+        @endif
+      </section>
+      <section aria-labelledby="password-heading">
+      <h2 id="password-heading">Change password</h2>
       <form action="/settings/password" method="post">
         @csrf
         <label for="current_password">Current password</label>
@@ -17,6 +56,7 @@
         @errors("password_confirmation")<p role="alert">{{.}}</p>@enderrors
         <button type="submit">Change password</button>
       </form>
+      </section>
       <form action="/settings/logout-all" method="post">
         @csrf
         <button type="submit">Sign out everywhere</button>

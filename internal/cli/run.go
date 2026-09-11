@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.19.0"
+const Version = "0.20.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -199,13 +199,20 @@ Models accept the same scalar field grammar. A required
 relationship to an existing application model. Model options are one-shot;
 the generated Go and paired SQL migration remain authoritative.
 
-Format-10 through format-13 projects may add repeatable required relationships with
---belongs-to <name>:<ExistingResource>. The target must already be a generated
-resource. Relationship IDs remain explicit, owner-scoped, and database-backed.
+Format-10 through format-14 projects may add repeatable required relationships
+with --belongs-to <name>:<ExistingResource>. The target must already be a
+generated resource. Relationship IDs remain explicit, owner-scoped, and
+database-backed.
 
-Format-13 resources include an application-owned authorization function shared
-by JSON and browser controllers. Owner access is the default; edit the generated
-Go to grant all-record access or deny individual typed actions.
+Format-13 and format-14 resources include an application-owned authorization
+function shared by JSON and browser controllers. Owner access is the default;
+edit the generated Go to grant all-record access or deny individual typed
+actions.
+
+Fresh format-14 applications include named, expiring personal API tokens.
+Signed-in users manage them through /settings/security or /auth/tokens. One
+exact Authorization: Bearer credential authenticates /auth/me and generated
+JSON resources through the same application-owned policy and SQL scope.
 
 Generators refuse to overwrite files. Generated applications keep routes,
 handlers, configuration, and SQL as ordinary source files you can edit.

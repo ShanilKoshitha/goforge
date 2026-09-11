@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.19.0\n" {
+	if output.String() != "forge 0.20.0\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -52,6 +52,9 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"database/migrations/000002_create_jobs.up.sql",
 		"database/migrations/000004_create_account_recovery.up.sql",
 		"database/migrations/000005_create_schedules.up.sql",
+		"database/migrations/000006_create_personal_access_tokens.up.sql",
+		"internal/auth/personal_tokens.go",
+		"internal/auth/api_middleware.go",
 		"internal/jobs/dependencies.go",
 		"internal/jobs/dispatcher.go",
 		"internal/jobs/registry_gen.go",
@@ -93,8 +96,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "version: 13") {
-		t.Fatalf("fresh scaffold is not format 13:\n%s", manifest)
+	if !strings.Contains(string(manifest), "version: 14") {
+		t.Fatalf("fresh scaffold is not format 14:\n%s", manifest)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {
@@ -118,16 +121,16 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.17.0") {
-		t.Fatalf("scaffold does not pin GoForge v0.17.0:\n%s", moduleFile)
+	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.19.0") {
+		t.Fatalf("scaffold does not pin GoForge v0.19.0:\n%s", moduleFile)
 	}
 	moduleSums, err := os.ReadFile(filepath.Join(directory, "go.sum"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"github.com/ShanilKoshitha/goforge v0.17.0 h1:r3JWPwcB8YNNU9+22v4K3Bx6M7S8fbQ4HIB3rXRdlDY=",
-		"github.com/ShanilKoshitha/goforge v0.17.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+		"github.com/ShanilKoshitha/goforge v0.19.0 h1:06YyBa1ivkFwtkA9XNTprNzERN/FJMgFEhqtgSzoFQg=",
+		"github.com/ShanilKoshitha/goforge v0.19.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 	} {
 		if !strings.Contains(string(moduleSums), want) {
 			t.Errorf("scaffold is missing public runtime checksum %q", want)
@@ -305,7 +308,7 @@ func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
-			if err := os.WriteFile("forge.yaml", []byte("version: 14\n"), 0o644); err != nil {
+			if err := os.WriteFile("forge.yaml", []byte("version: 15\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer

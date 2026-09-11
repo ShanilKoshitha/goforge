@@ -1,0 +1,17 @@
+CREATE TABLE personal_access_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    name VARCHAR(80) NOT NULL CHECK (name = BTRIM(name) AND OCTET_LENGTH(name) BETWEEN 1 AND 80),
+    selector VARCHAR(22) NOT NULL UNIQUE CHECK (
+        OCTET_LENGTH(selector) = 22 AND selector ~ '^[A-Za-z0-9_-]{22}$'
+    ),
+    secret_digest BYTEA NOT NULL CHECK (OCTET_LENGTH(secret_digest) = 32),
+    credential_version BIGINT NOT NULL CHECK (credential_version > 0),
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT personal_access_tokens_user_name_key UNIQUE (user_id, name),
+    CONSTRAINT personal_access_tokens_user_fkey FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    CONSTRAINT personal_access_tokens_expiry_check CHECK (expires_at > created_at)
+);
+
+CREATE INDEX personal_access_tokens_user_id_idx ON personal_access_tokens (user_id);
