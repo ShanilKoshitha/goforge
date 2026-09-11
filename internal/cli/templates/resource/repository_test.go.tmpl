@@ -29,14 +29,14 @@ func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
 	assertBoundedOwnerList(t, repository)
 	connection := lastRepositoryConnection()
 	connection.queryError = &pgconn.PgError{Code: "23505", ConstraintName: "[[.Plural]]_field_key"}
-	if _, err := repository.List(context.Background(), 9); !errors.Is(err, orm.ErrUnique) {
+	if _, err := repository.List(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]]); !errors.Is(err, orm.ErrUnique) {
 		t.Fatalf("PostgreSQL error was not classified at repository boundary: %v", err)
 	}
 	connection.queryError = nil
 	connection.updateFound = true
 [[if .Relationships]]	connection.associationExists = true
 [[end]]	expectedVersion := int64(3)
-	updated, err := repository.Update(context.Background(), 9, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion)
+	updated, err := repository.Update(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]], 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion)
 	if err != nil || updated.Version != 4 {
 		t.Fatalf("guarded update did not return one incremented version: %+v %v", updated, err)
 	}
@@ -47,14 +47,14 @@ func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
 	}
 	connection.updateFound = false
 	connection.exists = true
-	if _, err := repository.Update(context.Background(), 9, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion); !errors.Is(err, ErrStale) || !errors.Is(err, orm.ErrStale) {
+	if _, err := repository.Update(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]], 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion); !errors.Is(err, ErrStale) || !errors.Is(err, orm.ErrStale) {
 		t.Fatalf("owned guarded miss is not stale: %v", err)
 	}
 	if !strings.Contains(connection.query, `"user_id" = $`) {
 		t.Fatalf("stale existence probe lost owner scope: %s", connection.query)
 	}
 	connection.exists = false
-	if _, err := repository.Update(context.Background(), 10, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrStale) {
+	if _, err := repository.Update(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(10)[[else]]10[[end]], 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrStale) {
 		t.Fatalf("wrong-owner guarded miss leaked staleness: %v", err)
 	}
 
@@ -64,10 +64,194 @@ func TestPostgresRepositoryAcceptsDBAndTransactionExecutors(t *testing.T) {
 	}
 	defer tx.Rollback()
 	assertBoundedOwnerList(t, NewPostgresRepository(tx))
-	if err := NewPostgresRepository(tx).Delete(context.Background(), 9, 41); err != nil {
+	if err := NewPostgresRepository(tx).Delete(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]], 41); err != nil {
 		t.Fatal(err)
 	}
 }
+[[if .AuthorizationPolicies]]
+
+func TestPostgresRepositoryAppliesOwnerScopeToEveryMemberStatement(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := NewPostgresRepository(db)
+	connection := repositoryConnectionFrom(t, db)
+	scope := OwnerScope(9)
+
+	connection.resetStatements()
+	if _, err := repository.Paginate(context.Background(), scope, 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	assertOwnerScopeQuery(t, connection.queries[0])
+
+	connection.resetStatements()
+	if _, err := repository.Find(context.Background(), scope, 41); err != nil {
+		t.Fatal(err)
+	}
+	assertOwnerScopeQuery(t, connection.queries[0])
+
+	connection.updateFound = true
+[[if .Relationships]]	connection.associationExists = true
+[[end]]	connection.resetStatements()
+	if _, err := repository.Update(context.Background(), scope, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], nil); err != nil {
+		t.Fatal(err)
+	}
+	assertOwnerScopeQuery(t, connection.query)
+	if !strings.Contains(connection.query, `"[[.Plural]]"."id" =`) {
+		t.Fatalf("owner update lost ID predicate: %s", connection.query)
+	}
+
+	connection.resetStatements()
+	if err := repository.Delete(context.Background(), scope, 41); err != nil {
+		t.Fatal(err)
+	}
+	assertOwnerScopeQuery(t, connection.query)
+	if !strings.Contains(connection.query, `"[[.Plural]]"."id" =`) {
+		t.Fatalf("owner delete lost ID predicate: %s", connection.query)
+	}
+}
+
+func TestPostgresRepositoryAppliesAllRecordsScopeWithoutDroppingMutationIdentity(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := NewPostgresRepository(db)
+	connection := repositoryConnectionFrom(t, db)
+	scope := AllRecordsScope(12)
+
+	connection.resetStatements()
+	if _, err := repository.List(context.Background(), scope); err != nil {
+		t.Fatal(err)
+	}
+	assertAllRecordsQuery(t, connection.queries[0])
+[[if .Relationships]]	for _, query := range connection.queries[1:] {
+		if strings.Contains(query, `."user_id" =`) {
+			t.Fatalf("all-records relationship load retained actor-owner predicate: %s", query)
+		}
+	}
+[[end]]
+
+	connection.resetStatements()
+	if _, err := repository.Paginate(context.Background(), scope, 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	assertAllRecordsQuery(t, connection.queries[0])
+
+	connection.resetStatements()
+	if _, err := repository.Find(context.Background(), scope, 41); err != nil {
+		t.Fatal(err)
+	}
+	assertAllRecordsMutationOrFind(t, connection.queries[0])
+
+[[if .Relationships]]	connection.associationExists = true
+[[end]]	connection.resetStatements()
+	if _, err := repository.Create(context.Background(), scope, sampleAttributes()[[if .Relationships]], sampleAssociations()[[end]]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(connection.query, "INSERT ") || !namedValuesContain(connection.args, scope.ActorID()) {
+		t.Fatalf("all-records create did not retain actor ownership: %s %#v", connection.query, connection.args)
+	}
+[[if .Relationships]]	if len(connection.queries) != 1+[[len .Relationships]] || !namedValuesContain(connection.queryArgs[0], scope.ActorID()) {
+		t.Fatalf("all-records create relationship validation was not actor-owner scoped: %#v", connection.queryArgs)
+	}
+[[end]]
+
+	connection.updateFound = true
+	connection.resetStatements()
+	expectedVersion := int64(3)
+	if _, err := repository.Update(context.Background(), scope, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion); err != nil {
+		t.Fatal(err)
+	}
+	assertAllRecordsMutationOrFind(t, connection.query)
+[[if .Relationships]]	if len(connection.queries) != 1 || !strings.HasPrefix(connection.queries[0], "UPDATE ") {
+		t.Fatalf("all-records relationship update performed an actor-owner preflight: %#v", connection.queries)
+	}
+[[end]]
+	connection.updateFound = false
+	connection.exists = true
+	connection.resetStatements()
+	if _, err := repository.Update(context.Background(), scope, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], &expectedVersion); !errors.Is(err, ErrStale) {
+		t.Fatalf("all-records guarded miss is not stale: %v", err)
+	}
+	if !strings.HasPrefix(connection.query, "SELECT EXISTS") {
+		t.Fatalf("all-records guarded miss did not probe existence: %s", connection.query)
+	}
+	assertAllRecordsMutationOrFind(t, connection.query)
+
+	connection.resetStatements()
+	if err := repository.Delete(context.Background(), scope, 41); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(connection.query, "DELETE ") {
+		t.Fatalf("all-records delete query = %s", connection.query)
+	}
+	assertAllRecordsMutationOrFind(t, connection.query)
+}
+
+func TestPostgresRepositoryRejectsInvalidScopeBeforeSQL(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := NewPostgresRepository(db)
+	connection := repositoryConnectionFrom(t, db)
+	assertRejected := func(name string, call func() error) {
+		t.Helper()
+		connection.resetStatements()
+		if err := call(); !errors.Is(err, ErrInvalidScope) {
+			t.Fatalf("%s error = %v", name, err)
+		}
+		if connection.query != "" || len(connection.queries) != 0 {
+			t.Fatalf("%s invalid scope reached SQL: %s %#v", name, connection.query, connection.queries)
+		}
+	}
+	assertRejected("list", func() error { _, err := repository.List(context.Background(), Scope{}); return err })
+	assertRejected("paginate", func() error { _, err := repository.Paginate(context.Background(), Scope{}, 1, 10); return err })
+	assertRejected("create", func() error { _, err := repository.Create(context.Background(), Scope{}, sampleAttributes()[[if .Relationships]], sampleAssociations()[[end]]); return err })
+	assertRejected("find", func() error { _, err := repository.Find(context.Background(), Scope{}, 41); return err })
+	assertRejected("update", func() error { _, err := repository.Update(context.Background(), Scope{}, 41, updatedAttributes()[[if .Relationships]], sampleAssociations()[[end]], nil); return err })
+	assertRejected("delete", func() error { return repository.Delete(context.Background(), Scope{}, 41) })
+}
+
+func assertAllRecordsQuery(t *testing.T, query string) {
+	t.Helper()
+	if strings.Contains(query, `"[[.Plural]]"."user_id" =`) {
+		t.Fatalf("all-records query retained owner predicate: %s", query)
+	}
+}
+
+func assertOwnerScopeQuery(t *testing.T, query string) {
+	t.Helper()
+	if !strings.Contains(query, `"[[.Plural]]"."user_id" =`) {
+		t.Fatalf("owner query lost owner predicate: %s", query)
+	}
+}
+
+func assertAllRecordsMutationOrFind(t *testing.T, query string) {
+	t.Helper()
+	assertAllRecordsQuery(t, query)
+	if !strings.Contains(query, `"[[.Plural]]"."id" =`) {
+		t.Fatalf("all-records member query lost ID predicate: %s", query)
+	}
+}
+
+func namedValuesContain(values []driver.NamedValue, wanted int64) bool {
+	for _, value := range values {
+		if value.Value == wanted {
+			return true
+		}
+	}
+	return false
+}
+[[end]]
 [[if .Relationships]]
 
 func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testing.T) {
@@ -82,7 +266,7 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 
 	connection.associationExists = false
 	connection.resetStatements()
-	_, err = repository.Create(context.Background(), 9, sampleAttributes(), sampleAssociations())
+	_, err = repository.Create(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]], sampleAttributes(), sampleAssociations())
 	var invalid *InvalidAssociationError
 	if !errors.As(err, &invalid) || invalid.Field == "" {
 		t.Fatalf("unavailable association error = %#v, %v", invalid, err)
@@ -93,7 +277,7 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 
 	connection.associationExists = true
 	connection.resetStatements()
-	if _, err := repository.Create(context.Background(), 9, sampleAttributes(), sampleAssociations()); err != nil {
+	if _, err := repository.Create(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]], sampleAttributes(), sampleAssociations()); err != nil {
 		t.Fatal(err)
 	}
 	if len(connection.queries) != 1+[[len .Relationships]] || !strings.HasPrefix(connection.queries[len(connection.queries)-1], "INSERT ") {
@@ -104,7 +288,7 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 	}
 [[end]]
 	connection.resetStatements()
-	items, err := repository.List(context.Background(), 9)
+	items, err := repository.List(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +300,7 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 	}
 [[end]]
 	connection.resetStatements()
-	page, err := repository.Paginate(context.Background(), 9, 1, 10)
+	page, err := repository.Paginate(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]], 1, 10)
 	if err != nil || len(page.Items) != 1 || len(connection.queries) != 1+[[len .Relationships]] {
 		t.Fatalf("paginate eager-load query budget or result = %#v, %v, %#v", page, err, connection.queries)
 	}
@@ -124,7 +308,7 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 		t.Fatalf("paginated [[.GoName]] was not eagerly loaded: %#v", page.Items[0].[[.GoName]])
 	}
 [[end]]	connection.resetStatements()
-	item, err := repository.Find(context.Background(), 9, 41)
+	item, err := repository.Find(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]], 41)
 	if err != nil || len(connection.queries) != 1+[[len .Relationships]] {
 		t.Fatalf("find eager-load query budget or result = %#v, %v, %#v", item, err, connection.queries)
 	}
@@ -172,7 +356,7 @@ func TestPostgresRepositoryMapsForeignKeyDeleteToInUse(t *testing.T) {
 	repository := NewPostgresRepository(db)
 	connection := repositoryConnectionFrom(t, db)
 	connection.execError = &pgconn.PgError{Code: "23503", ConstraintName: "dependent_owner_fkey"}
-	if err := repository.Delete(context.Background(), 9, 41); !errors.Is(err, ErrInUse) || errors.Is(err, orm.ErrForeignKey) {
+	if err := repository.Delete(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]], 41); !errors.Is(err, ErrInUse) || errors.Is(err, orm.ErrForeignKey) {
 		t.Fatalf("foreign-key delete = %v", err)
 	}
 }
@@ -182,7 +366,7 @@ func assertBoundedOwnerList(t *testing.T, repository *PostgresRepository) {
 	t.Helper()
 	connection := repositoryConnectionFrom(t, repository.Executor)
 [[if .Relationships]]	connection.resetStatements()
-[[end]]	items, err := repository.List(context.Background(), 9)
+[[end]]	items, err := repository.List(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(9)[[else]]9[[end]])
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -86,13 +86,17 @@ func makeResourceWithRelationshipDependencies(ctx context.Context, name string, 
 	if err != nil {
 		return err
 	}
+	format, err := projectFormat()
+	if err != nil {
+		return err
+	}
 	definition := resourceDefinition{
 		resourceSpec:  spec,
 		Fields:        append([]resourceField(nil), fields...),
 		Relationships: append([]resourceRelationship(nil), relationships...),
 		SchemaDriven:  schemaDriven,
 	}
-	files, err := resourceFiles(module, definition)
+	files, err := resourceFilesForFormat(module, definition, format)
 	if err != nil {
 		return err
 	}
@@ -111,7 +115,7 @@ func makeResourceWithRelationshipDependencies(ctx context.Context, name string, 
 	next := state
 	next.Resources = append(append([]resourceSpec(nil), state.Resources...), spec)
 	sort.Slice(next.Resources, func(i, j int) bool { return next.Resources[i].Name < next.Resources[j].Name })
-	registry, err := generatedResourceRegistry(module, next)
+	registry, err := generatedResourceRegistryForFormat(module, next, format)
 	if err != nil {
 		return err
 	}

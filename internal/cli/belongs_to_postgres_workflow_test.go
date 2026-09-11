@@ -273,6 +273,8 @@ func main() {
 	secondUser := userID(ctx, db, os.Args[2])
 	categoryID := positiveID(os.Args[3])
 	issueID := positiveID(os.Args[4])
+	firstIssueScope := issue.OwnerScope(firstUser)
+	firstCategoryScope := category.OwnerScope(firstUser)
 
 	if _, err := db.ExecContext(ctx,
 		"INSERT INTO issues (user_id, category_id, summary) VALUES ($1, $2, $3)",
@@ -290,7 +292,7 @@ func main() {
 		panic("begin repository transaction")
 	}
 	transactionRepository := issue.NewPostgresRepository(tx)
-	created, err := transactionRepository.Create(ctx, firstUser,
+	created, err := transactionRepository.Create(ctx, firstIssueScope,
 		issue.Attributes{Summary: "rolled back issue"}, issue.AssociationIDs{CategoryID: categoryID})
 	if err != nil || created.ID < 1 {
 		_ = tx.Rollback()
@@ -325,7 +327,7 @@ func main() {
 		}
 	}
 	before := len(observed)
-	if items, err := repository.List(ctx, firstUser); err != nil || len(items) != 1 || items[0].Category == nil || items[0].Category.ID != categoryID {
+	if items, err := repository.List(ctx, firstIssueScope); err != nil || len(items) != 1 || items[0].Category == nil || items[0].Category.ID != categoryID {
 		panic("bounded eager list")
 	}
 	checkQueries("list", before, 2)
@@ -333,12 +335,12 @@ func main() {
 		panic("list query is unbounded")
 	}
 	before = len(observed)
-	if page, err := repository.Paginate(ctx, firstUser, 1, 20); err != nil || len(page.Items) != 1 || page.Items[0].Category == nil {
+	if page, err := repository.Paginate(ctx, firstIssueScope, 1, 20); err != nil || len(page.Items) != 1 || page.Items[0].Category == nil {
 		panic("bounded eager pagination")
 	}
 	checkQueries("paginate", before, 2)
 	before = len(observed)
-	if item, err := repository.Find(ctx, firstUser, issueID); err != nil || item.Category == nil || item.Category.ID != categoryID {
+	if item, err := repository.Find(ctx, firstIssueScope, issueID); err != nil || item.Category == nil || item.Category.ID != categoryID {
 		panic("bounded eager find")
 	}
 	checkQueries("find", before, 2)
@@ -367,13 +369,13 @@ func main() {
 	go func() {
 		defer group.Done()
 		<-start
-		_, createErr = issueRepository.Create(ctx, firstUser,
+		_, createErr = issueRepository.Create(ctx, firstIssueScope,
 			issue.Attributes{Summary: "race issue"}, issue.AssociationIDs{CategoryID: raceCategoryID})
 	}()
 	go func() {
 		defer group.Done()
 		<-start
-		deleteErr = categoryRepository.Delete(ctx, firstUser, raceCategoryID)
+		deleteErr = categoryRepository.Delete(ctx, firstCategoryScope, raceCategoryID)
 	}()
 	close(start)
 	group.Wait()

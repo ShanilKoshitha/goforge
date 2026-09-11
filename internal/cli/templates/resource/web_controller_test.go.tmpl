@@ -36,7 +36,12 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller := resource.NewWebController(repository, renderer)
+[[if .AuthorizationPolicies]]	controller, err := resource.NewWebController(repository, renderer, resource.Authorize)
+	if err != nil {
+		t.Fatal(err)
+	}
+[[else]]	controller := resource.NewWebController(repository, renderer)
+[[end]]
 	router := httpx.NewRouter()
 	router.Use(httpx.MethodOverride("/app/"))
 	browserRoute := func(handler httpx.Handler) httpx.Handler {
@@ -356,6 +361,232 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 		t.Fatalf("method-override delete: %d %q: %s", deleted.Code, deleted.Header().Get("Location"), deleted.Body.String())
 	}
 }
+
+[[if .AuthorizationPolicies]]func TestBrowserAuthorizationPrecedesParsingAndPersistence(t *testing.T) {
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := fakeUsers{user: auth.User{ID: 9, Name: "Ada", Email: "ada@example.com", CredentialVersion: 1}}
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &fakeRepository{}
+	denied := false
+	authorizationCalls := 0
+	var gotAction resource.Action
+	authorize := func(_ context.Context, _ auth.User, action resource.Action) (resource.Access, error) {
+		authorizationCalls++
+		gotAction = action
+		if denied {
+			return resource.AccessDenied, nil
+		}
+		return resource.AccessOwner, nil
+	}
+	controller, err := resource.NewWebController(repository, renderer, authorize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := httpx.NewRouter()
+	router.Use(httpx.MethodOverride("/app/"))
+	browserRoute := func(handler httpx.Handler) httpx.Handler {
+		return web.Sessions(manager)(auth.RequireWeb(users)(web.CSRF()(handler)))
+	}
+	router.GET("/app/[[.Plural]]", browserRoute(controller.Index))
+	router.GET("/app/[[.Plural]]/new", browserRoute(controller.New))
+	router.POST("/app/[[.Plural]]", browserRoute(controller.Create))
+	router.GET("/app/[[.Plural]]/{id}", browserRoute(controller.Show))
+	router.GET("/app/[[.Plural]]/{id}/edit", browserRoute(controller.Edit))
+	router.PUT("/app/[[.Plural]]/{id}", browserRoute(controller.Update))
+	router.DELETE("/app/[[.Plural]]/{id}", browserRoute(controller.Delete))
+
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", int64(9)); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", int64(1)); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := seed.Result().Cookies()[0]
+	newPage := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/new", nil, cookie)
+	if newPage.Code != http.StatusOK {
+		t.Fatalf("seed CSRF page: %d: %s", newPage.Code, newPage.Body.String())
+	}
+	token := browserCSRFToken(t, newPage.Body.String())
+	cookie = responseCookie(newPage, cookie)
+	denied = true
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		values url.Values
+		action resource.Action
+	}{
+		{name: "index", method: http.MethodGet, target: "/app/[[.Plural]]?page=bad", action: resource.ActionList},
+		{name: "new", method: http.MethodGet, target: "/app/[[.Plural]]/new", action: resource.ActionCreate},
+		{name: "create", method: http.MethodPost, target: "/app/[[.Plural]]", values: url.Values{"_token": {token}}, action: resource.ActionCreate},
+		{name: "show", method: http.MethodGet, target: "/app/[[.Plural]]/not-an-id", action: resource.ActionView},
+		{name: "edit", method: http.MethodGet, target: "/app/[[.Plural]]/not-an-id/edit", action: resource.ActionUpdate},
+		{name: "update", method: http.MethodPost, target: "/app/[[.Plural]]/not-an-id", values: url.Values{"_token": {token}, "_method": {http.MethodPut}}, action: resource.ActionUpdate},
+		{name: "delete", method: http.MethodPost, target: "/app/[[.Plural]]/not-an-id", values: url.Values{"_token": {token}, "_method": {http.MethodDelete}}, action: resource.ActionDelete},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			authorizationCalls = 0
+			gotAction = ""
+			repository.repositoryCalls = 0
+			response := browserRequest(router, test.method, test.target, test.values, cookie)
+			if response.Code != http.StatusForbidden || authorizationCalls != 1 || gotAction != test.action || repository.repositoryCalls != 0 {
+				t.Fatalf("browser authorization: status=%d calls=%d action=%q repository=%d: %s", response.Code, authorizationCalls, gotAction, repository.repositoryCalls, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestBrowserAuthorizationMatchesJSONAndRunsAfterValidCSRF(t *testing.T) {
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := fakeUsers{user: auth.User{ID: 9, Name: "Ada", Email: "ada@example.com", CredentialVersion: 1}}
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorize := func(_ context.Context, _ auth.User, action resource.Action) (resource.Access, error) {
+		if action == resource.ActionDelete {
+			return resource.AccessDenied, nil
+		}
+		return resource.AccessAll, nil
+	}
+	repository := &fakeRepository{item: resource.[[.Name]]{ID: 1, UserID: 27, Version: 1}}
+	webController, err := resource.NewWebController(repository, renderer, authorize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonController, err := resource.NewController(repository, authorize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := httpx.NewRouter()
+	router.Use(httpx.MethodOverride("/app/"))
+	browserRoute := func(handler httpx.Handler) httpx.Handler {
+		return web.Sessions(manager)(auth.RequireWeb(users)(web.CSRF()(handler)))
+	}
+	router.GET("/app/[[.Plural]]/{id}", browserRoute(webController.Show))
+	router.PUT("/app/[[.Plural]]/{id}", browserRoute(webController.Update))
+	router.DELETE("/app/[[.Plural]]/{id}", browserRoute(webController.Delete))
+	router.DELETE("/[[.Plural]]/{id}", auth.Require(manager, users)(jsonController.Delete))
+
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", int64(9)); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", int64(1)); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := seed.Result().Cookies()[0]
+
+	show := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1", nil, cookie)
+	if show.Code != http.StatusOK || repository.repositoryCalls != 1 || !repository.lastScope.AllRecords() {
+		t.Fatalf("privileged browser view: status=%d calls=%d all=%t: %s", show.Code, repository.repositoryCalls, repository.lastScope.AllRecords(), show.Body.String())
+	}
+	token := browserCSRFToken(t, show.Body.String())
+	cookie = responseCookie(show, cookie)
+	repository.repositoryCalls = 0
+	updateValues := updatedResourceFormValues()
+	updateValues.Set("_token", token)
+	updateValues.Set("_method", http.MethodPut)
+	updateValues.Set("version", "1")
+	updated := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", updateValues, cookie)
+	if updated.Code != http.StatusSeeOther || repository.repositoryCalls != 1 || !repository.lastScope.AllRecords() || repository.item.UserID != 27 {
+		t.Fatalf("privileged browser update was not one scoped write: status=%d calls=%d all=%t owner=%d: %s", updated.Code, repository.repositoryCalls, repository.lastScope.AllRecords(), repository.item.UserID, updated.Body.String())
+	}
+	cookie = responseCookie(updated, cookie)
+	show = browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1", nil, cookie)
+	token = browserCSRFToken(t, show.Body.String())
+	cookie = responseCookie(show, cookie)
+	repository.repositoryCalls = 0
+
+	browserDenied := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", url.Values{
+		"_token": {token}, "_method": {http.MethodDelete},
+	}, cookie)
+	if browserDenied.Code != http.StatusForbidden || repository.repositoryCalls != 0 {
+		t.Fatalf("browser delete authorization: status=%d repository=%d: %s", browserDenied.Code, repository.repositoryCalls, browserDenied.Body.String())
+	}
+
+	jsonRequest := httptest.NewRequest(http.MethodDelete, "/[[.Plural]]/1", nil)
+	jsonRequest.AddCookie(cookie)
+	jsonDenied := httptest.NewRecorder()
+	router.ServeHTTP(jsonDenied, jsonRequest)
+	if jsonDenied.Code != http.StatusForbidden || repository.repositoryCalls != 0 {
+		t.Fatalf("JSON delete authorization: status=%d repository=%d: %s", jsonDenied.Code, repository.repositoryCalls, jsonDenied.Body.String())
+	}
+
+	if _, err := resource.NewWebController(repository, renderer, nil); err == nil {
+		t.Fatal("nil browser authorization was accepted")
+	}
+}
+
+[[end]]
+
+[[if and .AuthorizationPolicies .Relationships]]func TestPrivilegedBrowserEditScopesChoicesToRecordOwner(t *testing.T) {
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := fakeUsers{user: auth.User{ID: 9, Name: "Administrator", Email: "admin@example.com", CredentialVersion: 1}}
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &fakeRepository{item: resource.[[.Name]]{ID: 1, UserID: 27, Version: 1}}
+	controller, err := resource.NewWebController(repository, renderer, func(context.Context, auth.User, resource.Action) (resource.Access, error) {
+		return resource.AccessAll, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := httpx.NewRouter()
+	router.GET("/app/[[.Plural]]/{id}/edit", web.Sessions(manager)(auth.RequireWeb(users)(web.CSRF()(controller.Edit))))
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", int64(9)); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", int64(1)); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+
+	response := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/1/edit", nil, seed.Result().Cookies()[0])
+	if response.Code != http.StatusOK || repository.repositoryCalls != 1 || !repository.lastScope.AllRecords() || repository.choiceUserID != 27 {
+		t.Fatalf("privileged edit choice scope: status=%d calls=%d all=%t choice_owner=%d: %s", response.Code, repository.repositoryCalls, repository.lastScope.AllRecords(), repository.choiceUserID, response.Body.String())
+	}
+}
+
+[[end]]
 
 func sampleResourceFormValues() url.Values {
 	values := make(url.Values, [[len .Fields]])

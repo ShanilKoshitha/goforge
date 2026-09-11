@@ -124,7 +124,7 @@ func TestScheduleCommandsRequireNoArguments(t *testing.T) {
 }
 
 func TestScheduleCommandsRequireFormatEleven(t *testing.T) {
-	for _, version := range []string{"10", "13"} {
+	for _, version := range []string{"10", "14"} {
 		t.Run(version, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {
@@ -185,7 +185,7 @@ func TestQueueCommandsDelegateForSupportedFormats(t *testing.T) {
 }
 
 func TestQueueCommandsRefuseOtherProjectFormatsBeforeSpawning(t *testing.T) {
-	for _, version := range []string{"5", "13"} {
+	for _, version := range []string{"5", "14"} {
 		t.Run(version, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {

@@ -118,7 +118,9 @@ func Register(router *httpx.Router, renderer *view.Engine, staticAssets http.Han
 	authenticatedBrowser.Named("web.auth.security", "GET", "/settings/security", webAuthController.Security)
 	authenticatedBrowser.Named("web.auth.password", "POST", "/settings/password", webAuthController.ChangePassword)
 	authenticatedBrowser.Named("web.auth.logout_all", "POST", "/settings/logout-all", webAuthController.RevokeAll)
-	registerResources(router, renderer, db, manager, requireAuth, requireWebAuth)
+	if err := registerResources(router, renderer, db, manager, requireAuth, requireWebAuth); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.17.1"
+const Version = "0.18.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -194,9 +194,13 @@ default; append :nullable to allow null. Without --field, resources retain the
 legacy name:string and versionless-update contract. Any explicit --field uses
 schema-driven output and requires a positive version on updates.
 
-Format-10 through format-12 projects may add repeatable required relationships with
+Format-10 through format-13 projects may add repeatable required relationships with
 --belongs-to <name>:<ExistingResource>. The target must already be a generated
 resource. Relationship IDs remain explicit, owner-scoped, and database-backed.
+
+Format-13 resources include an application-owned authorization function shared
+by JSON and browser controllers. Owner access is the default; edit the generated
+Go to grant all-record access or deny individual typed actions.
 
 Generators refuse to overwrite files. Generated applications keep routes,
 handlers, configuration, and SQL as ordinary source files you can edit.

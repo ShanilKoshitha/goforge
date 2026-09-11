@@ -45,12 +45,12 @@ type AssociationChoice struct {
 // Repository remains the application-facing escape hatch. Alternative SQL,
 // service, cache, or test implementations need not depend on the ORM.
 type Repository interface {
-	List(ctx context.Context, userID int64) ([][[.Name]], error)
-	Paginate(ctx context.Context, userID int64, page, perPage int) ([[.Name]]Page, error)
-	Create(ctx context.Context, userID int64, attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]]) ([[.Name]], error)
-	Find(ctx context.Context, userID, id int64) ([[.Name]], error)
-	Update(ctx context.Context, userID, id int64, attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]], expectedVersion *int64) ([[.Name]], error)
-	Delete(ctx context.Context, userID, id int64) error
+	List(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]]) ([][[.Name]], error)
+	Paginate(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]], page, perPage int) ([[.Name]]Page, error)
+	Create(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]], attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]]) ([[.Name]], error)
+	Find(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]]) ([[.Name]], error)
+	Update(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]], attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]], expectedVersion *int64) ([[.Name]], error)
+	Delete(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]]) error
 [[range .Relationships]]	[[.GoName]]Choices(ctx context.Context, userID int64) ([]AssociationChoice, error)
 [[end]]
 }
@@ -62,7 +62,7 @@ const (
 	maximumPageSize   = 100
 )
 
-// [[.Name]]Page is an explicit, bounded page of owner-scoped records.
+// [[.Name]]Page is an explicit, bounded page of [[if .AuthorizationPolicies]]authorized[[else]]owner-scoped[[end]] records.
 type [[.Name]]Page struct {
 	Items       [][[.Name]]
 	Number      int
@@ -82,15 +82,31 @@ func NewPostgresRepository(executor orm.Executor) *PostgresRepository {
 func (repository *PostgresRepository) query() models.[[.Name]]Query {
 	return models.NewStore(repository.Executor).[[.QueryAccessor]]()
 }
+[[if .AuthorizationPolicies]]
 
-func (repository *PostgresRepository) List(ctx context.Context, userID int64) ([][[.Name]], error) {
-	// Preserve the JSON List contract while keeping every database round-trip
+func repositoryScopePredicates(scope Scope) ([]orm.Predicate[models.[[.Name]]], error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if scope.AllRecords() {
+		return nil, nil
+	}
+	return []orm.Predicate[models.[[.Name]]]{models.[[.Name]]Columns.UserID.Eq(scope.ActorID())}, nil
+}
+[[end]]
+
+func (repository *PostgresRepository) List(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]]) ([][[.Name]], error) {
+	[[if .AuthorizationPolicies]]scopePredicates, err := repositoryScopePredicates(scope)
+	if err != nil {
+		return nil, fmt.Errorf("list [[.Plural]]: %w", err)
+	}
+	[[end]]// Preserve the JSON List contract while keeping every database round-trip
 	// bounded. Keyset batches avoid an ever-growing OFFSET and cannot cross an
-	// owner boundary.
+	// [[if .AuthorizationPolicies]]authorization[[else]]owner[[end]] boundary.
 	items := make([][[.Name]], 0)
 	var beforeID int64
 	for {
-		predicates := []orm.Predicate[models.[[.Name]]]{models.[[.Name]]Columns.UserID.Eq(userID)}
+		predicates := [[if .AuthorizationPolicies]]append([]orm.Predicate[models.[[.Name]]](nil), scopePredicates...)[[else]][]orm.Predicate[models.[[.Name]]]{models.[[.Name]]Columns.UserID.Eq(userID)}[[end]]
 		if beforeID != 0 {
 			predicates = append(predicates, models.[[.Name]]Columns.ID.Lt(beforeID))
 		}
@@ -102,7 +118,7 @@ func (repository *PostgresRepository) List(ctx context.Context, userID int64) ([
 		if err != nil {
 			return nil, fmt.Errorf("list [[.Plural]]: %w", postgres.Classify(err))
 		}
-[[if .Relationships]]		batch, err = repository.loadRelationships(ctx, userID, batch)
+[[if .Relationships]]		batch, err = repository.loadRelationships(ctx, [[if .AuthorizationPolicies]]scope[[else]]userID[[end]], batch)
 		if err != nil {
 			return nil, err
 		}
@@ -118,10 +134,14 @@ func (repository *PostgresRepository) List(ctx context.Context, userID int64) ([
 	}
 }
 
-func (repository *PostgresRepository) Paginate(ctx context.Context, userID int64, page, perPage int) ([[.Name]]Page, error) {
-	page, perPage = normalizePagination(page, perPage)
+func (repository *PostgresRepository) Paginate(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]], page, perPage int) ([[.Name]]Page, error) {
+	[[if .AuthorizationPolicies]]predicates, err := repositoryScopePredicates(scope)
+	if err != nil {
+		return [[.Name]]Page{}, fmt.Errorf("paginate [[.Plural]]: %w", err)
+	}
+	[[end]]page, perPage = normalizePagination(page, perPage)
 	items, err := repository.query().Select().
-		Where(models.[[.Name]]Columns.UserID.Eq(userID)).
+		Where([[if .AuthorizationPolicies]]predicates...[[else]]models.[[.Name]]Columns.UserID.Eq(userID)[[end]]).
 		OrderBy(models.[[.Name]]Columns.ID.Desc()).
 		Limit(perPage + 1).
 		Offset((page - 1) * perPage).
@@ -133,7 +153,7 @@ func (repository *PostgresRepository) Paginate(ctx context.Context, userID int64
 	if hasNext {
 		items = items[:perPage]
 	}
-[[if .Relationships]]	items, err = repository.loadRelationships(ctx, userID, items)
+[[if .Relationships]]	items, err = repository.loadRelationships(ctx, [[if .AuthorizationPolicies]]scope[[else]]userID[[end]], items)
 	if err != nil {
 		return [[.Name]]Page{}, err
 	}
@@ -157,8 +177,12 @@ func normalizePagination(page, perPage int) (int, int) {
 	return page, perPage
 }
 
-func (repository *PostgresRepository) Create(ctx context.Context, userID int64, attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]]) ([[.Name]], error) {
-[[if .Relationships]]	if err := repository.validateAssociations(ctx, userID, associations); err != nil {
+func (repository *PostgresRepository) Create(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]], attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]]) ([[.Name]], error) {
+	[[if .AuthorizationPolicies]]if err := scope.Validate(); err != nil {
+		return [[.Name]]{}, fmt.Errorf("create [[.Package]]: %w", err)
+	}
+	userID := scope.ActorID()
+	[[end]][[if .Relationships]]if err := repository.validateAssociations(ctx, userID, associations); err != nil {
 		return [[.Name]]{}, err
 	}
 [[end]]	item, err := repository.query().Create(
@@ -177,16 +201,23 @@ func (repository *PostgresRepository) Create(ctx context.Context, userID int64, 
 	return item, nil
 }
 
-func (repository *PostgresRepository) Find(ctx context.Context, userID, id int64) ([[.Name]], error) {
-	item, err := repository.query().Select().Where(
+func (repository *PostgresRepository) Find(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]]) ([[.Name]], error) {
+	[[if .AuthorizationPolicies]]predicates, err := repositoryScopePredicates(scope)
+	if err != nil {
+		return [[.Name]]{}, fmt.Errorf("find [[.Package]]: %w", err)
+	}
+	predicates = append([]orm.Predicate[models.[[.Name]]]{models.[[.Name]]Columns.ID.Eq(id)}, predicates...)
+	item, err := repository.query().Select().Where(predicates...).First(ctx, repository.Executor)
+	[[else]]item, err := repository.query().Select().Where(
 		models.[[.Name]]Columns.ID.Eq(id),
 		models.[[.Name]]Columns.UserID.Eq(userID),
 	).First(ctx, repository.Executor)
+	[[end]]
 [[if .Relationships]]	item, err = repositoryResult(item, err)
 	if err != nil {
 		return [[.Name]]{}, err
 	}
-	items, err := repository.loadRelationships(ctx, userID, [][[.Name]]{item})
+	items, err := repository.loadRelationships(ctx, [[if .AuthorizationPolicies]]scope[[else]]userID[[end]], [][[.Name]]{item})
 	if err != nil {
 		return [[.Name]]{}, err
 	}
@@ -195,14 +226,23 @@ func (repository *PostgresRepository) Find(ctx context.Context, userID, id int64
 [[end]]
 }
 
-func (repository *PostgresRepository) Update(ctx context.Context, userID, id int64, attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]], expectedVersion *int64) ([[.Name]], error) {
-	if expectedVersion != nil && *expectedVersion < 1 {
+func (repository *PostgresRepository) Update(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]], attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]], expectedVersion *int64) ([[.Name]], error) {
+	[[if .AuthorizationPolicies]]scopePredicates, err := repositoryScopePredicates(scope)
+	if err != nil {
+		return [[.Name]]{}, fmt.Errorf("update [[.Package]]: %w", err)
+	}
+	[[end]]if expectedVersion != nil && *expectedVersion < 1 {
 		return [[.Name]]{}, fmt.Errorf("update [[.Package]]: expected version must be at least 1")
 	}
-[[if .Relationships]]	if err := repository.validateAssociations(ctx, userID, associations); err != nil {
+[[if .Relationships]][[if .AuthorizationPolicies]]	if !scope.AllRecords() {
+		if err := repository.validateAssociations(ctx, scope.ActorID(), associations); err != nil {
+			return [[.Name]]{}, err
+		}
+	}
+[[else]]	if err := repository.validateAssociations(ctx, userID, associations); err != nil {
 		return [[.Name]]{}, err
 	}
-[[end]]	changes := models.[[.Name]]Changes{
+[[end]][[end]]	changes := models.[[.Name]]Changes{
 [[range .Fields]]		[[.GoName]]: [[if .Nullable]]nullableField(attributes.[[.GoName]])[[else]]orm.Value(attributes.[[.GoName]])[[end]],
 [[end]]	}
 	updatedAt := orm.SetCurrentTime(models.[[.Name]]Columns.UpdatedAt)
@@ -213,18 +253,21 @@ func (repository *PostgresRepository) Update(ctx context.Context, userID, id int
 		update = repository.query().Update(changes, updatedAt[[range .Relationships]], models.[[$.Name]]Columns.[[.ForeignKeyGoName]].Set(associations.[[.ForeignKeyGoName]])[[end]]).
 			OptimisticVersion(orm.ExpectVersion(models.[[.Name]]Columns.Version, *expectedVersion))
 	}
-	item, err := update.Where(
+	[[if .AuthorizationPolicies]]predicates := append([]orm.Predicate[models.[[.Name]]]{models.[[.Name]]Columns.ID.Eq(id)}, scopePredicates...)
+	item, err := update.Where(predicates...).One(ctx, repository.Executor)
+	[[else]]item, err := update.Where(
 		models.[[.Name]]Columns.ID.Eq(id),
 		models.[[.Name]]Columns.UserID.Eq(userID),
 	).One(ctx, repository.Executor)
+	[[end]]
 [[if .Relationships]]	if associationErr := invalidAssociationWriteError(err); associationErr != nil {
 		return [[.Name]]{}, associationErr
 	}
 [[end]]	err = postgres.Classify(err)
 	if expectedVersion != nil && errors.Is(err, orm.ErrNotFound) {
-		exists, existsErr := repository.query().Select().Where(
+		exists, existsErr := repository.query().Select().Where([[if .AuthorizationPolicies]]predicates...[[else]]
 			models.[[.Name]]Columns.ID.Eq(id),
-			models.[[.Name]]Columns.UserID.Eq(userID),
+			models.[[.Name]]Columns.UserID.Eq(userID),[[end]]
 		).Exists(ctx, repository.Executor)
 		if existsErr != nil {
 			return [[.Name]]{}, fmt.Errorf("check [[.Package]] after guarded update: %w", postgres.Classify(existsErr))
@@ -236,11 +279,18 @@ func (repository *PostgresRepository) Update(ctx context.Context, userID, id int
 	return repositoryResult(item, err)
 }
 
-func (repository *PostgresRepository) Delete(ctx context.Context, userID, id int64) error {
-	rows, err := repository.query().Delete().Where(
+func (repository *PostgresRepository) Delete(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]]) error {
+	[[if .AuthorizationPolicies]]scopePredicates, err := repositoryScopePredicates(scope)
+	if err != nil {
+		return fmt.Errorf("delete [[.Package]]: %w", err)
+	}
+	predicates := append([]orm.Predicate[models.[[.Name]]]{models.[[.Name]]Columns.ID.Eq(id)}, scopePredicates...)
+	rows, err := repository.query().Delete().Where(predicates...).Exec(ctx, repository.Executor)
+	[[else]]rows, err := repository.query().Delete().Where(
 		models.[[.Name]]Columns.ID.Eq(id),
 		models.[[.Name]]Columns.UserID.Eq(userID),
 	).Exec(ctx, repository.Executor)
+	[[end]]
 	if err != nil {
 [[if .OwnerCandidateKey]]		err = postgres.Classify(err)
 		if errors.Is(err, orm.ErrForeignKey) {
@@ -290,16 +340,22 @@ func invalidAssociationWriteError(err error) error {
 	}
 }
 
-func (repository *PostgresRepository) loadRelationships(ctx context.Context, userID int64, items [][[.Name]]) ([][[.Name]], error) {
+func (repository *PostgresRepository) loadRelationships(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]], items [][[.Name]]) ([][[.Name]], error) {
 	if len(items) == 0 {
 		return items, nil
 	}
 	var err error
-[[range .Relationships]]	items, err = repository.query().Load[[.GoName]](ctx, items,
+[[range .Relationships]][[if $.AuthorizationPolicies]]	[[.Name]]Scope := models.NewStore(repository.Executor).[[.TargetQueryAccessor]]().Select()
+	if !scope.AllRecords() {
+		[[.Name]]Scope = [[.Name]]Scope.Where(models.[[.TargetSpec.Name]]Columns.UserID.Eq(scope.ActorID()))
+	}
+	items, err = repository.query().Load[[.GoName]](ctx, items, [[.Name]]Scope)
+[[else]]	items, err = repository.query().Load[[.GoName]](ctx, items,
 		models.NewStore(repository.Executor).[[.TargetQueryAccessor]]().Select().Where(
 			models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID),
 		),
 	)
+[[end]]
 	if err != nil {
 		return nil, fmt.Errorf("load [[.ForeignKey]] association: %w", postgres.Classify(err))
 	}

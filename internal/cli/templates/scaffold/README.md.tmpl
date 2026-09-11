@@ -56,6 +56,15 @@ Go and paired PostgreSQL migrations, then refreshes the inspectable typed ORM.
 Edit those application-owned files directly to add fields or relationships and
 run `forge orm:generate` after model changes.
 
+Generated HTTP resources own `authorization.go` beside their controllers and
+repository. The default `Authorize` function grants owner access for each typed
+list, create, view, update, and delete action. Return `AccessAll` for a deliberate
+privileged action or `AccessDenied` to reject an authenticated action with 403.
+The same function is explicitly injected into JSON and browser controllers in
+`routes/resources_gen.go`; their derived scope is applied directly to SQL reads,
+updates, and deletes. Hidden and missing rows both remain 404. Edit that ordinary
+Go source, inject another function, or replace the resource wiring entirely.
+
 Create a durable typed job with `forge make:job SendWelcome` (or
 `forge make job SendWelcome`). Edit its ordinary payload and handler under
 `internal/jobs`, then dispatch it through the generated typed helper. A

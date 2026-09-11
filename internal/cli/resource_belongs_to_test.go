@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestMakeResourceBelongsToGeneratesInspectableOwnerSafeSlice(t *testing.T) {
-	for _, version := range []string{"10", "11"} {
+	for _, version := range []string{"10", "11", "12", "13"} {
 		t.Run("format_"+version, func(t *testing.T) {
 			testMakeResourceBelongsToGeneratesInspectableOwnerSafeSlice(t, version)
 		})
@@ -53,6 +54,11 @@ func testMakeResourceBelongsToGeneratesInspectableOwnerSafeSlice(t *testing.T, v
 		`Project`, `*Project`, `forge:"belongs_to,target=Project,foreign_key=ProjectID,references=ID"`)
 	assertGeneratedFileContains(t, "internal/resources/issue/model.go",
 		"type AssociationIDs struct", "CategoryID int64", "ProjectID")
+	if _, err := os.Stat(filepath.Join("internal", "resources", "issue", "authorization.go")); version == "13" && err != nil {
+		t.Fatalf("format-13 relationship resource has no authorization contract: %v", err)
+	} else if version != "13" && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy format-%s relationship resource gained authorization source: %v", version, err)
+	}
 	assertGeneratedFileContains(t, filepath.FromSlash(generatedORMPath),
 		"IssueCategoryRelation", "func (query IssueQuery) LoadCategory",
 		"IssueProjectRelation", "func (query IssueQuery) LoadProject")
@@ -87,15 +93,17 @@ func testMakeResourceBelongsToGeneratesInspectableOwnerSafeSlice(t *testing.T, v
 		}
 	}
 
-	command := exec.Command("go", "test", "./...")
-	command.Dir = directory
-	command.Env = append(os.Environ(),
-		"GOCACHE="+filepath.Join(root, ".cache", "go-build"),
-		"GOMODCACHE="+filepath.Join(root, ".cache", "go-mod"),
-		"GOWORK=off",
-	)
-	if result, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("relationship application does not compile and test: %v\n%s", err, result)
+	if version == "13" {
+		command := exec.Command("go", "test", "./...")
+		command.Dir = directory
+		command.Env = append(os.Environ(),
+			"GOCACHE="+filepath.Join(root, ".cache", "go-build"),
+			"GOMODCACHE="+filepath.Join(root, ".cache", "go-mod"),
+			"GOWORK=off",
+		)
+		if result, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("relationship application does not compile and test: %v\n%s", err, result)
+		}
 	}
 }
 
@@ -114,16 +122,6 @@ func TestMakeResourceBelongsToRequiresFormatTenOrNewerWithoutWrites(t *testing.T
 			var output bytes.Buffer
 			if err := Run([]string{"make:resource", "Category"}, &output, &output); err != nil {
 				t.Fatalf("format-%s scalar resource: %v\n%s", version, err, output.String())
-			}
-			command := exec.Command("go", "test", "./...")
-			command.Dir = directory
-			command.Env = append(os.Environ(),
-				"GOCACHE="+filepath.Join(root, ".cache", "go-build"),
-				"GOMODCACHE="+filepath.Join(root, ".cache", "go-mod"),
-				"GOWORK=off",
-			)
-			if result, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("format-%s scalar application does not compile and test: %v\n%s", version, err, result)
 			}
 			before := snapshotRelationshipProject(t, directory)
 

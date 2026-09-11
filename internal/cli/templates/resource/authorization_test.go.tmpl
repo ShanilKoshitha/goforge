@@ -1,0 +1,94 @@
+package [[.Package]]
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"[[.Module]]/internal/auth"
+)
+
+func TestDefaultAuthorizationIsOwnerOnlyForKnownActions(t *testing.T) {
+	user := auth.User{ID: 9}
+	for _, action := range []Action{ActionList, ActionCreate, ActionView, ActionUpdate, ActionDelete} {
+		access, err := Authorize(context.Background(), user, action)
+		if err != nil || access != AccessOwner {
+			t.Fatalf("Authorize(%q) = %d, %v", action, access, err)
+		}
+		scope, err := authorizedScope(context.Background(), user, action, Authorize)
+		if err != nil || scope.ActorID() != user.ID || scope.AllRecords() {
+			t.Fatalf("authorizedScope(%q) = %+v, %v", action, scope, err)
+		}
+	}
+	if _, err := authorizedScope(context.Background(), user, Action("unknown"), Authorize); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unknown default action = %v", err)
+	}
+}
+
+func TestAuthorizationResolvesExplicitDenyOwnerAndAll(t *testing.T) {
+	user := auth.User{ID: 9}
+	tests := []struct {
+		name       string
+		access     Access
+		want       error
+		allRecords bool
+	}{
+		{name: "denied", access: AccessDenied, want: ErrForbidden},
+		{name: "owner", access: AccessOwner},
+		{name: "all", access: AccessAll, allRecords: true},
+		{name: "unknown", access: Access(255), want: ErrInvalidAuthorization},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scope, err := authorizedScope(context.Background(), user, ActionView, func(context.Context, auth.User, Action) (Access, error) {
+				return test.access, nil
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("error = %v, want %v", err, test.want)
+			}
+			if test.want == nil && (scope.ActorID() != user.ID || scope.AllRecords() != test.allRecords) {
+				t.Fatalf("scope = %+v", scope)
+			}
+		})
+	}
+}
+
+func TestAuthorizationFailuresNeverProduceAValidScope(t *testing.T) {
+	sentinel := errors.New("policy unavailable")
+	tests := []struct {
+		name      string
+		user      auth.User
+		authorize AuthorizeFunc
+		want      error
+	}{
+		{name: "nil policy", user: auth.User{ID: 9}, want: ErrInvalidAuthorization},
+		{name: "invalid user", authorize: Authorize, want: ErrInvalidAuthorization},
+		{name: "policy error", user: auth.User{ID: 9}, authorize: func(context.Context, auth.User, Action) (Access, error) {
+			return AccessAll, sentinel
+		}, want: sentinel},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scope, err := authorizedScope(context.Background(), test.user, ActionView, test.authorize)
+			if !errors.Is(err, test.want) || !errors.Is(scope.Validate(), ErrInvalidScope) {
+				t.Fatalf("scope = %+v, error = %v", scope, err)
+			}
+		})
+	}
+}
+
+func TestScopeConstructorsAndZeroValue(t *testing.T) {
+	owner := OwnerScope(9)
+	if err := owner.Validate(); err != nil || owner.ActorID() != 9 || owner.AllRecords() {
+		t.Fatalf("owner scope = %+v, %v", owner, err)
+	}
+	all := AllRecordsScope(9)
+	if err := all.Validate(); err != nil || all.ActorID() != 9 || !all.AllRecords() {
+		t.Fatalf("all-records scope = %+v, %v", all, err)
+	}
+	for _, invalid := range []Scope{{}, OwnerScope(0), AllRecordsScope(-1)} {
+		if err := invalid.Validate(); !errors.Is(err, ErrInvalidScope) {
+			t.Fatalf("invalid scope %+v = %v", invalid, err)
+		}
+	}
+}

@@ -43,6 +43,8 @@ jobs:
           GOBIN="$RUNNER_TEMP/released-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.11.0
           "$RUNNER_TEMP/released-cli/forge" new "$RUNNER_TEMP/released-app" --module example.com/releasedapp
           cd "$RUNNER_TEMP/released-app"
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string
+          test ! -e internal/resources/subsequentissue/authorization.go
           cp internal/models/zz_orm_gen.go "$RUNNER_TEMP/orm-before.go"
           "$RUNNER_TEMP/forge" test
           "$RUNNER_TEMP/forge" build
@@ -80,6 +82,42 @@ jobs:
           cmp "$RUNNER_TEMP/released-go.mod" go.mod
           cmp "$RUNNER_TEMP/released-go.sum" go.sum
           cmp "$RUNNER_TEMP/released-forge.yaml" forge.yaml
+      - name: Public v0.12.1 format-9 upgrade compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format9-cli"
+          GOBIN="$RUNNER_TEMP/released-format9-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.12.1
+          "$RUNNER_TEMP/released-format9-cli/forge" new "$RUNNER_TEMP/released-format9-app" --module example.com/releasedformat9
+          cd "$RUNNER_TEMP/released-format9-app"
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string
+          test ! -e internal/resources/subsequentissue/authorization.go
+          test "$("$RUNNER_TEMP/released-format9-cli/forge" version)" = 'forge 0.12.1'
+          grep -q '^version: 9$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.12.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
+      - name: Public v0.13.1 format-10 relationship upgrade compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format10-cli"
+          GOBIN="$RUNNER_TEMP/released-format10-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.13.1
+          "$RUNNER_TEMP/released-format10-cli/forge" new "$RUNNER_TEMP/released-format10-app" --module example.com/releasedformat10
+          cd "$RUNNER_TEMP/released-format10-app"
+          "$RUNNER_TEMP/released-format10-cli/forge" make:resource Category --field title:string
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string --belongs-to category:Category
+          test ! -e internal/resources/category/authorization.go
+          test ! -e internal/resources/subsequentissue/authorization.go
+          test "$("$RUNNER_TEMP/released-format10-cli/forge" version)" = 'forge 0.13.1'
+          grep -q '^version: 10$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.13.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
       - name: Public v0.14.1 format-11 upgrade compatibility
         run: |
           mkdir -p "$RUNNER_TEMP/released-format11-cli"
@@ -90,6 +128,10 @@ jobs:
           "$RUNNER_TEMP/released-format11-cli/forge" make:job ValidateScheduledTargetsJob
           test ! -e internal/jobmanifest/manifest_gen.go
           "$RUNNER_TEMP/forge" make:job SubsequentWork
+          "$RUNNER_TEMP/forge" make:resource Category --field title:string
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string --belongs-to category:Category
+          test ! -e internal/resources/category/authorization.go
+          test ! -e internal/resources/subsequentissue/authorization.go
           grep -q '^version: 11$' forge.yaml
           grep -q 'github.com/ShanilKoshitha/goforge v0.14.0' go.mod
           grep -q 'jobs.RegisteredJobNamesDefinition.Name()' internal/jobmanifest/manifest_gen.go
@@ -102,17 +144,41 @@ jobs:
           "$RUNNER_TEMP/forge" build
           go build ./cmd/worker
           go build ./cmd/scheduler
+      - name: Public v0.17.1 format-12 upgrade compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format12-cli"
+          GOBIN="$RUNNER_TEMP/released-format12-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.17.1
+          "$RUNNER_TEMP/released-format12-cli/forge" new "$RUNNER_TEMP/released-format12-app" --module example.com/releasedformat12
+          cd "$RUNNER_TEMP/released-format12-app"
+          "$RUNNER_TEMP/released-format12-cli/forge" make:resource ExistingIssue --field title:string
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string
+          test "$("$RUNNER_TEMP/released-format12-cli/forge" version)" = 'forge 0.17.1'
+          grep -q '^version: 12$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.17.0' go.mod
+          test ! -e internal/resources/existingissue/authorization.go
+          test ! -e internal/resources/subsequentissue/authorization.go
+          test -z "$(grep '^replace ' go.mod || true)"
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" assets:check
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.17.1'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.18.0'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.17.0' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
           grep -Fqx 'github.com/ShanilKoshitha/goforge v0.17.0 h1:r3JWPwcB8YNNU9+22v4K3Bx6M7S8fbQ4HIB3rXRdlDY=' go.sum
           grep -Fqx 'github.com/ShanilKoshitha/goforge v0.17.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
-          grep -q '^version: 12$' forge.yaml
+          grep -q '^version: 13$' forge.yaml
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
+          test -f internal/resources/legacyissue/authorization.go
+          grep -q 'legacyissueAuthorize := legacyissueresource.AuthorizeFunc(legacyissueresource.Authorize)' routes/resources_gen.go
+          grep -q 'NewController(legacyissueRepository, legacyissueAuthorize)' routes/resources_gen.go
+          grep -q 'NewWebController(legacyissueRepository, renderer, legacyissueAuthorize)' routes/resources_gen.go
           "$RUNNER_TEMP/forge" make:resource TypedTicket \
             --field title:string \
             --field notes:text:nullable \
@@ -128,6 +194,7 @@ jobs:
           go mod verify
           go mod tidy -diff
           "$RUNNER_TEMP/forge" test
+          go test -race ./...
           go vet ./...
           "$RUNNER_TEMP/forge" build
           go build ./cmd/worker
@@ -179,7 +246,7 @@ jobs:
           stop_dev
           trap - EXIT
       - name: Generated PostgreSQL applications
-        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow)$' -count=2 -v
+        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow|TestGeneratedResourceAuthorizationPostgresWorkflow)$' -count=2 -v
 
   windows:
     runs-on: windows-latest
