@@ -1243,9 +1243,11 @@ required `--belongs-to` inputs. The scalar grammar and required/nullable
 semantics match `make:resource`: string, text, integer, and boolean fields are
 required by default, while an explicit `:nullable` suffix emits the matching Go
 pointer and SQL NULL contract. A belongs-to declaration names an already
-existing ordinary application model and emits its foreign-key field, explicit
-relationship metadata, PostgreSQL foreign key, and index. The generator does
-not edit the target model or infer an inverse edge.
+existing ordinary application model with the conventional required `ID`
+primary field and emits its foreign-key field, explicit relationship metadata,
+PostgreSQL foreign key, and index. The generator does not edit the target model
+or infer an inverse edge. Custom primary-key relationships remain ordinary
+model/tag/migration edits followed by `forge orm:generate`.
 
 The flags are one-shot generation input. A successful command publishes the
 application-owned model, paired migration, and regenerated `zz_orm_gen.go` as
@@ -1257,9 +1259,12 @@ generator lock continues to serialize concurrent mutation.
 
 The existing no-flag command retains its byte-for-byte minimal-model output.
 Formats 4 through 13 may opt into the additive flags because the generated code
-uses the ORM contract already published for format 4; there is no project-format
-bump or hidden application rewrite. Resource generation remains the complete
-HTTP slice, while model generation produces persistence code only.
+uses the ORM contract introduced for format 4 and present in the earliest
+public v0.7.0 runtime. CI compiles a no-replace format-7 application against
+that public module; formats 4–6 predate the public repository's tags and retain
+source-level compatibility coverage. There is no project-format bump or hidden
+application rewrite. Resource generation remains the complete HTTP slice,
+while model generation produces persistence code only.
 
 Reason: the v0.4 runtime is already a broad typed Data Mapper, but the primary
 model command currently creates an empty persistence shell and instructs users

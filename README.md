@@ -100,6 +100,11 @@ asset build. Rolling deployments must keep same-path asset changes backward
 compatible or use stickiness until retained generations provide exact HTML and
 asset version consistency.
 
+Current source is the v0.19.0 model-generation candidate. Its additive
+`make:model` field and belongs-to options turn the existing typed Data Mapper
+into a complete empty-directory domain-model workflow while keeping format 13,
+the published runtime contract, and the legacy no-option command compatible.
+
 ## Install and try it
 
 Install the released CLI and generate an application:
@@ -158,10 +163,10 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.18.0 release. Fresh
+The command surface below is the v0.19.0 development candidate. Fresh
 applications use format 13 while continuing to pin the public v0.17.0 asset
-runtime; the authorization slice is generated application code and needs no
-new runtime package.
+runtime; the authorization and model-generation slices are generated
+application code and need no new runtime package.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
@@ -173,7 +178,7 @@ forge assets:check
 forge migrate
 forge views:compile
 forge orm:generate [--check]
-forge make:model <name>
+forge make:model <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingModel>]...
 forge make:resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...
 forge make:controller <name>
 forge make:request <name>
@@ -191,6 +196,12 @@ forge schedule:work
 
 The spaced forms (`forge make controller Users`) also work. Generators never
 overwrite existing files.
+
+Standalone typed models accept the same repeatable field grammar and can refer
+to an existing model with `--belongs-to`. They generate ordinary Go, paired SQL
+migrations, and the typed store without adding HTTP or authorization policy.
+See the [typed ORM guide](docs/orm.md) for copyable CRUD, relationship,
+transaction, and handwritten-SQL examples.
 
 Typed resources accept repeated fields in declaration order:
 

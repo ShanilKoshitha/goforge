@@ -50,11 +50,27 @@ atomic signup transaction. Replacing either store requires supplying an
 application-specific `RegistrationTransaction`; startup fails outside tests if
 no cross-store transaction coordinator is configured.
 
-Create a persistence model without an HTTP resource using either
-`forge make:model Invoice` or `forge make model Invoice`. This writes ordinary
+Create a persistence model without an HTTP resource using repeatable typed
+fields and required belongs-to relationships:
+
+```sh
+forge make:model Customer --field name:string
+forge make:model Invoice --field number:string --field total_cents:integer --field paid:boolean --belongs-to customer:Customer
+```
+
+The spaced `forge make model` form also works. Fields use
+`<name>:<string|text|integer|boolean>[:required|nullable]` and are required by
+default. A belongs-to target must already exist. The command writes ordinary
 Go and paired PostgreSQL migrations, then refreshes the inspectable typed ORM.
-Edit those application-owned files directly to add fields or relationships and
-run `forge orm:generate` after model changes.
+Edit the application-owned model and migration files directly, run
+`forge orm:generate` after model changes, and use `forge orm:generate --check`
+in custom CI. The generated store supports typed select, filter, order,
+pagination, count, exists, create, partial update, safe delete, and explicit
+batched relationship loading against either `*sql.DB` or `*sql.Tx`. Use
+`database/sql` directly for transactions or queries outside those builders;
+there is no Active Record, lazy loading, or automatic schema diff.
+Copyable query, mutation, transaction, relationship, and escape-hatch examples
+are in the [GoForge typed ORM guide](https://github.com/ShanilKoshitha/goforge/blob/main/docs/orm.md).
 
 Generated HTTP resources own `authorization.go` beside their controllers and
 repository. The default `Authorize` function grants owner access for each typed

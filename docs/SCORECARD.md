@@ -28,7 +28,7 @@ required belongs-to edge to an existing model.
 | Generation is atomic and concurrency-safe | missing | Invalid input and model, migration, ORM-render, publication, cancellation, and concurrent-generator failures either write the complete coherent set or preserve the prior tree; no orphaned model, migration, or generated ORM artifact remains |
 | The generated ORM is useful end to end | missing | A fresh PostgreSQL application uses only generated types to create, find, filter, order, paginate, count, test existence, partially update, reject stale writes, safely delete, and batch-load the relationship with a bounded query count |
 | Transactions and escape hatches remain visible | missing | The same generated store works with `*sql.DB` and `*sql.Tx`; commit, rollback, handwritten SQL, inspected `orm.Statement`, classified constraint errors, and cancellation are demonstrated without framework-owned runtime discovery |
-| Compatibility remains explicit | missing | No-flag `make:model Name` remains byte-for-byte compatible; existing format-4 through format-13 applications retain their source and may opt into the additive flags because the emitted code uses the already-published v0.4 ORM contract |
+| Compatibility remains explicit | missing | No-flag `make:model Name` remains byte-for-byte compatible; existing format-4 through format-13 applications retain their source, source-level frozen-format coverage starts at format 6, and the earliest public v0.7.0/format-7 module compiles the additive output without a replacement |
 | Documentation is copyable and honest | missing | Root and generated-project guides link a focused ORM guide covering model generation, generated store use, transactions, relationships, raw SQL, regeneration/checking, ownership of emitted code, and deliberate non-goals |
 | The milestone passes twice without regression | missing | Framework normal/race/vet/build, frozen-format compatibility, fresh generated-app inspection, isolated PostgreSQL workflow, native Windows checks, and independent adversarial review pass twice on the final revision |
 
@@ -60,7 +60,8 @@ required belongs-to edge to an existing model.
   scanning.
 - Editing an existing target model to add inverse relationships, generating
   has-one/has-many/many-to-many declarations, polymorphism, composite primary
-  keys, or multi-dialect parity.
+  keys, automatic belongs-to generation for custom primary keys, or
+  multi-dialect parity.
 - HTTP controllers, routes, requests, views, resource metadata, implicit
   validation, callbacks, tenant scopes, caching, or a persisted schema
   registry.
