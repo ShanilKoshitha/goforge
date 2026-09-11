@@ -19,8 +19,8 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.17.1 is a PostgreSQL-first candidate against its written embedded
-production-assets scorecard. Fresh format-12 applications pin the published
+GoForge v0.17.1 is the accepted PostgreSQL-first embedded-production-assets
+release. Fresh format-12 applications pin the published
 v0.17.0 asset runtime without a local replace. It includes explicit database
 wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
@@ -153,7 +153,7 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in the v0.17.1 candidate. Fresh
+The command surface below is included in the v0.17.1 release. Fresh
 applications use format 12 and pin the matching asset runtime.
 
 ```text

@@ -1,11 +1,10 @@
 # v0.17 embedded production assets scorecard
 
-Status: **candidate** — the v0.17.0 runtime bridge is public and resolvable;
-format-12 adoption is staged for v0.17.1 acceptance.
+Status: **accepted** — 2026-09-10
 
 Release boundary: v0.17.0 adds and verifies the backward-compatible public
 `asset` package while retaining the format-11 scaffold and its public v0.14.2
-pin. The v0.17.1 candidate now adopts format 12 against that published runtime,
+pin. The v0.17.1 release adopts format 12 against that published runtime,
 including official proxy checksums, commands, watcher integration, and the
 end-to-end acceptance criteria below. This prevents a merged generator from
 producing applications that depend on an unpublished framework version.
@@ -32,14 +31,14 @@ old HTML across rolling deployments unless prior generations are retained.
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| A fresh browser application has a complete asset path | candidate | The scaffold owns CSS and JavaScript files, an explicit embedded asset package and handler route, and a Forge `asset` function used by the default layout; normal browser pages fetch both assets successfully |
-| Production bytes are conventional and self-contained | candidate | Direct `go build ./cmd/server` embeds the source bytes without a compiler, manifest, or runtime disk access; application startup validates the bounded inventory, `forge assets:check` and the opinionated test/build gates run the same application-owned validator without writing, and the handler can be replaced with ordinary `net/http` or external storage wiring |
-| HTTP caching and representation semantics are safe | candidate | Canonical stable URLs support GET, HEAD, strong ETag revalidation and byte ranges with exact media type and length; responses use `public, max-age=0, must-revalidate`, never falsely claim immutable fingerprints, and preserve global security middleware |
-| The public edge fails closed | candidate | Traversal, encoded separators, directories, dotfiles, case-fold collisions, unsupported active types, irregular files, excessive file count, per-file size, total size, unknown names, and unsupported methods are rejected deterministically without directory listing or content sniffing |
-| The development loop includes every asset edit | candidate | Regular files below `resources/assets/files` participate in source snapshots regardless of extension; a valid edit rebuilds the embedded binary, promotes through the existing last-good transaction, then emits one LiveReload event, while unreadable, failed, stale, or reverted candidates do not reload or displace the previous bytes |
-| Existing applications remain compatible | candidate | Formats 4–11 retain their existing test/build/serve behavior and direct commands; format 12 is required only for the new scaffold contract, and the public asset runtime is independently usable |
-| Documentation tells the truth | candidate | Framework and generated-project guides explain stable revalidated URLs, direct-Go use, supported defaults, replacement seams, and why transforms, fingerprints, and external asset hosts are separate contracts |
-| The milestone passes twice without regression | candidate | Framework race/vet/build, compatibility, current scaffold, fresh generated PostgreSQL browser/development/production asset journeys, native Windows tests, and independent adversarial review pass twice on the final revision |
+| A fresh browser application has a complete asset path | passing | The scaffold owns CSS and JavaScript files, an explicit embedded asset package and handler route, and a Forge `asset` function used by the default layout; normal browser pages fetch both assets successfully |
+| Production bytes are conventional and self-contained | passing | Direct `go build ./cmd/server` embeds the source bytes without a compiler, manifest, or runtime disk access; application startup validates the bounded inventory, `forge assets:check` and the opinionated test/build gates run the same application-owned validator without writing, and the handler can be replaced with ordinary `net/http` or external storage wiring |
+| HTTP caching and representation semantics are safe | passing | Canonical stable URLs support GET, HEAD, strong ETag revalidation and byte ranges with exact media type and length; responses use `public, max-age=0, must-revalidate`, never falsely claim immutable fingerprints, and preserve global security middleware |
+| The public edge fails closed | passing | Traversal, encoded separators, directories, dotfiles, case-fold collisions, unsupported active types, irregular files, excessive file count, per-file size, total size, unknown names, and unsupported methods are rejected deterministically without directory listing or content sniffing |
+| The development loop includes every asset edit | passing | Regular files below `resources/assets/files` participate in source snapshots regardless of extension; a valid edit rebuilds the embedded binary, promotes through the existing last-good transaction, then emits one LiveReload event, while unreadable, failed, stale, or reverted candidates do not reload or displace the previous bytes |
+| Existing applications remain compatible | passing | Formats 4–11 retain their existing test/build/serve behavior and direct commands; format 12 is required only for the new scaffold contract, and the public asset runtime is independently usable |
+| Documentation tells the truth | passing | Framework and generated-project guides explain stable revalidated URLs, direct-Go use, supported defaults, replacement seams, and why transforms, fingerprints, and external asset hosts are separate contracts |
+| The milestone passes twice without regression | passing | Framework race/vet/build, compatibility, current scaffold, fresh generated PostgreSQL browser/development/production asset journeys, native Windows tests, and independent adversarial review pass twice on the final revision |
 
 ## Runnable baseline — 2026-09-10
 
@@ -56,7 +55,7 @@ old HTML across rolling deployments unless prior generations are retained.
 - v0.16 explicitly excludes static-file conventions, production assets,
   manifests, fingerprints, transforms, and Node integration.
 
-## Candidate verification — 2026-09-10
+## Acceptance evidence — 2026-09-10
 
 - Final candidate revision `7e20f5c` passes `go test ./... -count=1` in
   180.039 seconds and `go test -race ./... -count=1` in 235.847 seconds;
@@ -70,8 +69,19 @@ old HTML across rolling deployments unless prior generations are retained.
   immediate non-asset content detection, cheap metadata tracking beyond the
   default asset bounds, and exclusion of the asset root from formats 4–11.
 - Independent adversarial review is clean at P0–P2 after the watcher fixes.
-  Remote Linux/PostgreSQL and native Windows matrices remain required before
-  this candidate can be accepted or tagged v0.17.1.
+- [PR #22](https://github.com/ShanilKoshitha/goforge/pull/22) merged the
+  history-preserving adoption at `2d383ce`. Its push and pull-request runs both
+  passed Linux/PostgreSQL and native Windows matrices.
+- The merged [main workflow](https://github.com/ShanilKoshitha/goforge/actions/runs/34544721681)
+  passed Linux/PostgreSQL in 14m35s and Windows in 6m47s. The independent
+  [v0.17.1 tag workflow](https://github.com/ShanilKoshitha/goforge/actions/runs/34544797371)
+  passed Linux/PostgreSQL in 14m50s and Windows in 7m21s.
+- The public Go proxy resolves unsigned lightweight tag `v0.17.1` to merge
+  `2d383ce` with module checksum
+  `h1:ku7R4obOvY5+HftC+6fk7fqY9A0v2iEKS8WKljk00PE=`. A clean proxy install
+  reports `forge 0.17.1`; its no-replace format-12 application passes module
+  verification, a no-diff tidy, `assets:check`, `forge test`, and the isolated
+  `forge build` workflow.
 
 ## Explicit non-goals
 
