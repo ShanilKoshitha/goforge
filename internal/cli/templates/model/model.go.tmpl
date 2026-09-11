@@ -6,7 +6,10 @@ import "time"
 // update the paired migration, then run forge orm:generate.
 type [[.Name]] struct {
 	ID        int64     `json:"id" forge:"primary,generated,protected,required"`
-	CreatedAt time.Time `json:"created_at" db:"created_at" forge:"generated,protected,required"`
+[[range .Relationships]]	[[.ForeignKeyGoName]] [[.ForeignKeyType]] `json:"[[.ForeignKey]]" db:"[[.ForeignKey]]" forge:"required,index,references=[[.Target]].[[.TargetKey]],on_delete=no_action"`
+[[end]][[range .Fields]]	[[.GoName]] [[.GoType]] `json:"[[.Name]]" db:"[[.Name]]" forge:"[[.ForgeTag]]"`
+[[end]]	CreatedAt time.Time `json:"created_at" db:"created_at" forge:"generated,protected,required"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at" forge:"generated,protected,required"`
 	Version   int64     `json:"version" forge:"protected,required,default=1"`
-}
+[[range .Relationships]]	[[.GoName]] *[[.Target]] `json:"-" forge:"belongs_to,target=[[.Target]],foreign_key=[[.ForeignKeyGoName]],references=[[.TargetKey]]"`
+[[end]]}

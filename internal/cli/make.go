@@ -22,16 +22,25 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		kind, rest = strings.TrimPrefix(args[0], "make:"), args[1:]
 	}
 	name := ""
+	var modelFields []resourceField
+	var modelRelationships []resourceBelongsTo
 	var resourceFields []resourceField
 	var resourceRelationships []resourceBelongsTo
 	resourceSchemaDriven := false
-	if kind == "resource" {
+	switch kind {
+	case "model":
+		var err error
+		name, modelFields, modelRelationships, err = parseMakeModelArguments(rest)
+		if err != nil {
+			return err
+		}
+	case "resource":
 		var err error
 		name, resourceFields, resourceRelationships, resourceSchemaDriven, err = parseMakeResourceArguments(rest)
 		if err != nil {
 			return err
 		}
-	} else {
+	default:
 		if len(rest) != 1 {
 			return fmt.Errorf("usage: forge make:%s <name>", kind)
 		}
@@ -60,7 +69,7 @@ func runMake(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	case "migration":
 		return makeMigration(name, stdout)
 	case "model":
-		return makeModel(name, stdout)
+		return makeModelWithOptions(name, modelFields, modelRelationships, stdout)
 	case "resource":
 		return makeResourceWithProcessRelationships(ctx, name, resourceFields, resourceRelationships, resourceSchemaDriven, stdin, stdout, stderr, processes)
 	case "component":

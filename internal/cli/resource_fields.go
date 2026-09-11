@@ -72,6 +72,35 @@ var reservedResourceFieldGoNames = map[string]bool{
 	"Version": true, "Owner": true,
 }
 
+// fieldGrammar keeps the shared field/relationship syntax independent from
+// the surface that emits it. HTTP resources reserve ownership and form names;
+// ordinary models only reserve intrinsic/generated members and transport names.
+type fieldGrammar struct {
+	subject          string
+	target           string
+	reservedRawNames map[string]bool
+	reservedGoNames  map[string]bool
+}
+
+var resourceFieldGrammar = fieldGrammar{
+	subject:          "resource",
+	target:           "ExistingResource",
+	reservedRawNames: reservedResourceFieldNames,
+	reservedGoNames:  reservedResourceFieldGoNames,
+}
+
+var modelFieldGrammar = fieldGrammar{
+	subject: "model",
+	target:  "ExistingModel",
+	reservedRawNames: map[string]bool{
+		"id": true, "created_at": true, "updated_at": true, "version": true,
+		"_token": true, "_method": true,
+	},
+	reservedGoNames: map[string]bool{
+		"ID": true, "CreatedAt": true, "UpdatedAt": true, "Version": true,
+	},
+}
+
 func parseMakeResourceArguments(arguments []string) (string, []resourceField, []resourceBelongsTo, bool, error) {
 	if len(arguments) == 0 || strings.HasPrefix(arguments[0], "--") {
 		return "", nil, nil, false, resourceUsageError()
@@ -129,13 +158,21 @@ func resourceUsageError() error {
 }
 
 func parseResourceBelongsTo(resourceName string, specifications []string) ([]resourceBelongsTo, error) {
+	return parseBelongsTo(resourceName, specifications, resourceFieldGrammar)
+}
+
+func parseModelBelongsTo(modelName string, specifications []string) ([]resourceBelongsTo, error) {
+	return parseBelongsTo(modelName, specifications, modelFieldGrammar)
+}
+
+func parseBelongsTo(subjectName string, specifications []string, grammar fieldGrammar) ([]resourceBelongsTo, error) {
 	if len(specifications) > maximumResourceBelongsTo {
-		return nil, fmt.Errorf("resource relationships exceed the maximum of %d", maximumResourceBelongsTo)
+		return nil, fmt.Errorf("%s relationships exceed the maximum of %d", grammar.subject, maximumResourceBelongsTo)
 	}
 	if len(specifications) == 0 {
 		return nil, nil
 	}
-	resourceType, err := pascal(resourceName)
+	subjectType, err := pascal(subjectName)
 	if err != nil {
 		return nil, err
 	}
@@ -143,15 +180,15 @@ func parseResourceBelongsTo(resourceName string, specifications []string) ([]res
 	belongsTo := make([]resourceBelongsTo, 0, len(specifications))
 	seenNames := make(map[string]struct{}, len(specifications))
 	for _, specification := range specifications {
-		relation, err := parseRequiredBelongsTo(specification)
+		relation, err := parseRequiredBelongsToWithGrammar(specification, grammar)
 		if err != nil {
 			return nil, err
 		}
 		if _, exists := seenNames[relation.Name]; exists {
 			return nil, fmt.Errorf("duplicate belongs-to relationship %q", relation.Name)
 		}
-		if relation.Target == resourceType {
-			return nil, fmt.Errorf("belongs-to relationship %q cannot target its own resource %s", relation.Name, resourceType)
+		if relation.Target == subjectType {
+			return nil, fmt.Errorf("belongs-to relationship %q cannot target its own %s %s", relation.Name, grammar.subject, subjectType)
 		}
 		seenNames[relation.Name] = struct{}{}
 		belongsTo = append(belongsTo, relation)
@@ -160,6 +197,10 @@ func parseResourceBelongsTo(resourceName string, specifications []string) ([]res
 }
 
 func parseRequiredBelongsTo(specification string) (resourceBelongsTo, error) {
+	return parseRequiredBelongsToWithGrammar(specification, resourceFieldGrammar)
+}
+
+func parseRequiredBelongsToWithGrammar(specification string, grammar fieldGrammar) (resourceBelongsTo, error) {
 	if specification == "" {
 		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship specification cannot be empty")
 	}
@@ -171,13 +212,13 @@ func parseRequiredBelongsTo(specification string) (resourceBelongsTo, error) {
 	}
 	parts := strings.Split(specification, ":")
 	if len(parts) != 2 {
-		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q must use name:ExistingResource", specification)
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q must use name:%s", specification, grammar.target)
 	}
 	name, targetName := parts[0], parts[1]
 	if strings.TrimSpace(name) != name || strings.TrimSpace(targetName) != targetName || targetName == "" {
-		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q must use name:ExistingResource without whitespace", specification)
+		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q must use name:%s without whitespace", specification, grammar.target)
 	}
-	if reservedResourceFieldNames[name] {
+	if grammar.reservedRawNames[name] {
 		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q is reserved", name)
 	}
 	if !resourceFieldName.MatchString(name) {
@@ -190,11 +231,11 @@ func parseRequiredBelongsTo(specification string) (resourceBelongsTo, error) {
 	if err != nil || !token.IsIdentifier(goName) || !ast.IsExported(goName) || len(goName) > maximumResourceIdentifier {
 		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship name %q does not produce a safe exported Go identifier", name)
 	}
-	if reservedResourceFieldGoNames[goName] {
+	if grammar.reservedGoNames[goName] {
 		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q produces reserved Go name %s", name, goName)
 	}
 	foreignKey := name + "_id"
-	if reservedResourceFieldNames[foreignKey] {
+	if grammar.reservedRawNames[foreignKey] {
 		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q produces reserved foreign key %s", name, foreignKey)
 	}
 	if !safeIdentifier(foreignKey) || len(foreignKey) > maximumResourceIdentifier {
@@ -204,7 +245,7 @@ func parseRequiredBelongsTo(specification string) (resourceBelongsTo, error) {
 	if err != nil || !token.IsIdentifier(foreignKeyGoName) || !ast.IsExported(foreignKeyGoName) || len(foreignKeyGoName) > maximumResourceIdentifier {
 		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q does not produce a safe foreign-key Go identifier", name)
 	}
-	if reservedResourceFieldGoNames[foreignKeyGoName] {
+	if grammar.reservedGoNames[foreignKeyGoName] {
 		return resourceBelongsTo{}, fmt.Errorf("belongs-to relationship %q produces reserved Go name %s", name, foreignKeyGoName)
 	}
 	target, err := pascal(targetName)
@@ -221,11 +262,19 @@ func parseRequiredBelongsTo(specification string) (resourceBelongsTo, error) {
 }
 
 func validateResourceMemberCollisions(fields []resourceField, belongsTo []resourceBelongsTo) error {
+	return validateMemberCollisions(fields, belongsTo, resourceFieldGrammar)
+}
+
+func validateModelMemberCollisions(fields []resourceField, belongsTo []resourceBelongsTo) error {
+	return validateMemberCollisions(fields, belongsTo, modelFieldGrammar)
+}
+
+func validateMemberCollisions(fields []resourceField, belongsTo []resourceBelongsTo, grammar fieldGrammar) error {
 	rawNames := make(map[string]string, len(fields)+len(belongsTo)*2)
 	goNames := make(map[string]string, len(fields)+len(belongsTo)*2)
 	claim := func(names map[string]string, name, owner, namespace string) error {
 		if previous, exists := names[name]; exists {
-			return fmt.Errorf("resource %s %s conflicts with %s", namespace, name, previous)
+			return fmt.Errorf("%s %s %s conflicts with %s", grammar.subject, namespace, name, previous)
 		}
 		names[name] = owner
 		return nil
@@ -256,26 +305,37 @@ func validateResourceMemberCollisions(fields []resourceField, belongsTo []resour
 }
 
 func parseResourceFields(specifications []string) ([]resourceField, error) {
+	return parseFields(specifications, resourceFieldGrammar)
+}
+
+func parseModelFields(specifications []string) ([]resourceField, error) {
+	if len(specifications) == 0 {
+		return nil, nil
+	}
+	return parseFields(specifications, modelFieldGrammar)
+}
+
+func parseFields(specifications []string, grammar fieldGrammar) ([]resourceField, error) {
 	if len(specifications) == 0 {
 		return defaultResourceFields(), nil
 	}
 	if len(specifications) > maximumResourceFields {
-		return nil, fmt.Errorf("resource fields exceed the maximum of %d", maximumResourceFields)
+		return nil, fmt.Errorf("%s fields exceed the maximum of %d", grammar.subject, maximumResourceFields)
 	}
 
 	fields := make([]resourceField, 0, len(specifications))
 	seenNames := make(map[string]struct{}, len(specifications))
 	seenGoNames := make(map[string]string, len(specifications))
 	for _, specification := range specifications {
-		field, err := parseResourceField(specification)
+		field, err := parseField(specification, grammar)
 		if err != nil {
 			return nil, err
 		}
 		if _, exists := seenNames[field.Name]; exists {
-			return nil, fmt.Errorf("duplicate resource field %q", field.Name)
+			return nil, fmt.Errorf("duplicate %s field %q", grammar.subject, field.Name)
 		}
 		if previous, exists := seenGoNames[field.GoName]; exists {
-			return nil, fmt.Errorf("resource fields %q and %q produce the same Go name %s", previous, field.Name, field.GoName)
+			return nil, fmt.Errorf("%s fields %q and %q produce the same Go name %s", grammar.subject, previous, field.Name, field.GoName)
 		}
 		seenNames[field.Name] = struct{}{}
 		seenGoNames[field.GoName] = field.Name
@@ -292,35 +352,39 @@ func defaultResourceFields() []resourceField {
 }
 
 func parseResourceField(specification string) (resourceField, error) {
+	return parseField(specification, resourceFieldGrammar)
+}
+
+func parseField(specification string, grammar fieldGrammar) (resourceField, error) {
 	if specification == "" {
-		return resourceField{}, fmt.Errorf("resource field specification cannot be empty")
+		return resourceField{}, fmt.Errorf("%s field specification cannot be empty", grammar.subject)
 	}
 	if len(specification) > maximumResourceFieldLength {
-		return resourceField{}, fmt.Errorf("resource field specification exceeds %d bytes", maximumResourceFieldLength)
+		return resourceField{}, fmt.Errorf("%s field specification exceeds %d bytes", grammar.subject, maximumResourceFieldLength)
 	}
 	if strings.TrimSpace(specification) != specification {
-		return resourceField{}, fmt.Errorf("resource field specification %q cannot contain surrounding whitespace", specification)
+		return resourceField{}, fmt.Errorf("%s field specification %q cannot contain surrounding whitespace", grammar.subject, specification)
 	}
 	parts := strings.Split(specification, ":")
 	if len(parts) < 2 {
-		return resourceField{}, fmt.Errorf("resource field %q must use name:type[:required|nullable]", specification)
+		return resourceField{}, fmt.Errorf("%s field %q must use name:type[:required|nullable]", grammar.subject, specification)
 	}
 	name := parts[0]
-	if reservedResourceFieldNames[name] {
-		return resourceField{}, fmt.Errorf("resource field %q is reserved", name)
+	if grammar.reservedRawNames[name] {
+		return resourceField{}, fmt.Errorf("%s field %q is reserved", grammar.subject, name)
 	}
 	if !resourceFieldName.MatchString(name) {
-		return resourceField{}, fmt.Errorf("resource field name %q must be lower_snake_case", name)
+		return resourceField{}, fmt.Errorf("%s field name %q must be lower_snake_case", grammar.subject, name)
 	}
 	if !safeIdentifier(name) || len(name) > maximumResourceIdentifier {
-		return resourceField{}, fmt.Errorf("resource field name %q is not a safe PostgreSQL identifier", name)
+		return resourceField{}, fmt.Errorf("%s field name %q is not a safe PostgreSQL identifier", grammar.subject, name)
 	}
 	goName, err := pascal(name)
 	if err != nil || !token.IsIdentifier(goName) || !ast.IsExported(goName) || len(goName) > maximumResourceIdentifier {
-		return resourceField{}, fmt.Errorf("resource field name %q does not produce a safe exported Go identifier", name)
+		return resourceField{}, fmt.Errorf("%s field name %q does not produce a safe exported Go identifier", grammar.subject, name)
 	}
-	if reservedResourceFieldGoNames[goName] {
-		return resourceField{}, fmt.Errorf("resource field %q produces reserved Go name %s", name, goName)
+	if grammar.reservedGoNames[goName] {
+		return resourceField{}, fmt.Errorf("%s field %q produces reserved Go name %s", grammar.subject, name, goName)
 	}
 
 	kind := resourceFieldKind(parts[1])
@@ -335,7 +399,7 @@ func parseResourceField(specification string) (resourceField, error) {
 	case resourceFieldBoolean:
 		goType, databaseType = "bool", "boolean"
 	default:
-		return resourceField{}, fmt.Errorf("resource field %q has unknown type %q", name, parts[1])
+		return resourceField{}, fmt.Errorf("%s field %q has unknown type %q", grammar.subject, name, parts[1])
 	}
 
 	required, nullable := false, false
@@ -343,20 +407,20 @@ func parseResourceField(specification string) (resourceField, error) {
 		switch modifier {
 		case "required":
 			if required {
-				return resourceField{}, fmt.Errorf("resource field %q repeats modifier required", name)
+				return resourceField{}, fmt.Errorf("%s field %q repeats modifier required", grammar.subject, name)
 			}
 			required = true
 		case "nullable":
 			if nullable {
-				return resourceField{}, fmt.Errorf("resource field %q repeats modifier nullable", name)
+				return resourceField{}, fmt.Errorf("%s field %q repeats modifier nullable", grammar.subject, name)
 			}
 			nullable = true
 		default:
-			return resourceField{}, fmt.Errorf("resource field %q has unknown modifier %q", name, modifier)
+			return resourceField{}, fmt.Errorf("%s field %q has unknown modifier %q", grammar.subject, name, modifier)
 		}
 	}
 	if required && nullable {
-		return resourceField{}, fmt.Errorf("resource field %q cannot be both required and nullable", name)
+		return resourceField{}, fmt.Errorf("%s field %q cannot be both required and nullable", grammar.subject, name)
 	}
 	if !required && !nullable {
 		required = true
