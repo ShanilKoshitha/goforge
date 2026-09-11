@@ -194,6 +194,7 @@ jobs:
           go mod verify
           go mod tidy -diff
           "$RUNNER_TEMP/forge" test
+          go test -race ./...
           go vet ./...
           "$RUNNER_TEMP/forge" build
           go build ./cmd/worker
