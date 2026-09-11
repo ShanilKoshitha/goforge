@@ -57,6 +57,22 @@ type personalTokenAcceptanceResource struct {
 	Version    int64  `json:"version"`
 }
 
+func TestPersonalTokenAcceptanceEnvironmentRetainsRequiredSecrets(t *testing.T) {
+	environment := personalTokenAcceptanceEnvironment(
+		[]string{"SESSION_SECRET=required", "APP_ADDRESS=old", "UNCHANGED=value"},
+		map[string]string{"APP_ADDRESS": "new"},
+	)
+	joined := "\x00" + strings.Join(environment, "\x00") + "\x00"
+	for _, want := range []string{"\x00SESSION_SECRET=required\x00", "\x00APP_ADDRESS=new\x00", "\x00UNCHANGED=value\x00"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("acceptance environment omitted %q: %q", want, environment)
+		}
+	}
+	if strings.Contains(joined, "\x00APP_ADDRESS=old\x00") {
+		t.Fatalf("acceptance environment retained replaced address: %q", environment)
+	}
+}
+
 func TestGeneratedPersonalTokenPostgresWorkflow(t *testing.T) {
 	databaseURL := os.Getenv("GOFORGE_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -128,7 +144,7 @@ func TestGeneratedPersonalTokenPostgresWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	applicationURL := "http://application.example.test"
-	applicationEnvironment := jobAcceptanceEnvironment(baseEnvironment, map[string]string{
+	applicationEnvironment := personalTokenAcceptanceEnvironment(baseEnvironment, map[string]string{
 		"DATABASE_URL":            isolatedURL,
 		"APP_ENV":                 "local",
 		"APP_URL":                 applicationURL,
@@ -155,7 +171,7 @@ func TestGeneratedPersonalTokenPostgresWorkflow(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	address := freeAddress(t)
-	serverEnvironment := jobAcceptanceEnvironment(applicationEnvironment, map[string]string{"APP_ADDRESS": address})
+	serverEnvironment := personalTokenAcceptanceEnvironment(applicationEnvironment, map[string]string{"APP_ADDRESS": address})
 	server, firstOutput := startGeneratedServer(t, serverBinary, scratch, serverEnvironment)
 	serverRunning := true
 	t.Cleanup(func() {
@@ -442,7 +458,7 @@ func TestGeneratedPersonalTokenPostgresWorkflow(t *testing.T) {
 	stopCommandProcess(t, server, false)
 	serverRunning = false
 	restartedAddress := freeAddress(t)
-	restartedEnvironment := jobAcceptanceEnvironment(applicationEnvironment, map[string]string{"APP_ADDRESS": restartedAddress})
+	restartedEnvironment := personalTokenAcceptanceEnvironment(applicationEnvironment, map[string]string{"APP_ADDRESS": restartedAddress})
 	restarted, restartedOutput := startGeneratedServer(t, serverBinary, scratch, restartedEnvironment)
 	restartedRunning := true
 	t.Cleanup(func() {
@@ -593,6 +609,24 @@ func personalTokenAcceptanceRegister(t *testing.T, client *http.Client, baseURL,
 	if response.Status != http.StatusCreated {
 		t.Fatalf("register %s: status=%d, want 201", name, response.Status)
 	}
+}
+
+func personalTokenAcceptanceEnvironment(base []string, overrides map[string]string) []string {
+	blocked := make(map[string]struct{}, len(overrides))
+	for key := range overrides {
+		blocked[strings.ToUpper(key)] = struct{}{}
+	}
+	result := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, replace := blocked[strings.ToUpper(key)]; !replace {
+			result = append(result, entry)
+		}
+	}
+	for key, value := range overrides {
+		result = append(result, key+"="+value)
+	}
+	return result
 }
 
 func personalTokenAcceptanceCustomizeIssueAuthorization(t *testing.T, directory string) {
