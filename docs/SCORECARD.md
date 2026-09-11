@@ -1,6 +1,6 @@
 # v0.19 schema-complete model generation scorecard
 
-Status: **in progress** — 2026-09-11
+Status: **accepted** — 2026-09-11
 
 Target:
 
@@ -23,14 +23,14 @@ required belongs-to edge to an existing model.
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| One command produces a useful scalar model | missing | `make:model Customer --field name:string` emits deterministic ordinary Go, a paired PostgreSQL migration, and refreshed typed ORM output; declaration order is retained, fields are required by default, and `:nullable` has exact Go/SQL semantics |
-| Required belongs-to generation is complete | missing | `make:model Invoice --field number:string --field total_cents:integer --field paid:boolean --belongs-to customer:Customer` validates the existing target and emits the typed foreign key, relationship declaration, indexed foreign key, and generated batch loader without editing the target model |
-| Generation is atomic and concurrency-safe | missing | Invalid input and model, migration, ORM-render, publication, cancellation, and concurrent-generator failures either write the complete coherent set or preserve the prior tree; no orphaned model, migration, or generated ORM artifact remains |
-| The generated ORM is useful end to end | missing | A fresh PostgreSQL application uses only generated types to create, find, filter, order, paginate, count, test existence, partially update, reject stale writes, safely delete, and batch-load the relationship with a bounded query count |
-| Transactions and escape hatches remain visible | missing | The same generated store works with `*sql.DB` and `*sql.Tx`; commit, rollback, handwritten SQL, inspected `orm.Statement`, classified constraint errors, and cancellation are demonstrated without framework-owned runtime discovery |
-| Compatibility remains explicit | missing | No-flag `make:model Name` remains byte-for-byte compatible; existing format-4 through format-13 applications retain their source, source-level frozen-format coverage starts at format 6, and the earliest public v0.7.0/format-7 module compiles the additive output without a replacement |
-| Documentation is copyable and honest | missing | Root and generated-project guides link a focused ORM guide covering model generation, generated store use, transactions, relationships, raw SQL, regeneration/checking, ownership of emitted code, and deliberate non-goals |
-| The milestone passes twice without regression | missing | Framework normal/race/vet/build, frozen-format compatibility, fresh generated-app inspection, isolated PostgreSQL workflow, native Windows checks, and independent adversarial review pass twice on the final revision |
+| One command produces a useful scalar model | passing | `make:model Customer --field name:string` emits deterministic ordinary Go, a paired PostgreSQL migration, and refreshed typed ORM output; declaration order is retained, fields are required by default, and `:nullable` has exact Go/SQL semantics |
+| Required belongs-to generation is complete | passing | `make:model Invoice --field number:string --field total_cents:integer --field paid:boolean --belongs-to customer:Customer` validates the existing target and emits the typed foreign key, relationship declaration, indexed foreign key, and generated batch loader without editing the target model |
+| Generation is atomic and concurrency-safe | passing | Invalid input and model, migration, ORM-render, publication, cancellation, and concurrent-generator failures either write the complete coherent set or preserve the prior tree; no orphaned model, migration, or generated ORM artifact remains |
+| The generated ORM is useful end to end | passing | A fresh PostgreSQL application uses only generated types to create, find, filter, order, paginate, count, test existence, partially update, reject stale writes, safely delete, and batch-load the relationship with a bounded query count |
+| Transactions and escape hatches remain visible | passing | The same generated store works with `*sql.DB` and `*sql.Tx`; commit, rollback, handwritten SQL, inspected `orm.Statement`, classified constraint errors, and cancellation are demonstrated without framework-owned runtime discovery |
+| Compatibility remains explicit | passing | No-flag `make:model Name` remains byte-for-byte compatible; existing format-4 through format-13 applications retain their source, source-level frozen-format coverage starts at format 6, and the earliest public v0.7.0/format-7 module compiles the additive output without a replacement |
+| Documentation is copyable and honest | passing | Root and generated-project guides link a focused ORM guide covering model generation, generated store use, transactions, relationships, raw SQL, regeneration/checking, ownership of emitted code, and deliberate non-goals |
+| The milestone passes twice without regression | passing | Framework normal/race/vet/build, frozen-format compatibility, fresh generated-app inspection, isolated PostgreSQL workflow, native Windows checks, and independent adversarial review pass twice on the final revision |
 
 ## Runnable baseline — 2026-09-11
 
@@ -52,6 +52,45 @@ required belongs-to edge to an existing model.
   domain models cannot use it and every non-resource generator currently
   rejects additional arguments. Required belongs-to generation is likewise
   limited to HTTP resources.
+
+## Acceptance evidence — 2026-09-11
+
+- Final candidate `64e8f09` passes `go test ./... -count=1`, with the CLI
+  matrix completing in 182.802 seconds, and `go test -race ./... -count=1`,
+  with the CLI matrix completing in 271.484 seconds. `go vet ./...`,
+  formatting, and `git diff --check` are clean. A separate final CLI run on
+  the committed revision passed in 166.088 seconds.
+- A fresh format-13 application generated `Customer` and `Invoice` models,
+  including a nullable text field and required belongs-to relationship.
+  Inspection confirmed ordinary Go declarations, paired SQL migrations,
+  writable generated inputs and changes, an indexed foreign key, and the
+  explicit batch loader. `orm:generate --check`, direct vet, generated tests,
+  and the isolated application build all passed.
+- The generated PostgreSQL journey runs twice in the hosted matrix and proves
+  typed create/find/filter/order/pagination/count/existence, nullable value
+  semantics, partial changes, optimistic concurrency, safe delete, bounded
+  belongs-to loading, database and transaction executors, commit and rollback,
+  raw SQL, inspectable statements, classified constraints, and cancellation.
+- Frozen format-6 coverage preserves pre-existing application source while
+  generating a related model with the current CLI. The public v0.7.0/format-7
+  gate uses the tagged CLI and runtime without a module replacement, normalizes
+  that historical scaffold's missing direct-module checksums, then proves the
+  additive v0.19 output is tidy, current, testable, vet-clean, and buildable.
+- Independent adversarial review found no remaining P0, P1, or P2 issue after
+  the field-grammar ownership, nullable workflow, concurrent generation,
+  frozen/public compatibility, custom-primary-key boundary, and documentation
+  corrections. All candidate commits are unsigned, authored and committed only
+  as Shanil, and contain no co-author or assistant metadata.
+- [PR #27](https://github.com/ShanilKoshitha/goforge/pull/27) preserves the
+  milestone's six commits and merged at `9326c7e`. Its
+  [pull-request run](https://github.com/ShanilKoshitha/goforge/actions/runs/34623315452)
+  and corrected
+  [push run](https://github.com/ShanilKoshitha/goforge/actions/runs/34623311062)
+  independently passed Linux/PostgreSQL and native Windows. The first push
+  attempt was retried unchanged after the public Go proxy reset one v0.13.1
+  download; the retry passed that gate and the complete matrix. The exact
+  merged [main run](https://github.com/ShanilKoshitha/goforge/actions/runs/34626044528)
+  passed the same matrix in 12m44s on Linux/PostgreSQL and 5m53s on Windows.
 
 ## Explicit non-goals
 
