@@ -32,7 +32,7 @@
             <strong>{{.Name}}</strong>
             <span>Expires <time datetime="{{.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.ExpiresAt.Format "2006-01-02"}}</time></span>
             <form action="/settings/tokens/{{.ID}}/revoke" method="post">
-              @csrf
+              <input type="hidden" name="_token" value="{{$.Form.CSRFToken}}">
               <button type="submit">Revoke {{.Name}}</button>
             </form>
           </li>@endfor
