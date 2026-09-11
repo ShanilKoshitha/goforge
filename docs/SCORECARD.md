@@ -88,6 +88,13 @@ controllers, repositories, or route registration with ordinary Go.
   independently passed Linux/PostgreSQL and native Windows. The exact merged
   [main run](https://github.com/ShanilKoshitha/goforge/actions/runs/34607290670)
   passed the same complete matrix.
+- Unsigned lightweight tag `v0.18.0` resolves to accepted main `bf91c4f`. Its
+  independent [tag run](https://github.com/ShanilKoshitha/goforge/actions/runs/34612543759)
+  passed Linux/PostgreSQL and native Windows. The public Go proxy returns module
+  checksum `h1:NFMuYt0YBjFKzImLMG55JAxyvui2UwDcc17gwjlt4pE=`; a clean proxy
+  install reports `forge 0.18.0`, generates a no-replace format-13 resource
+  application pinned to public v0.17.0, and passes module verification, tidy,
+  asset validation, generated tests, and the isolated build.
 
 ## Explicit non-goals
 

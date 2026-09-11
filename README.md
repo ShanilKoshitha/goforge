@@ -19,9 +19,9 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.17.1 is the accepted PostgreSQL-first embedded-production-assets
-release. Fresh format-12 applications pin the published
-v0.17.0 asset runtime without a local replace. It includes explicit database
+GoForge v0.18.0 is the accepted PostgreSQL-first explicit-resource-authorization
+release. Fresh format-13 applications pin the published v0.17.0 asset runtime
+without a local replace. It includes explicit database
 wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
@@ -40,8 +40,8 @@ boundary adds typed composable validation, exact JSON/form failure semantics,
 bounded HTTP timeouts and headers, correlated completion logs, validated CORS
 and security policy, trusted-proxy parsing, and PostgreSQL authentication
 throttles shared across processes and restarts.
-Current source is the v0.18.0 format-13 authorization candidate. Newly generated
-resources own a typed action/access function shared by their JSON and browser
+Newly generated format-13 resources own a typed action/access function shared
+by their JSON and browser
 controllers. Owner-only remains the default; application code can explicitly
 grant all-record access or deny an action, while repositories apply the derived
 scope in the same SQL statement as every read and mutation.
@@ -105,7 +105,7 @@ asset version consistency.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.17.1
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.18.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -158,7 +158,7 @@ state, hidden route discovery, or ORM query language.
 
 ## CLI (current source)
 
-The command surface below is included in current v0.18.0 source. Fresh
+The command surface below is included in the v0.18.0 release. Fresh
 applications use format 13 while continuing to pin the public v0.17.0 asset
 runtime; the authorization slice is generated application code and needs no
 new runtime package.
