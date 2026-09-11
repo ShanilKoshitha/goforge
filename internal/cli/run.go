@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.18.0"
+const Version = "0.19.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -175,14 +175,14 @@ Usage:
   forge make controller <name>
   forge make request <name>
   forge make migration <name>
-  forge make model <name>
+  forge make model <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingModel>]...
   forge make resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...
   forge make component <name>
   forge make job <name>
   forge make:controller <name>
   forge make:request <name>
   forge make:migration <name>
-  forge make:model <name>
+  forge make:model <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingModel>]...
   forge make:resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...
   forge make:component <name>
   forge make:job <name>
@@ -193,6 +193,11 @@ Resource field types: string, text, integer, boolean. Fields are required by
 default; append :nullable to allow null. Without --field, resources retain the
 legacy name:string and versionless-update contract. Any explicit --field uses
 schema-driven output and requires a positive version on updates.
+
+Models accept the same scalar field grammar. A required
+--belongs-to <name>:<ExistingModel> emits the foreign key and explicit
+relationship to an existing application model. Model options are one-shot;
+the generated Go and paired SQL migration remain authoritative.
 
 Format-10 through format-13 projects may add repeatable required relationships with
 --belongs-to <name>:<ExistingResource>. The target must already be a generated
