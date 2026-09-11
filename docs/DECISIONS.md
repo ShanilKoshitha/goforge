@@ -1233,3 +1233,37 @@ administrator, editor, and read-only requirements to fork both transport and
 persistence code. Generated authorization with closed SQL scopes provides the
 familiar policy experience while keeping access rules visible, fail-closed, and
 atomic in conventional Go.
+
+## D042 — `make:model` accepts one-shot typed schema input
+
+**Status:** accepted for v0.19 implementation
+
+GoForge will extend `forge make:model` with repeated scalar `--field` and
+required `--belongs-to` inputs. The scalar grammar and required/nullable
+semantics match `make:resource`: string, text, integer, and boolean fields are
+required by default, while an explicit `:nullable` suffix emits the matching Go
+pointer and SQL NULL contract. A belongs-to declaration names an already
+existing ordinary application model and emits its foreign-key field, explicit
+relationship metadata, PostgreSQL foreign key, and index. The generator does
+not edit the target model or infer an inverse edge.
+
+The flags are one-shot generation input. A successful command publishes the
+application-owned model, paired migration, and regenerated `zz_orm_gen.go` as
+one rollback-safe operation. The resulting Go declarations and SQL migration
+remain authoritative; later edits use normal source control and
+`forge orm:generate`. Validation completes before publication wherever
+possible, and publication failures restore the last coherent tree. The project
+generator lock continues to serialize concurrent mutation.
+
+The existing no-flag command retains its byte-for-byte minimal-model output.
+Formats 4 through 13 may opt into the additive flags because the generated code
+uses the ORM contract already published for format 4; there is no project-format
+bump or hidden application rewrite. Resource generation remains the complete
+HTTP slice, while model generation produces persistence code only.
+
+Reason: the v0.4 runtime is already a broad typed Data Mapper, but the primary
+model command currently creates an empty persistence shell and instructs users
+to synchronize Go and SQL by hand. Accepting a bounded schema at the command
+line makes the ORM discoverable and useful from an empty directory without
+introducing Active Record lifecycle magic, runtime schemas, or automatic
+database mutation.

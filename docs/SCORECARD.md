@@ -1,3 +1,70 @@
+# v0.19 schema-complete model generation scorecard
+
+Status: **in progress** — 2026-09-11
+
+Target:
+
+> From a fresh application, describe useful PostgreSQL domain models directly
+> in `forge make:model` commands and receive application-owned Go declarations,
+> paired SQL migrations, typed ORM mapping, mutations, queries, and explicit
+> belongs-to loading as one rollback-safe generation transaction. The emitted
+> Go and SQL remain authoritative and editable; no runtime schema registry,
+> reflection, migration diffing, lazy loading, or Active Record lifecycle is
+> introduced.
+
+This milestone closes the largest remaining gap between the broad v0.4 ORM
+runtime and the empty-directory workflow. The current command emits an empty
+model and requires developers to manually keep Go declarations and migrations
+in sync before regenerating ORM code. The smallest complete replacement reuses
+the resource scalar vocabulary for ordinary models and adds one explicit,
+required belongs-to edge to an existing model.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| One command produces a useful scalar model | missing | `make:model Customer --field name:string` emits deterministic ordinary Go, a paired PostgreSQL migration, and refreshed typed ORM output; declaration order is retained, fields are required by default, and `:nullable` has exact Go/SQL semantics |
+| Required belongs-to generation is complete | missing | `make:model Invoice --field number:string --field total_cents:integer --field paid:boolean --belongs-to customer:Customer` validates the existing target and emits the typed foreign key, relationship declaration, indexed foreign key, and generated batch loader without editing the target model |
+| Generation is atomic and concurrency-safe | missing | Invalid input and model, migration, ORM-render, publication, cancellation, and concurrent-generator failures either write the complete coherent set or preserve the prior tree; no orphaned model, migration, or generated ORM artifact remains |
+| The generated ORM is useful end to end | missing | A fresh PostgreSQL application uses only generated types to create, find, filter, order, paginate, count, test existence, partially update, reject stale writes, safely delete, and batch-load the relationship with a bounded query count |
+| Transactions and escape hatches remain visible | missing | The same generated store works with `*sql.DB` and `*sql.Tx`; commit, rollback, handwritten SQL, inspected `orm.Statement`, classified constraint errors, and cancellation are demonstrated without framework-owned runtime discovery |
+| Compatibility remains explicit | missing | No-flag `make:model Name` remains byte-for-byte compatible; existing format-4 through format-13 applications retain their source and may opt into the additive flags because the emitted code uses the already-published v0.4 ORM contract |
+| Documentation is copyable and honest | missing | Root and generated-project guides link a focused ORM guide covering model generation, generated store use, transactions, relationships, raw SQL, regeneration/checking, ownership of emitted code, and deliberate non-goals |
+| The milestone passes twice without regression | missing | Framework normal/race/vet/build, frozen-format compatibility, fresh generated-app inspection, isolated PostgreSQL workflow, native Windows checks, and independent adversarial review pass twice on the final revision |
+
+## Runnable baseline — 2026-09-11
+
+- `origin/main` and the isolated milestone branch start at merge `e27068a`.
+  [GitHub Actions run 34616051890](https://github.com/ShanilKoshitha/goforge/actions/runs/34616051890)
+  passed Linux/PostgreSQL and native Windows. A local `go test ./...` run also
+  passed, with the generated-application CLI package completing in 173.901
+  seconds.
+- The generated ORM already supports typed selects, counts, existence checks,
+  inserts, bulk operations, partial updates, safe deletes, row locks, optimistic
+  concurrency, four explicit relationship kinds, `*sql.DB`/`*sql.Tx`
+  executors, inspectable statements, and stable PostgreSQL error
+  classification. This milestone does not build a second ORM.
+- `forge make:model Invoice` currently emits only ID, timestamps, and version.
+  Its generated `InvoiceCreateInput` and `InvoiceChanges` are empty, and the
+  generated-project README tells developers to hand-edit both the Go model and
+  migration before running `forge orm:generate`.
+- `make:resource` already has a deterministic scalar grammar, but ordinary
+  domain models cannot use it and every non-resource generator currently
+  rejects additional arguments. Required belongs-to generation is likewise
+  limited to HTTP resources.
+
+## Explicit non-goals
+
+- Active Record `Save`, lazy loading, identity maps, implicit units of work,
+  automatic startup migration, schema diffing, runtime reflection, or package
+  scanning.
+- Editing an existing target model to add inverse relationships, generating
+  has-one/has-many/many-to-many declarations, polymorphism, composite primary
+  keys, or multi-dialect parity.
+- HTTP controllers, routes, requests, views, resource metadata, implicit
+  validation, callbacks, tenant scopes, caching, or a persisted schema
+  registry.
+
 # v0.18 explicit resource authorization scorecard
 
 Status: **accepted** — 2026-09-11
