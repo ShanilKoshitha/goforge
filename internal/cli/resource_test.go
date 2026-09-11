@@ -108,6 +108,8 @@ func TestMakeResourceGeneratesCompleteSafeVerticalSlices(t *testing.T) {
 		"internal/resources/issue/repository.go",
 		"internal/resources/issue/repository_test.go",
 		"internal/resources/issue/request.go",
+		"internal/resources/issue/authorization.go",
+		"internal/resources/issue/authorization_test.go",
 		"internal/resources/issue/controller.go",
 		"internal/resources/issue/controller_test.go",
 		"internal/resources/issue/web_controller.go",
@@ -136,7 +138,10 @@ func TestMakeResourceGeneratesCompleteSafeVerticalSlices(t *testing.T) {
 	registryBefore, _ := os.ReadFile(filepath.Join("routes", "resources_gen.go"))
 	stateBefore, _ := os.ReadFile(filepath.Join(".forge", "resources.json"))
 	ormBefore, _ := os.ReadFile(filepath.FromSlash(generatedORMPath))
-	if !strings.Contains(string(registryBefore), `"/issues/{id}"`) || !strings.Contains(string(registryBefore), `"/app/issues/{id}/edit"`) || !strings.Contains(string(registryBefore), "requireAuth") {
+	if !strings.Contains(string(registryBefore), `"/issues/{id}"`) || !strings.Contains(string(registryBefore), `"/app/issues/{id}/edit"`) || !strings.Contains(string(registryBefore), "requireAuth") ||
+		!strings.Contains(string(registryBefore), "issueAuthorize := issueresource.AuthorizeFunc(issueresource.Authorize)") ||
+		!strings.Contains(string(registryBefore), "issueresource.NewController(issueRepository, issueAuthorize)") ||
+		!strings.Contains(string(registryBefore), "issueresource.NewWebController(issueRepository, renderer, issueAuthorize)") {
 		t.Fatalf("resource routes are not explicit and authenticated:\n%s", registryBefore)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join("resources", "views", "views_gen.go"))
@@ -154,8 +159,10 @@ func TestMakeResourceGeneratesCompleteSafeVerticalSlices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(repository), "Executor orm.Executor") || !strings.Contains(string(repository), "IssueColumns.UserID.Eq(userID)") {
-		t.Fatalf("resource repository is not ORM-backed and owner-scoped:\n%s", repository)
+	if !strings.Contains(string(repository), "Executor orm.Executor") ||
+		!strings.Contains(string(repository), "func repositoryScopePredicates(scope Scope)") ||
+		!strings.Contains(string(repository), "IssueColumns.UserID.Eq(scope.ActorID())") {
+		t.Fatalf("resource repository is not ORM-backed and authorization-scoped:\n%s", repository)
 	}
 	if !strings.Contains(string(compiledViews), `Name: "pages/issues/index"`) || strings.Contains(string(compiledViews), "@extends") {
 		t.Fatalf("resource views were not compiled into the managed artifact:\n%s", compiledViews)
@@ -229,10 +236,11 @@ func TestMakeResourceGeneratesOneTypedFieldContractAcrossEveryLayer(t *testing.T
 		"decodeExactJSONObject", "http.MaxBytesReader",
 		"request.validate(true)", `decodeJSONInt64("priority"`, `decodeJSONBoolean("active"`)
 	assertGeneratedFileContains(t, "internal/resources/issue/repository.go",
-		"Create(ctx context.Context, userID int64, attributes Attributes)",
+		"Create(ctx context.Context, scope Scope, attributes Attributes)",
+		"userID := scope.ActorID()",
 		"Title:    attributes.Title", "Notes:    nullableField(attributes.Notes)",
 		"Priority: orm.Value(attributes.Priority)", "Active:   orm.Value(attributes.Active)",
-		"IssueColumns.UserID.Eq(userID)")
+		"IssueColumns.UserID.Set(userID)")
 	assertGeneratedFileContains(t, "resources/views/pages/issues/form.forge.html",
 		`name="title"`, `name="notes"`, `name="priority"`, `name="active"`,
 		`type="text"`, "<textarea", `type="number"`, "<select")
@@ -890,10 +898,128 @@ func TestMakeResourceRefusesOlderProjectFormatBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestFormatsEightThroughTwelveRetainLegacyResourceGeneration(t *testing.T) {
+	definition := resourceDefinition{
+		resourceSpec: resourceSpec{
+			Name: "Issue", Package: "issue", Plural: "issues",
+			MigrationVersion: "20260911000000",
+		},
+		Fields: defaultResourceFields(),
+	}
+	state := resourceState{Resources: []resourceSpec{definition.resourceSpec}}
+	var formatEight, formatTen map[string]string
+	for _, version := range []int{8, 9, 10, 11, 12} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			files, err := resourceFilesForFormat("example.com/legacy", definition, version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			generated := make(map[string]string, len(files)+1)
+			for _, file := range files {
+				generated[filepath.ToSlash(file.path)] = file.content
+			}
+			registry, err := generatedResourceRegistryForFormat("example.com/legacy", state, version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			generated["routes/resources_gen.go"] = registry
+
+			for _, path := range []string{
+				"internal/resources/issue/authorization.go",
+				"internal/resources/issue/authorization_test.go",
+			} {
+				if _, exists := generated[path]; exists {
+					t.Errorf("format %d unexpectedly generated %s", version, path)
+				}
+			}
+			for path, fragments := range map[string][]string{
+				"internal/resources/issue/controller.go": {
+					"func NewController(repository Repository) *Controller",
+				},
+				"internal/resources/issue/web_controller.go": {
+					"func NewWebController(repository Repository, views *view.Engine) *WebController",
+				},
+				"internal/resources/issue/repository.go": {
+					"List(ctx context.Context, userID int64)",
+					"Create(ctx context.Context, userID int64",
+					"Find(ctx context.Context, userID, id int64)",
+					"Update(ctx context.Context, userID, id int64",
+					"Delete(ctx context.Context, userID, id int64)",
+				},
+				"routes/resources_gen.go": {
+					"func registerResources(router *httpx.Router, renderer *view.Engine, db *sql.DB, manager *session.Manager, requireAuth, requireWebAuth httpx.Middleware) {",
+					"issueresource.NewController(issueRepository)",
+					"issueresource.NewWebController(issueRepository, renderer)",
+				},
+			} {
+				for _, fragment := range fragments {
+					if !strings.Contains(generated[path], fragment) {
+						t.Errorf("format %d legacy %s omits %q:\n%s", version, path, fragment, generated[path])
+					}
+				}
+			}
+			for path, content := range generated {
+				if strings.Contains(content, "AuthorizeFunc") {
+					t.Errorf("format %d legacy %s gained authorization wiring", version, path)
+				}
+			}
+
+			switch version {
+			case 8:
+				formatEight = generated
+			case 9:
+				assertGeneratedResourceSetEqual(t, generated, formatEight)
+			case 10:
+				formatTen = generated
+			default:
+				assertGeneratedResourceSetEqual(t, generated, formatTen)
+			}
+		})
+	}
+}
+
+func TestFormatThirteenRejectsResourceAuthorizationDeclarationCollisions(t *testing.T) {
+	for name := range format13ResourceDeclarations {
+		t.Run(name, func(t *testing.T) {
+			packageName := strings.ToLower(name)
+			plural, err := snake(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			definition := resourceDefinition{
+				resourceSpec: resourceSpec{
+					Name: name, Package: packageName, Plural: pluralize(plural),
+					MigrationVersion: "20260911000000",
+				},
+				Fields: defaultResourceFields(),
+			}
+			if _, err := resourceFilesForFormat("example.com/collisions", definition, 13); err == nil ||
+				!strings.Contains(err.Error(), "format-13 authorization declaration") {
+				t.Fatalf("format 13 collision error = %v", err)
+			}
+			if _, err := resourceFilesForFormat("example.com/collisions", definition, 12); err != nil {
+				t.Fatalf("format 12 lost legacy resource name %s: %v", name, err)
+			}
+		})
+	}
+}
+
+func assertGeneratedResourceSetEqual(t *testing.T, got, want map[string]string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("generated file count = %d, want %d", len(got), len(want))
+	}
+	for path, expected := range want {
+		if got[path] != expected {
+			t.Errorf("legacy generated bytes changed for %s", path)
+		}
+	}
+}
+
 func TestMakeResourceRefusesNewerProjectFormatBeforeWriting(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 13\n"), 0o644); err != nil {
+	if err := os.WriteFile("forge.yaml", []byte("version: 14\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := makeResource("Issue", &bytes.Buffer{})

@@ -7,25 +7,39 @@ import (
 	"strings"
 )
 
+var format13ResourceDeclarations = map[string]struct{}{
+	"Access": {}, "AccessAll": {}, "AccessDenied": {}, "AccessOwner": {},
+	"Action": {}, "ActionCreate": {}, "ActionDelete": {}, "ActionList": {}, "ActionUpdate": {}, "ActionView": {},
+	"AllRecordsScope": {}, "Authorize": {}, "AuthorizeFunc": {},
+	"ErrForbidden": {}, "ErrInvalidAuthorization": {}, "ErrInvalidScope": {},
+	"OwnerScope": {}, "Scope": {},
+}
+
 func generatedResourceRegistry(module string, state resourceState) (string, error) {
+	return generatedResourceRegistryForFormat(module, state, 8)
+}
+
+func generatedResourceRegistryForFormat(module string, state resourceState, format int) (string, error) {
 	data := struct {
-		Module    string
-		Resources []resourceSpec
-	}{Module: module, Resources: state.Resources}
+		Module                string
+		Resources             []resourceSpec
+		AuthorizationPolicies bool
+	}{Module: module, Resources: state.Resources, AuthorizationPolicies: format >= 13}
 	return renderTemplate("templates/resource/registry.go.tmpl", "routes/resources_gen.go", data)
 }
 
 type resourceTemplateData struct {
 	resourceSpec
-	Module            string
-	QueryAccessor     string
-	Fields            []resourceTemplateField
-	Relationships     []resourceTemplateRelationship
-	SchemaDriven      bool
-	OwnerCandidateKey bool
-	OwnerKeyName      string
-	HasTextualFields  bool
-	FirstTextualField *resourceTemplateField
+	Module                string
+	QueryAccessor         string
+	Fields                []resourceTemplateField
+	Relationships         []resourceTemplateRelationship
+	SchemaDriven          bool
+	OwnerCandidateKey     bool
+	OwnerKeyName          string
+	HasTextualFields      bool
+	FirstTextualField     *resourceTemplateField
+	AuthorizationPolicies bool
 }
 
 // resourceTemplateRelationship exposes only resolved, deterministic names to
@@ -63,22 +77,32 @@ type resourceTemplateField struct {
 }
 
 func resourceFiles(module string, definition resourceDefinition) ([]plannedFile, error) {
+	format, err := projectFormat()
+	if err != nil {
+		return nil, err
+	}
+	return resourceFilesForFormat(module, definition, format)
+}
+
+func resourceFilesForFormat(module string, definition resourceDefinition, format int) ([]plannedFile, error) {
 	spec := definition.resourceSpec
+	if format >= 13 {
+		if _, conflicts := format13ResourceDeclarations[spec.Name]; conflicts {
+			return nil, fmt.Errorf("resource %s conflicts with a format-13 authorization declaration", spec.Name)
+		}
+	}
 	base := filepath.Join("internal", "resources", spec.Package)
 	queryAccessor, err := pascal(spec.Plural)
 	if err != nil {
 		return nil, err
 	}
-	format, err := projectFormat()
-	if err != nil {
-		return nil, err
-	}
 	data := resourceTemplateData{
-		resourceSpec:      spec,
-		Module:            module,
-		QueryAccessor:     queryAccessor,
-		SchemaDriven:      definition.SchemaDriven,
-		OwnerCandidateKey: format >= 10,
+		resourceSpec:          spec,
+		Module:                module,
+		QueryAccessor:         queryAccessor,
+		SchemaDriven:          definition.SchemaDriven,
+		OwnerCandidateKey:     format >= 10,
+		AuthorizationPolicies: format >= 13,
 	}
 	if data.OwnerCandidateKey {
 		data.OwnerKeyName = spec.Plural + "_owner_id_key"
@@ -117,7 +141,11 @@ func resourceFiles(module string, definition resourceDefinition) ([]plannedFile,
 		return nil, err
 	}
 	files = append(files, plannedFile{path: modelDestination, content: modelSource})
-	for _, name := range []string{"model.go", "repository.go", "repository_test.go", "request.go", "controller.go", "controller_test.go", "web_controller.go", "web_controller_test.go"} {
+	names := []string{"model.go", "repository.go", "repository_test.go", "request.go", "controller.go", "controller_test.go", "web_controller.go", "web_controller_test.go"}
+	if data.AuthorizationPolicies {
+		names = append(names, "authorization.go", "authorization_test.go")
+	}
+	for _, name := range names {
 		destination := filepath.Join(base, name)
 		content, err := renderTemplate("templates/resource/"+name+".tmpl", destination, data)
 		if err != nil {

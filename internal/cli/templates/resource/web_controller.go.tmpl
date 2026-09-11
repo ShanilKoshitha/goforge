@@ -63,22 +63,34 @@ type ItemView struct {
 type WebController struct {
 	repository Repository
 	views      *view.Engine
-}
+[[if .AuthorizationPolicies]]	authorize  AuthorizeFunc
+[[end]]}
 
-func NewWebController(repository Repository, views *view.Engine) *WebController {
+[[if .AuthorizationPolicies]]func NewWebController(repository Repository, views *view.Engine, authorize AuthorizeFunc) (*WebController, error) {
+	if authorize == nil {
+		return nil, ErrInvalidAuthorization
+	}
+	return &WebController{repository: repository, views: views, authorize: authorize}, nil
+}
+[[else]]func NewWebController(repository Repository, views *view.Engine) *WebController {
 	return &WebController{repository: repository, views: views}
 }
+[[end]]
 
 func (controller *WebController) Index(ctx *httpx.Context) error {
 	user, err := webUser(ctx)
 	if err != nil {
 		return err
 	}
-	pageNumber, pageSize, err := paginationParameters(ctx)
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionList, controller.authorize)
 	if err != nil {
 		return err
 	}
-	page, err := controller.repository.Paginate(ctx.Request.Context(), user.ID, pageNumber, pageSize)
+[[end]]	pageNumber, pageSize, err := paginationParameters(ctx)
+	if err != nil {
+		return err
+	}
+	page, err := controller.repository.Paginate(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], pageNumber, pageSize)
 	if err != nil {
 		return err
 	}
@@ -103,7 +115,10 @@ func (controller *WebController) New(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	return controller.renderForm(ctx, user.ID, http.StatusOK, "pages/[[.Plural]]/new", FormPage{
+[[if .AuthorizationPolicies]]	if _, err := requestAuthorizationScope(ctx, user, ActionCreate, controller.authorize); err != nil {
+		return err
+	}
+[[end]]	return controller.renderForm(ctx, user.ID, http.StatusOK, "pages/[[.Plural]]/new", FormPage{
 		Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]",
 	})
 }
@@ -113,7 +128,11 @@ func (controller *WebController) Create(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	var request WriteRequest
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionCreate, controller.authorize)
+	if err != nil {
+		return err
+	}
+[[end]]	var request WriteRequest
 	if err := request.DecodeForm(ctx); err != nil {
 		return err
 	}
@@ -122,7 +141,7 @@ func (controller *WebController) Create(ctx *httpx.Context) error {
 			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(), Errors: problems.Messages(),
 		})
 	}
-	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Attributes[[if .Relationships]], request.Associations[[end]])
+	item, err := controller.repository.Create(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], request.Attributes[[if .Relationships]], request.Associations[[end]])
 [[if .Relationships]]	if field, invalid := invalidAssociationField(err); invalid {
 		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
 			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(),
@@ -143,11 +162,15 @@ func (controller *WebController) Show(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := resourceID(ctx)
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionView, controller.authorize)
 	if err != nil {
 		return err
 	}
-	item, err := controller.repository.Find(ctx.Request.Context(), user.ID, id)
+[[end]]	id, err := resourceID(ctx)
+	if err != nil {
+		return err
+	}
+	item, err := controller.repository.Find(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}
@@ -168,18 +191,22 @@ func (controller *WebController) Edit(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := resourceID(ctx)
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionUpdate, controller.authorize)
 	if err != nil {
 		return err
 	}
-	item, err := controller.repository.Find(ctx.Request.Context(), user.ID, id)
+[[end]]	id, err := resourceID(ctx)
+	if err != nil {
+		return err
+	}
+	item, err := controller.repository.Find(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}
 	if err != nil {
 		return err
 	}
-	return controller.renderForm(ctx, user.ID, http.StatusOK, "pages/[[.Plural]]/edit", FormPage{
+	return controller.renderForm(ctx, [[if .AuthorizationPolicies]]item.UserID[[else]]user.ID[[end]], http.StatusOK, "pages/[[.Plural]]/edit", FormPage{
 		Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
 		Submit: "Save [[.Name]]", Values: modelFormValues(item), Version: &item.Version,
 	})
@@ -190,7 +217,11 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := resourceID(ctx)
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionUpdate, controller.authorize)
+	if err != nil {
+		return err
+	}
+[[end]]	id, err := resourceID(ctx)
 	if err != nil {
 		return err
 	}
@@ -199,7 +230,11 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 		return err
 	}
 	if problems := request.ValidateUpdate(); !problems.Empty() {
-		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
+[[if and .AuthorizationPolicies .Relationships]]		formOwnerID, err := controller.formOwnerForItem(ctx, scope, id)
+		if err != nil {
+			return err
+		}
+[[end]]		return controller.renderForm(ctx, [[if and .AuthorizationPolicies .Relationships]]formOwnerID[[else]]user.ID[[end]], http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
 			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
 			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: request.Version, Errors: problems.Messages(),
 		})
@@ -207,26 +242,30 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 	if request.Version == nil {
 		return httpx.NewHTTPError(http.StatusBadRequest, "version is required for browser updates")
 	}
-	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Attributes[[if .Relationships]], request.Associations[[end]], request.Version)
+	item, err := controller.repository.Update(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id, request.Attributes[[if .Relationships]], request.Associations[[end]], request.Version)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}
 	if errors.Is(err, ErrStale) {
-		fresh, findErr := controller.repository.Find(ctx.Request.Context(), user.ID, id)
+		fresh, findErr := controller.repository.Find(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id)
 		if errors.Is(findErr, ErrNotFound) {
 			return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 		}
 		if findErr != nil {
 			return findErr
 		}
-		return controller.renderForm(ctx, user.ID, http.StatusConflict, "pages/[[.Plural]]/edit", FormPage{
+		return controller.renderForm(ctx, [[if .AuthorizationPolicies]]fresh.UserID[[else]]user.ID[[end]], http.StatusConflict, "pages/[[.Plural]]/edit", FormPage{
 			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
 			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: &fresh.Version,
 			Errors: validation.Errors{"version": {"was changed by another request; review and try again"}},
 		})
 	}
 [[if .Relationships]]	if field, invalid := invalidAssociationField(err); invalid {
-		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
+[[if .AuthorizationPolicies]]		formOwnerID, scopeErr := controller.formOwnerForItem(ctx, scope, id)
+		if scopeErr != nil {
+			return scopeErr
+		}
+[[end]]		return controller.renderForm(ctx, [[if .AuthorizationPolicies]]formOwnerID[[else]]user.ID[[end]], http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
 			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
 			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: request.Version,
 			Errors: validation.Errors{field: {"is not available"}},
@@ -246,11 +285,15 @@ func (controller *WebController) Delete(ctx *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := resourceID(ctx)
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionDelete, controller.authorize)
 	if err != nil {
 		return err
 	}
-	if err := controller.repository.Delete(ctx.Request.Context(), user.ID, id); errors.Is(err, ErrNotFound) {
+[[end]]	id, err := resourceID(ctx)
+	if err != nil {
+		return err
+	}
+	if err := controller.repository.Delete(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id); errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}[[if .OwnerCandidateKey]] else if errors.Is(err, ErrInUse) {
 		return httpx.NewHTTPError(http.StatusConflict, "[[.Package]] is still in use")
@@ -287,6 +330,19 @@ func (controller *WebController) renderForm(ctx *httpx.Context, userID int64, st
 	page.[[.GoName]]Choices = presentAssociationChoices([[.Name]]Choices, page.Values["[[.ForeignKey]]"])
 [[end]]	return web.Render(ctx, controller.views, status, name, page)
 }
+
+[[if and .AuthorizationPolicies .Relationships]]func (controller *WebController) formOwnerForItem(ctx *httpx.Context, authorized Scope, id int64) (int64, error) {
+	item, err := controller.repository.Find(ctx.Request.Context(), authorized, id)
+	if errors.Is(err, ErrNotFound) {
+		return 0, httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
+	}
+	if err != nil {
+		return 0, err
+	}
+	return item.UserID, nil
+}
+
+[[end]]
 
 func modelFormValues(item [[.Name]]) map[string]string {
 	presented := presentItem(item)

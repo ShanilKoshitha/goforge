@@ -1,0 +1,97 @@
+package [[.Package]]
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"[[.Module]]/internal/auth"
+)
+
+var (
+	ErrForbidden            = errors.New("[[.Package]] action is forbidden")
+	ErrInvalidAuthorization = errors.New("invalid [[.Package]] authorization")
+	ErrInvalidScope         = errors.New("invalid [[.Package]] repository scope")
+)
+
+// Action names one transport-independent operation on this resource.
+type Action string
+
+const (
+	ActionList   Action = "list"
+	ActionCreate Action = "create"
+	ActionView   Action = "view"
+	ActionUpdate Action = "update"
+	ActionDelete Action = "delete"
+)
+
+// Access is the complete set of scopes an authorization policy may grant.
+// Its zero value deliberately denies access.
+type Access uint8
+
+const (
+	AccessDenied Access = iota
+	AccessOwner
+	AccessAll
+)
+
+// AuthorizeFunc is shared by the JSON and browser controllers. Returning an
+// error fails the request closed; return AccessDenied for an intentional 403.
+type AuthorizeFunc func(context.Context, auth.User, Action) (Access, error)
+
+// Authorize is the application-owned default policy. Edit this ordinary Go
+// function when this resource needs privileged all-record or denied actions.
+func Authorize(_ context.Context, _ auth.User, action Action) (Access, error) {
+	switch action {
+	case ActionList, ActionCreate, ActionView, ActionUpdate, ActionDelete:
+		return AccessOwner, nil
+	default:
+		return AccessDenied, nil
+	}
+}
+
+// Scope is the validated repository capability produced from one authenticated
+// actor and one authorization decision. Its zero value is invalid, never global.
+type Scope struct {
+	actorID    int64
+	allRecords bool
+}
+
+func OwnerScope(actorID int64) Scope { return Scope{actorID: actorID} }
+
+func AllRecordsScope(actorID int64) Scope {
+	return Scope{actorID: actorID, allRecords: true}
+}
+
+func (scope Scope) ActorID() int64   { return scope.actorID }
+func (scope Scope) AllRecords() bool { return scope.allRecords }
+
+func (scope Scope) Validate() error {
+	if scope.actorID < 1 {
+		return fmt.Errorf("%w: actor ID must be at least 1", ErrInvalidScope)
+	}
+	return nil
+}
+
+func authorizedScope(ctx context.Context, user auth.User, action Action, authorize AuthorizeFunc) (Scope, error) {
+	if authorize == nil {
+		return Scope{}, fmt.Errorf("%w: authorize function is required", ErrInvalidAuthorization)
+	}
+	if user.ID < 1 {
+		return Scope{}, fmt.Errorf("%w: authenticated user ID must be at least 1", ErrInvalidAuthorization)
+	}
+	access, err := authorize(ctx, user, action)
+	if err != nil {
+		return Scope{}, fmt.Errorf("authorize [[.Package]] %q: %w", action, err)
+	}
+	switch access {
+	case AccessDenied:
+		return Scope{}, ErrForbidden
+	case AccessOwner:
+		return OwnerScope(user.ID), nil
+	case AccessAll:
+		return AllRecordsScope(user.ID), nil
+	default:
+		return Scope{}, fmt.Errorf("%w: unknown access %d", ErrInvalidAuthorization, access)
+	}
+}

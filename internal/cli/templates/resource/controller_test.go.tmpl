@@ -21,10 +21,15 @@ type fakeRepository struct {
 	item              resource.[[.Name]]
 	createdAttributes resource.Attributes
 	updatedAttributes resource.Attributes
+[[if .AuthorizationPolicies]]	lastScope         resource.Scope
+	repositoryCalls   int
+[[end]]
 	[[if .Relationships]]createdAssociations resource.AssociationIDs
 	updatedAssociations resource.AssociationIDs
 	createError         error
 	updateError         error
+[[if .AuthorizationPolicies]]	choiceUserID        int64
+[[end]]
 	[[end]][[if .OwnerCandidateKey]]deleteError error
 	[[end]]pageNumber int
 	pageSize          int
@@ -32,13 +37,17 @@ type fakeRepository struct {
 	paginationHasNext bool
 }
 
-func (repository *fakeRepository) List(context.Context, int64) ([]resource.[[.Name]], error) {
-	return []resource.[[.Name]]{repository.item}, nil
+func (repository *fakeRepository) List(context.Context, [[if .AuthorizationPolicies]]resource.Scope[[else]]int64[[end]]) ([]resource.[[.Name]], error) {
+[[if .AuthorizationPolicies]]	repository.repositoryCalls++
+[[end]]	return []resource.[[.Name]]{repository.item}, nil
 }
 
-func (repository *fakeRepository) Paginate(_ context.Context, userID int64, page, perPage int) (resource.[[.Name]]Page, error) {
-	repository.paginationUserID = userID
-	repository.pageNumber = page
+func (repository *fakeRepository) Paginate(_ context.Context, [[if .AuthorizationPolicies]]scope resource.Scope[[else]]userID int64[[end]], page, perPage int) (resource.[[.Name]]Page, error) {
+[[if .AuthorizationPolicies]]	repository.repositoryCalls++
+	repository.lastScope = scope
+	repository.paginationUserID = scope.ActorID()
+[[else]]	repository.paginationUserID = userID
+[[end]]	repository.pageNumber = page
 	repository.pageSize = perPage
 	items := []resource.[[.Name]]{}
 	if repository.item.ID != 0 {
@@ -50,7 +59,11 @@ func (repository *fakeRepository) Paginate(_ context.Context, userID int64, page
 	}, nil
 }
 
-func (repository *fakeRepository) Create(_ context.Context, userID int64, attributes resource.Attributes[[if .Relationships]], associations resource.AssociationIDs[[end]]) (resource.[[.Name]], error) {
+func (repository *fakeRepository) Create(_ context.Context, [[if .AuthorizationPolicies]]scope resource.Scope[[else]]userID int64[[end]], attributes resource.Attributes[[if .Relationships]], associations resource.AssociationIDs[[end]]) (resource.[[.Name]], error) {
+[[if .AuthorizationPolicies]]	repository.repositoryCalls++
+	repository.lastScope = scope
+	userID := scope.ActorID()
+[[end]]
 	[[if .Relationships]]if repository.createError != nil {
 		return resource.[[.Name]]{}, repository.createError
 	}
@@ -65,11 +78,21 @@ func (repository *fakeRepository) Create(_ context.Context, userID int64, attrib
 	return repository.item, nil
 }
 
-func (repository *fakeRepository) Find(context.Context, int64, int64) (resource.[[.Name]], error) {
+[[if .AuthorizationPolicies]]func (repository *fakeRepository) Find(_ context.Context, scope resource.Scope, _ int64) (resource.[[.Name]], error) {
+	repository.repositoryCalls++
+	repository.lastScope = scope
 	return repository.item, nil
 }
+[[else]]func (repository *fakeRepository) Find(context.Context, int64, int64) (resource.[[.Name]], error) {
+	return repository.item, nil
+}
+[[end]]
 
-func (repository *fakeRepository) Update(_ context.Context, userID, id int64, attributes resource.Attributes[[if .Relationships]], associations resource.AssociationIDs[[end]], expectedVersion *int64) (resource.[[.Name]], error) {
+func (repository *fakeRepository) Update(_ context.Context, [[if .AuthorizationPolicies]]scope resource.Scope, id int64[[else]]userID, id int64[[end]], attributes resource.Attributes[[if .Relationships]], associations resource.AssociationIDs[[end]], expectedVersion *int64) (resource.[[.Name]], error) {
+[[if .AuthorizationPolicies]]	repository.repositoryCalls++
+	repository.lastScope = scope
+	userID := scope.ActorID()
+[[end]]
 	[[if .Relationships]]if repository.updateError != nil {
 		return resource.[[.Name]]{}, repository.updateError
 	}
@@ -78,21 +101,38 @@ func (repository *fakeRepository) Update(_ context.Context, userID, id int64, at
 	}
 	repository.updatedAttributes = attributes
 	[[if .Relationships]]repository.updatedAssociations = associations
-	[[end]]repository.item.UserID, repository.item.ID = userID, id
+	[[end]][[if .AuthorizationPolicies]]if !scope.AllRecords() || repository.item.UserID == 0 {
+		repository.item.UserID = userID
+	}
+	repository.item.ID = id
+[[else]]	repository.item.UserID, repository.item.ID = userID, id
+[[end]]
 [[range .Fields]]	repository.item.[[.GoName]] = attributes.[[.GoName]]
 [[end]][[range .Relationships]]	repository.item.[[.ForeignKeyGoName]] = associations.[[.ForeignKeyGoName]]
 [[end]]	repository.item.Version++
 	return repository.item, nil
 }
 
-func (repository *fakeRepository) Delete(context.Context, int64, int64) error {
+[[if .AuthorizationPolicies]]func (repository *fakeRepository) Delete(_ context.Context, scope resource.Scope, _ int64) error {
+	repository.repositoryCalls++
+	repository.lastScope = scope
 	[[if .OwnerCandidateKey]]return repository.deleteError
 	[[else]]return nil
 	[[end]]}
+[[else]]func (repository *fakeRepository) Delete(context.Context, int64, int64) error {
+	[[if .OwnerCandidateKey]]return repository.deleteError
+	[[else]]return nil
+	[[end]]}
+[[end]]
 [[range .Relationships]]
-func (repository *fakeRepository) [[.GoName]]Choices(context.Context, int64) ([]resource.AssociationChoice, error) {
+[[if $.AuthorizationPolicies]]func (repository *fakeRepository) [[.GoName]]Choices(_ context.Context, userID int64) ([]resource.AssociationChoice, error) {
+	repository.choiceUserID = userID
 	return []resource.AssociationChoice{{ID: 7, Label: "[[.TargetSpec.Name]] #7"}}, nil
 }
+[[else]]func (repository *fakeRepository) [[.GoName]]Choices(context.Context, int64) ([]resource.AssociationChoice, error) {
+	return []resource.AssociationChoice{{ID: 7, Label: "[[.TargetSpec.Name]] #7"}}, nil
+}
+[[end]]
 [[end]]
 
 type fakeUsers struct{ user auth.User }
@@ -128,6 +168,120 @@ func resourceJSONWithRaw(t *testing.T, field, raw string) string {
 	return string(encoded)
 }
 
+[[if .AuthorizationPolicies]]func TestJSONAuthorizationPrecedesParsingAndPersistence(t *testing.T) {
+	store := session.NewMemoryStore()
+	manager, err := session.NewManager(store, []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := fakeUsers{user: auth.User{ID: 9, Email: "ada@example.com", CredentialVersion: 1}}
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", int64(9)); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", int64(1)); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	cookie := seed.Result().Cookies()[0]
+
+	serve := func(repository *fakeRepository, authorize resource.AuthorizeFunc, method, target, body string, authenticated bool) *httptest.ResponseRecorder {
+		t.Helper()
+		controller, err := resource.NewController(repository, authorize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		router := httpx.NewRouter()
+		protected := func(handler httpx.Handler) httpx.Handler { return auth.Require(manager, users)(handler) }
+		router.GET("/[[.Plural]]", protected(controller.Index))
+		router.POST("/[[.Plural]]", protected(controller.Create))
+		router.GET("/[[.Plural]]/{id}", protected(controller.Show))
+		router.PUT("/[[.Plural]]/{id}", protected(controller.Update))
+		router.DELETE("/[[.Plural]]/{id}", protected(controller.Delete))
+		request := httptest.NewRequest(method, target, strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		if authenticated {
+			request.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+	authorizationCalls := 0
+	guestRepository := &fakeRepository{}
+	guest := serve(guestRepository, func(context.Context, auth.User, resource.Action) (resource.Access, error) {
+		authorizationCalls++
+		return resource.AccessAll, nil
+	}, http.MethodGet, "/[[.Plural]]", "", false)
+	if guest.Code != http.StatusUnauthorized || authorizationCalls != 0 || guestRepository.repositoryCalls != 0 {
+		t.Fatalf("guest authorization boundary: status=%d authorization=%d repository=%d", guest.Code, authorizationCalls, guestRepository.repositoryCalls)
+	}
+
+	for _, test := range []struct {
+		name   string
+		method string
+		target string
+		body   string
+		action resource.Action
+	}{
+		{name: "list", method: http.MethodGet, target: "/[[.Plural]]?page=bad", action: resource.ActionList},
+		{name: "create", method: http.MethodPost, target: "/[[.Plural]]", body: "not-json", action: resource.ActionCreate},
+		{name: "view", method: http.MethodGet, target: "/[[.Plural]]/not-an-id", action: resource.ActionView},
+		{name: "update", method: http.MethodPut, target: "/[[.Plural]]/not-an-id", body: "not-json", action: resource.ActionUpdate},
+		{name: "delete", method: http.MethodDelete, target: "/[[.Plural]]/not-an-id", action: resource.ActionDelete},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeRepository{}
+			var observed resource.Action
+			response := serve(repository, func(_ context.Context, _ auth.User, action resource.Action) (resource.Access, error) {
+				observed = action
+				return resource.AccessDenied, nil
+			}, test.method, test.target, test.body, true)
+			if response.Code != http.StatusForbidden || observed != test.action || repository.repositoryCalls != 0 {
+				t.Fatalf("denied %s: status=%d action=%q repository=%d: %s", test.name, response.Code, observed, repository.repositoryCalls, response.Body.String())
+			}
+		})
+	}
+
+	for name, authorize := range map[string]resource.AuthorizeFunc{
+		"unknown access": func(context.Context, auth.User, resource.Action) (resource.Access, error) {
+			return resource.Access(255), nil
+		},
+		"policy error": func(context.Context, auth.User, resource.Action) (resource.Access, error) {
+			return resource.AccessDenied, context.Canceled
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repository := &fakeRepository{}
+			response := serve(repository, authorize, http.MethodGet, "/[[.Plural]]", "", true)
+			if response.Code != http.StatusInternalServerError || repository.repositoryCalls != 0 {
+				t.Fatalf("%s did not fail closed: status=%d repository=%d: %s", name, response.Code, repository.repositoryCalls, response.Body.String())
+			}
+		})
+	}
+
+	allRepository := &fakeRepository{}
+	all := serve(allRepository, func(context.Context, auth.User, resource.Action) (resource.Access, error) {
+		return resource.AccessAll, nil
+	}, http.MethodGet, "/[[.Plural]]", "", true)
+	if all.Code != http.StatusOK || allRepository.repositoryCalls != 1 || allRepository.lastScope.ActorID() != 9 || !allRepository.lastScope.AllRecords() {
+		t.Fatalf("all-record scope was not forwarded: status=%d calls=%d actor=%d all=%t: %s", all.Code, allRepository.repositoryCalls, allRepository.lastScope.ActorID(), allRepository.lastScope.AllRecords(), all.Body.String())
+	}
+
+	if _, err := resource.NewController(&fakeRepository{}, nil); err == nil {
+		t.Fatal("nil authorization was accepted")
+	}
+}
+
+[[end]]
+
 func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	store := session.NewMemoryStore()
 	manager, err := session.NewManager(store, []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
@@ -136,7 +290,12 @@ func TestCreateRequiresAuthenticationAndValidatesInput(t *testing.T) {
 	}
 	users := fakeUsers{user: auth.User{ID: 9, Email: "ada@example.com", CredentialVersion: 1}}
 	repository := &fakeRepository{}
-	controller := resource.NewController(repository)
+[[if .AuthorizationPolicies]]	controller, err := resource.NewController(repository, resource.Authorize)
+	if err != nil {
+		t.Fatal(err)
+	}
+[[else]]	controller := resource.NewController(repository)
+[[end]]
 	router := httpx.NewRouter()
 [[if .OwnerCandidateKey]]	router.GET("/[[.Plural]]", auth.Require(manager, users)(controller.Index))
 [[end]]	router.POST("/[[.Plural]]", auth.Require(manager, users)(controller.Create))

@@ -14,11 +14,23 @@ import (
 	"[[.Module]]/internal/auth"
 )
 
-type Controller struct{ repository Repository }
+[[if .AuthorizationPolicies]]type Controller struct {
+	repository Repository
+	authorize  AuthorizeFunc
+}
+
+func NewController(repository Repository, authorize AuthorizeFunc) (*Controller, error) {
+	if authorize == nil {
+		return nil, ErrInvalidAuthorization
+	}
+	return &Controller{repository: repository, authorize: authorize}, nil
+}
+[[else]]type Controller struct{ repository Repository }
 
 func NewController(repository Repository) *Controller {
 	return &Controller{repository: repository}
 }
+[[end]]
 
 
 func (controller *Controller) Index(ctx *httpx.Context) error {
@@ -26,11 +38,16 @@ func (controller *Controller) Index(ctx *httpx.Context) error {
 	if !ok {
 		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionList, controller.authorize)
+	if err != nil {
+		return err
+	}
+[[end]]
 [[if .OwnerCandidateKey]]	pageNumber, pageSize, err := apiPaginationParameters(ctx)
 	if err != nil {
 		return err
 	}
-	page, err := controller.repository.Paginate(ctx.Request.Context(), user.ID, pageNumber, pageSize)
+	page, err := controller.repository.Paginate(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], pageNumber, pageSize)
 	if err != nil {
 		return err
 	}
@@ -41,7 +58,7 @@ func (controller *Controller) Index(ctx *httpx.Context) error {
 			"has_previous": page.HasPrevious, "has_next": page.HasNext,
 		},
 	})
-[[else]]	items, err := controller.repository.List(ctx.Request.Context(), user.ID)
+[[else]]	items, err := controller.repository.List(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]])
 	if err != nil {
 		return err
 	}
@@ -54,14 +71,18 @@ func (controller *Controller) Create(ctx *httpx.Context) error {
 	if !ok {
 		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	var request WriteRequest
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionCreate, controller.authorize)
+	if err != nil {
+		return err
+	}
+[[end]]	var request WriteRequest
 	if err := request.DecodeJSON(ctx); err != nil {
 		return err
 	}
 	if problems := request.ValidateCreate(); !problems.Empty() {
 		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
 	}
-	item, err := controller.repository.Create(ctx.Request.Context(), user.ID, request.Attributes[[if .Relationships]], request.Associations[[end]])
+	item, err := controller.repository.Create(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], request.Attributes[[if .Relationships]], request.Associations[[end]])
 	[[if .Relationships]]err = associationHTTPError(err)
 	[[end]]if err != nil {
 		return err
@@ -74,11 +95,15 @@ func (controller *Controller) Show(ctx *httpx.Context) error {
 	if !ok {
 		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	id, err := resourceID(ctx)
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionView, controller.authorize)
 	if err != nil {
 		return err
 	}
-	item, err := controller.repository.Find(ctx.Request.Context(), user.ID, id)
+[[end]]	id, err := resourceID(ctx)
+	if err != nil {
+		return err
+	}
+	item, err := controller.repository.Find(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}
@@ -93,7 +118,11 @@ func (controller *Controller) Update(ctx *httpx.Context) error {
 	if !ok {
 		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	id, err := resourceID(ctx)
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionUpdate, controller.authorize)
+	if err != nil {
+		return err
+	}
+[[end]]	id, err := resourceID(ctx)
 	if err != nil {
 		return err
 	}
@@ -104,7 +133,7 @@ func (controller *Controller) Update(ctx *httpx.Context) error {
 	if problems := request.ValidateUpdate(); !problems.Empty() {
 		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
 	}
-	item, err := controller.repository.Update(ctx.Request.Context(), user.ID, id, request.Attributes[[if .Relationships]], request.Associations[[end]], request.Version)
+	item, err := controller.repository.Update(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id, request.Attributes[[if .Relationships]], request.Associations[[end]], request.Version)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}
@@ -123,11 +152,15 @@ func (controller *Controller) Delete(ctx *httpx.Context) error {
 	if !ok {
 		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	id, err := resourceID(ctx)
+[[if .AuthorizationPolicies]]	scope, err := requestAuthorizationScope(ctx, user, ActionDelete, controller.authorize)
 	if err != nil {
 		return err
 	}
-	if err := controller.repository.Delete(ctx.Request.Context(), user.ID, id); errors.Is(err, ErrNotFound) {
+[[end]]	id, err := resourceID(ctx)
+	if err != nil {
+		return err
+	}
+	if err := controller.repository.Delete(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id); errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	[[if .OwnerCandidateKey]]} else if errors.Is(err, ErrInUse) {
 		return httpx.NewHTTPError(http.StatusConflict, "[[.Package]] is still in use")
@@ -136,6 +169,16 @@ func (controller *Controller) Delete(ctx *httpx.Context) error {
 	}
 	return ctx.NoContent(http.StatusNoContent)
 }
+
+[[if .AuthorizationPolicies]]func requestAuthorizationScope(ctx *httpx.Context, user auth.User, action Action, authorize AuthorizeFunc) (Scope, error) {
+	scope, err := authorizedScope(ctx.Request.Context(), user, action, authorize)
+	if errors.Is(err, ErrForbidden) {
+		return Scope{}, httpx.NewHTTPError(http.StatusForbidden, "forbidden")
+	}
+	return scope, err
+}
+
+[[end]]
 
 [[if .OwnerCandidateKey]]func apiPaginationParameters(ctx *httpx.Context) (int, int, error) {
 	page, err := positiveAPIQueryInteger(ctx, "page", defaultPageNumber)

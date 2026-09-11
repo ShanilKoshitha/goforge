@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.17.1\n" {
+	if output.String() != "forge 0.18.0\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -93,8 +93,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "version: 12") {
-		t.Fatalf("fresh scaffold is not format 12:\n%s", manifest)
+	if !strings.Contains(string(manifest), "version: 13") {
+		t.Fatalf("fresh scaffold is not format 13:\n%s", manifest)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {
@@ -305,7 +305,7 @@ func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
-			if err := os.WriteFile("forge.yaml", []byte("version: 13\n"), 0o644); err != nil {
+			if err := os.WriteFile("forge.yaml", []byte("version: 14\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer

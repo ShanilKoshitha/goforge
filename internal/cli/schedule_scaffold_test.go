@@ -24,8 +24,8 @@ func TestFormatElevenScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 			t.Errorf("format-12 scaffold omits %s", path)
 		}
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 12") {
-		t.Fatal("fresh scaffold must declare format 12")
+	if !strings.Contains(files["forge.yaml"], "version: 13") {
+		t.Fatal("fresh scaffold must declare format 13")
 	}
 	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.17.0") {
 		t.Fatal("fresh scaffold must pin the format-12 asset runtime")
