@@ -317,7 +317,7 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 	source := &fakeDevelopmentSource{current: testSnapshot(1), changes: make(chan sourceSnapshot, 4)}
 	secondStarted := make(chan struct{})
 	releaseSecond := make(chan struct{})
-	promoted := make(chan struct{}, 2)
+	promoted := make(chan struct{}, 1)
 	removed := make(chan string, 8)
 	staleReloads := make(chan int, 1)
 	var buildCount int
@@ -358,6 +358,12 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 		},
 		startProxy: func(address string, target *url.URL) (developmentProxy, error) {
 			proxy := newFakeDevelopmentProxy(address, target)
+			proxy.onReload = func() {
+				select {
+				case promoted <- struct{}{}:
+				default:
+				}
+			}
 			startedProxy = proxy
 			proxyReady <- proxy
 			return proxy, nil
@@ -375,21 +381,20 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 	source.set(testSnapshot(3))
 	source.set(testSnapshot(2))
 	close(releaseSecond)
-	deadline := time.Now().Add(3 * time.Second)
-	for {
+	select {
+	case <-promoted:
+	case err := <-result:
+		t.Fatalf("supervisor exited before promoting newest source: %v", err)
+	case <-time.After(10 * time.Second):
 		proxy.mu.Lock()
-		count := len(proxy.targets)
+		targets := append([]string(nil), proxy.targets...)
+		reloads := proxy.reloads
 		proxy.mu.Unlock()
-		if count == 2 {
-			close(promoted)
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("newest source was not promoted")
-		}
-		time.Sleep(time.Millisecond)
+		buildMu.Lock()
+		builds := buildCount
+		buildMu.Unlock()
+		t.Fatalf("newest source was not promoted: builds=%d targets=%v reloads=%d generation=%d", builds, targets, reloads, source.generation.Load())
 	}
-	<-promoted
 	buildMu.Lock()
 	if buildCount != 3 {
 		t.Fatalf("build count = %d, want initial + stale + newest", buildCount)
