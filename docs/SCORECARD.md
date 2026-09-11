@@ -91,6 +91,21 @@ required belongs-to edge to an existing model.
   download; the retry passed that gate and the complete matrix. The exact
   merged [main run](https://github.com/ShanilKoshitha/goforge/actions/runs/34626044528)
   passed the same matrix in 12m44s on Linux/PostgreSQL and 5m53s on Windows.
+- [PR #28](https://github.com/ShanilKoshitha/goforge/pull/28) records acceptance
+  on main at `2b5df91`. Its push and pull-request matrices passed independently,
+  and the exact accepted-main
+  [run](https://github.com/ShanilKoshitha/goforge/actions/runs/34629173483)
+  passed Linux/PostgreSQL in 18m28s and Windows in 6m7s. Unsigned lightweight
+  tag `v0.19.0` resolves directly to that commit, and its independent
+  [tag run](https://github.com/ShanilKoshitha/goforge/actions/runs/34630983837)
+  passed Linux/PostgreSQL in 15m1s and Windows in 6m7s.
+- The public Go proxy returns module checksum
+  `h1:06YyBa1ivkFwtkA9XNTprNzERN/FJMgFEhqtgSzoFQg=` and origin commit
+  `2b5df91` for `v0.19.0`. A clean proxy install reports `forge 0.19.0`,
+  generates a no-replace format-13 application pinned to public v0.17.0, adds
+  scalar and nullable `Customer`/`Invoice` models with a required belongs-to
+  edge, and passes ORM freshness, module verification, zero tidy diff,
+  generated tests, direct vet, and the isolated application build.
 
 ## Explicit non-goals
 

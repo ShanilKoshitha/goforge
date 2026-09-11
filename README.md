@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.18.0 is the accepted PostgreSQL-first explicit-resource-authorization
+GoForge v0.19.0 is the accepted PostgreSQL-first schema-complete model-generation
 release. Fresh format-13 applications pin the published v0.17.0 asset runtime
 without a local replace. It includes explicit database
 wiring,
@@ -100,7 +100,7 @@ asset build. Rolling deployments must keep same-path asset changes backward
 compatible or use stickiness until retained generations provide exact HTML and
 asset version consistency.
 
-Current source is the v0.19.0 model-generation candidate. Its additive
+The v0.19 release adds an empty-directory domain-model workflow. Its additive
 `make:model` field and belongs-to options turn the existing typed Data Mapper
 into a complete empty-directory domain-model workflow while keeping format 13,
 the published runtime contract, and the legacy no-option command compatible.
@@ -110,7 +110,7 @@ the published runtime contract, and the legacy no-option command compatible.
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.18.0
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.19.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -161,12 +161,12 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (current source)
+## CLI (v0.19.0)
 
-The command surface below is the v0.19.0 development candidate. Fresh
-applications use format 13 while continuing to pin the public v0.17.0 asset
-runtime; the authorization and model-generation slices are generated
-application code and need no new runtime package.
+The command surface below is the released v0.19.0 CLI. Fresh applications use
+format 13 while continuing to pin the public v0.17.0 asset runtime; the
+authorization and model-generation slices are generated application code and
+need no new runtime package.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
