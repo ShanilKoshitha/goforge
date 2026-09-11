@@ -1,3 +1,73 @@
+# v0.20 personal API tokens scorecard
+
+Status: **active** — 2026-09-11
+
+Target:
+
+> From a fresh format-14 application, a signed-in user can create, inspect, use,
+> and revoke a named, expiring personal API token through coherent JSON and
+> browser account-security workflows. Bearer authentication reaches the same
+> application-owned user, resource policy, and SQL scope as session
+> authentication. Only the one-time response contains the raw secret; storage,
+> later responses, errors, logs, and session payloads contain no recoverable
+> token material. Every route, query, migration, and replacement seam remains
+> ordinary generated Go and SQL.
+
+GoForge already generates authenticated and authorized JSON CRUD, but non-browser
+clients can authenticate only by maintaining the browser session-cookie
+protocol. This milestone closes that functional gap with an opaque personal
+credential rather than introducing JWT claims, OAuth machinery, or a second
+authorization system. The existing resource policy stays authoritative.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Token management is a complete user workflow | pending | A session-authenticated user can list, create, and revoke only their tokens through strict JSON endpoints and CSRF-protected browser account security; creation requires the current password, a unique trimmed 1–80 byte name, and a 1–90 day lifetime |
+| Raw secrets are one-time values | pending | Creation returns `goforge_pat_<selector>.<secret>` exactly once with `no-store`/privacy headers; PostgreSQL stores only the selector and 32-byte digest, while lists, later pages, errors, logs, and session payloads disclose neither complete tokens nor fragments |
+| Bearer authentication is strict and deterministic | pending | One exact bounded `Authorization: Bearer` credential authenticates `/auth/me` and generated JSON resources; a present malformed, duplicated, wrong-scheme, wrong-secret, expired, revoked, or unknown credential returns the same 401 and never falls back to a valid cookie, touches a session, or emits `Set-Cookie` |
+| Existing policy and transport boundaries remain authoritative | pending | Token requests receive the same `auth.User`, action policy, owner/all SQL scope, 401/403/404 behavior, validation, optimistic concurrency, and relationship invariants as session JSON requests; browser and credential-management routes reject Bearer-only callers |
+| Revocation is durable and coherent | pending | User-scoped deletion makes a token unusable for every subsequent request across processes and restart; password change, password reset, and sign-out-everywhere invalidate all tokens issued under the prior credential generation without storing or scanning token secrets |
+| Issuance fails atomically under pressure | pending | User-row serialization enforces at most ten live tokens across concurrent creators; duplicate names, stale credentials, invalid expiry, entropy failure, storage failure, cancellation, and rollback leave no token or partial secret state |
+| Persistence is bounded, indexed, and application-owned | pending | Plain `000006` SQL enforces the user foreign key, canonical selector/digest shape, credential generation, bounded name, expiry, uniqueness, and lookup indexes; expired rows are excluded and pruned without runtime schemas or ORM exposure of credential material |
+| Existing applications remain compatible | pending | Formats 4–13 retain their source and cookie-authenticated behavior; only fresh format 14 receives token migration, source, routes, UI, and token-aware resource wiring, and older applications can adopt the visible code manually |
+| The workflow remains conventional and replaceable | pending | Generated interfaces, repository, service, middleware, controller, routes, view, migration, and tests are readable application code; direct middleware replacement, direct repositories, `database/sql`, `html/template`, and direct Go test/build/run remain complete escape hatches |
+| The milestone passes twice without regression | pending | Framework normal/race/vet/build, frozen and public compatibility, a fresh no-replace format-14 application, live PostgreSQL token/auth/resource journeys, native Windows checks, and independent security/architecture review pass twice on the final revision |
+
+## Runnable baseline — 2026-09-11
+
+- `main` and `origin/main` resolve to merge `728b609`, the accepted v0.19.0
+  release-evidence revision. The exact-main GitHub Actions run
+  [34634670953](https://github.com/ShanilKoshitha/goforge/actions/runs/34634670953)
+  passed Linux/PostgreSQL in 14m41s and native Windows in 6m13s.
+- A clean isolated worktree at that revision passes `go test ./... -count=1`
+  with `internal/cli` completing in 173.753 seconds, plus `go vet ./...`.
+- The generated route table protects JSON auth and resources only with the
+  database-backed session manager. There is no bearer parser, token repository,
+  token management route, token migration, or machine-client credential path.
+- `security/token` already provides CSPRNG selector/secret issuance,
+  digest-only persistence material, canonical bounded parsing, and constant-time
+  verification. The milestone reuses that accepted primitive from visible
+  application code instead of defining another token runtime.
+- The generated resource authorization seam already maps one authenticated
+  `auth.User` into closed owner/all SQL scopes. Token authentication must feed
+  that seam rather than add scopes, claims, or policy discovery.
+
+## Explicit non-goals
+
+- OAuth2, OpenID Connect, JWTs, refresh tokens, authorization codes, device
+  flows, service accounts, third-party delegation, or organization credentials.
+- Token abilities/scopes, persisted RBAC, field permissions, per-resource
+  grants, or a second authorization DSL. Application-owned resource policies
+  remain the sole authorization boundary.
+- Indefinite tokens, last-used tracking, audit history, notifications,
+  IP/device binding, per-token quotas, rotation grace periods, automatic renewal,
+  DPoP, mTLS, or cancellation of requests already authenticated before revoke.
+- Operator `forge token:*` commands, automatic upgrades of application-owned
+  auth source, generic runtime token storage, or reflection-based route guards.
+- Component attribute bags, class merging, accessible-form rewrites, or other
+  frontend compiler work. That is the next independent frontend milestone.
+
 # v0.19 schema-complete model generation scorecard
 
 Status: **accepted** — 2026-09-11
