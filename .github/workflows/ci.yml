@@ -43,6 +43,10 @@ jobs:
           GOBIN="$RUNNER_TEMP/released-format7-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.7.0
           "$RUNNER_TEMP/released-format7-cli/forge" new "$RUNNER_TEMP/released-format7-app" --module example.com/releasedformat7
           cd "$RUNNER_TEMP/released-format7-app"
+          # v0.7.0 did not write its direct module checksums during scaffold creation.
+          # Normalize that historical baseline before proving the current generator
+          # leaves the released application's dependency graph tidy and unchanged.
+          go mod tidy
           "$RUNNER_TEMP/forge" make:model Customer --field name:string
           "$RUNNER_TEMP/forge" make:model Invoice --field number:string --field notes:text:nullable --belongs-to customer:Customer
           test "$("$RUNNER_TEMP/released-format7-cli/forge" version)" = 'forge 0.7.0'
