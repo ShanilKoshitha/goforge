@@ -220,8 +220,12 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 			t.Fatalf("concurrent migrate failed: %v\n%s", result.err, result.output)
 		}
 	}
-	if got := strings.Count(combined, "migrated "); got != 8 {
-		t.Fatalf("expected eight migrations to be applied exactly once, got %d:\n%s", got, combined)
+	migrationFiles, err := filepath.Glob(filepath.Join(directory, "database", "migrations", "*.up.sql"))
+	if err != nil {
+		t.Fatalf("list generated migrations: %v", err)
+	}
+	if got := strings.Count(combined, "migrated "); got != len(migrationFiles) {
+		t.Fatalf("expected %d migrations to be applied exactly once, got %d:\n%s", len(migrationFiles), got, combined)
 	}
 	if output, err := generatedCommand(directory, environment, forgeBinary, "migrate"); err != nil || !strings.Contains(output, "No pending migrations") {
 		t.Fatalf("idempotent migrate failed: %v\n%s", err, output)

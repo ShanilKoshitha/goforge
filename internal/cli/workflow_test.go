@@ -153,7 +153,7 @@ func TestAssetCheckRejectsArgumentsAndOtherFormatsBeforeSpawning(t *testing.T) {
 			t.Fatalf("argument refusal = %v calls=%+v", err, process.calls)
 		}
 	})
-	for _, version := range []string{"11", "14"} {
+	for _, version := range []string{"11", "15"} {
 		t.Run("format "+version, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: "+version+"\n"), 0o644); err != nil {
@@ -447,7 +447,7 @@ func TestForgeWorkflowsRejectArgumentsRootsAndUnsupportedFormatsBeforeWork(t *te
 		want    string
 	}{
 		{version: "3", want: "format"},
-		{version: "14", want: "format"},
+		{version: "15", want: "format"},
 		{version: "nope", want: "invalid version"},
 	} {
 		t.Run("format "+test.version, func(t *testing.T) {

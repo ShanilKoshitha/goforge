@@ -15,11 +15,13 @@ import (
 )
 
 type Controller struct {
-	users        UserRepository
-	sessions     *session.Manager
-	passwords    password.Hasher
-	attempts     *ratelimit.Limiter
-	registration RegistrationTransaction
+	users         UserRepository
+	sessions      *session.Manager
+	passwords     password.Hasher
+	attempts      *ratelimit.Limiter
+	tokenAttempts *ratelimit.Limiter
+	tokens        PersonalTokenManager
+	registration  RegistrationTransaction
 }
 
 var (
@@ -32,6 +34,16 @@ func NewController(users UserRepository, sessions *session.Manager, passwords pa
 	if len(registrations) > 0 {
 		controller.registration = registrations[0]
 	}
+	return controller
+}
+
+// NewControllerWithPersonalTokens makes the token service an explicit,
+// replaceable dependency while NewController remains source-compatible for
+// applications which do not enable token management.
+func NewControllerWithPersonalTokens(users UserRepository, sessions *session.Manager, passwords password.Hasher, attempts, tokenAttempts *ratelimit.Limiter, tokens PersonalTokenManager, registrations ...RegistrationTransaction) *Controller {
+	controller := NewController(users, sessions, passwords, attempts, registrations...)
+	controller.tokenAttempts = tokenAttempts
+	controller.tokens = tokens
 	return controller
 }
 
@@ -138,6 +150,76 @@ func (controller *Controller) RevokeAll(ctx *httpx.Context) error {
 		return err
 	}
 	if err := controller.sessions.Destroy(ctx.Request.Context(), ctx.Response, current); err != nil {
+		return err
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
+func (controller *Controller) ListPersonalTokens(ctx *httpx.Context) error {
+	personalTokenPrivacy(ctx)
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	if controller.tokens == nil {
+		return errors.New("personal access tokens are unavailable")
+	}
+	tokens, err := controller.tokens.List(ctx.Request.Context(), user)
+	if err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"data": tokens})
+}
+
+func (controller *Controller) CreatePersonalToken(ctx *httpx.Context) error {
+	personalTokenPrivacy(ctx)
+	var request PersonalTokenRequest
+	if err := request.DecodeJSON(ctx); err != nil {
+		return err
+	}
+	if problems := request.Validate(); !problems.Empty() {
+		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
+	}
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	issued, err := controller.issuePersonalToken(ctx, user, request)
+	if errors.Is(err, ErrInvalidCurrentPassword) {
+		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(currentPasswordProblem())
+	}
+	if errors.Is(err, ErrPersonalTokenName) {
+		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(personalTokenNameProblem())
+	}
+	if errors.Is(err, ErrPersonalTokenLimit) {
+		return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(personalTokenLimitProblem())
+	}
+	if errors.Is(err, ErrCredentialsChanged) {
+		return httpx.NewHTTPError(http.StatusConflict, "credentials changed; sign in again")
+	}
+	if err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusCreated, map[string]any{"data": issued})
+}
+
+func (controller *Controller) RevokePersonalToken(ctx *httpx.Context) error {
+	personalTokenPrivacy(ctx)
+	user, ok := UserFrom(ctx)
+	if !ok {
+		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return httpx.NewHTTPError(http.StatusNotFound, "personal access token not found")
+	}
+	if controller.tokens == nil {
+		return errors.New("personal access tokens are unavailable")
+	}
+	if err := controller.tokens.Revoke(ctx.Request.Context(), user.ID, id); err != nil {
+		if errors.Is(err, ErrPersonalTokenNotFound) {
+			return httpx.NewHTTPError(http.StatusNotFound, "personal access token not found")
+		}
 		return err
 	}
 	return ctx.NoContent(http.StatusNoContent)
@@ -300,10 +382,53 @@ func (controller *Controller) changePassword(ctx *httpx.Context, user User, requ
 	)
 }
 
+func (controller *Controller) issuePersonalToken(ctx *httpx.Context, user User, request PersonalTokenRequest) (IssuedPersonalToken, error) {
+	if controller.tokens == nil {
+		return IssuedPersonalToken{}, errors.New("personal access tokens are unavailable")
+	}
+	key := ratelimit.Key("auth-account-personal-token", strconv.FormatInt(user.ID, 10))
+	if err := controller.tokenAttempts.Enforce(ctx, key); err != nil {
+		return IssuedPersonalToken{}, err
+	}
+	matched, err := controller.passwords.VerifyCurrent(user.PasswordHash, request.CurrentPassword)
+	if err != nil {
+		return IssuedPersonalToken{}, err
+	}
+	if !matched {
+		return IssuedPersonalToken{}, ErrInvalidCurrentPassword
+	}
+	if err := controller.tokenAttempts.Reset(ctx.Request.Context(), key); err != nil {
+		return IssuedPersonalToken{}, err
+	}
+	return controller.tokens.Issue(ctx.Request.Context(), user, request.Name, int(request.ExpiresInDays))
+}
+
 func currentPasswordProblem() validation.Report {
 	return validation.Apply("current_password", validation.Present(struct{}{}),
 		validation.RuleFunc[struct{}](func(validation.Input[struct{}]) []validation.Issue {
 			return []validation.Issue{{Code: "password.current", Message: ErrInvalidCurrentPassword.Error()}}
 		}),
 	)
+}
+
+func personalTokenNameProblem() validation.Report {
+	return validation.Apply("name", validation.Present(struct{}{}),
+		validation.RuleFunc[struct{}](func(validation.Input[struct{}]) []validation.Issue {
+			return []validation.Issue{{Code: "token.name", Message: "A personal access token with this name already exists."}}
+		}),
+	)
+}
+
+func personalTokenLimitProblem() validation.Report {
+	return validation.Apply("name", validation.Present(struct{}{}),
+		validation.RuleFunc[struct{}](func(validation.Input[struct{}]) []validation.Issue {
+			return []validation.Issue{{Code: "token.limit", Message: "Revoke an existing token before creating another."}}
+		}),
+	)
+}
+
+func personalTokenPrivacy(ctx *httpx.Context) {
+	ctx.Response.Header().Set("Cache-Control", "no-store")
+	ctx.Response.Header().Set("Referrer-Policy", "no-referrer")
+	ctx.Response.Header().Set("X-Robots-Tag", "noindex")
 }

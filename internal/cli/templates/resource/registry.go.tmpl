@@ -13,7 +13,7 @@ import (
 [[range .Resources]]	[[.Package]]resource "[[$.Module]]/internal/resources/[[.Package]]"
 [[end]][[end]])
 
-func registerResources(router *httpx.Router, renderer *view.Engine, db *sql.DB, manager *session.Manager, requireAuth, requireWebAuth httpx.Middleware)[[if .AuthorizationPolicies]] error[[end]] {
+func registerResources(router *httpx.Router, renderer *view.Engine, db *sql.DB, manager *session.Manager, [[if .TokenAuthentication]]requireAPI[[else]]requireAuth[[end]], requireWebAuth httpx.Middleware)[[if .AuthorizationPolicies]] error[[end]] {
 	browserRoute := func(handler httpx.Handler) httpx.Handler {
 		return web.Sessions(manager)(requireWebAuth(web.CSRF()(handler)))
 	}
@@ -29,11 +29,11 @@ func registerResources(router *httpx.Router, renderer *view.Engine, db *sql.DB, 
 	}
 [[else]]	[[.Package]]Controller := [[.Package]]resource.NewController([[.Package]]Repository)
 	[[.Package]]WebController := [[.Package]]resource.NewWebController([[.Package]]Repository, renderer)
-[[end]]	router.Named("[[.Plural]].index", "GET", "/[[.Plural]]", requireAuth([[.Package]]Controller.Index))
-	router.Named("[[.Plural]].create", "POST", "/[[.Plural]]", requireAuth([[.Package]]Controller.Create))
-	router.Named("[[.Plural]].show", "GET", "/[[.Plural]]/{id}", requireAuth([[.Package]]Controller.Show))
-	router.Named("[[.Plural]].update", "PUT", "/[[.Plural]]/{id}", requireAuth([[.Package]]Controller.Update))
-	router.Named("[[.Plural]].delete", "DELETE", "/[[.Plural]]/{id}", requireAuth([[.Package]]Controller.Delete))
+[[end]]	router.Named("[[.Plural]].index", "GET", "/[[.Plural]]", [[if $.TokenAuthentication]]requireAPI[[else]]requireAuth[[end]]([[.Package]]Controller.Index))
+	router.Named("[[.Plural]].create", "POST", "/[[.Plural]]", [[if $.TokenAuthentication]]requireAPI[[else]]requireAuth[[end]]([[.Package]]Controller.Create))
+	router.Named("[[.Plural]].show", "GET", "/[[.Plural]]/{id}", [[if $.TokenAuthentication]]requireAPI[[else]]requireAuth[[end]]([[.Package]]Controller.Show))
+	router.Named("[[.Plural]].update", "PUT", "/[[.Plural]]/{id}", [[if $.TokenAuthentication]]requireAPI[[else]]requireAuth[[end]]([[.Package]]Controller.Update))
+	router.Named("[[.Plural]].delete", "DELETE", "/[[.Plural]]/{id}", [[if $.TokenAuthentication]]requireAPI[[else]]requireAuth[[end]]([[.Package]]Controller.Delete))
 	router.Named("web.[[.Plural]].index", "GET", "/app/[[.Plural]]", browserRoute([[.Package]]WebController.Index))
 	router.Named("web.[[.Plural]].new", "GET", "/app/[[.Plural]]/new", browserRoute([[.Package]]WebController.New))
 	router.Named("web.[[.Plural]].create", "POST", "/app/[[.Plural]]", browserRoute([[.Package]]WebController.Create))

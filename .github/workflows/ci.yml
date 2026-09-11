@@ -188,20 +188,48 @@ jobs:
           "$RUNNER_TEMP/forge" test
           go vet ./...
           "$RUNNER_TEMP/forge" build
+      - name: Public v0.19.0 format-13 upgrade compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format13-cli"
+          GOBIN="$RUNNER_TEMP/released-format13-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.19.0
+          "$RUNNER_TEMP/released-format13-cli/forge" new "$RUNNER_TEMP/released-format13-app" --module example.com/releasedformat13
+          cd "$RUNNER_TEMP/released-format13-app"
+          "$RUNNER_TEMP/released-format13-cli/forge" make:resource ExistingIssue --field title:string
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string
+          "$RUNNER_TEMP/forge" make:model Customer --field name:string
+          test "$("$RUNNER_TEMP/released-format13-cli/forge" version)" = 'forge 0.19.0'
+          grep -q '^version: 13$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.17.0' go.mod
+          test -f internal/resources/existingissue/authorization.go
+          test -f internal/resources/subsequentissue/authorization.go
+          test ! -e internal/auth/personal_tokens.go
+          test ! -e database/migrations/000006_create_personal_access_tokens.up.sql
+          grep -q 'requireAuth(existingissueController.Index)' routes/resources_gen.go
+          test -z "$(grep 'requireAPI' routes/resources_gen.go || true)"
+          test -z "$(grep '^replace ' go.mod || true)"
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.19.0'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.20.0'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.17.0' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.19.0' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.17.0 h1:r3JWPwcB8YNNU9+22v4K3Bx6M7S8fbQ4HIB3rXRdlDY=' go.sum
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.17.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
-          grep -q '^version: 13$' forge.yaml
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.19.0 h1:06YyBa1ivkFwtkA9XNTprNzERN/FJMgFEhqtgSzoFQg=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.19.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
+          grep -q '^version: 14$' forge.yaml
+          test -f internal/auth/personal_tokens.go
+          test -f internal/auth/api_middleware.go
+          test -f database/migrations/000006_create_personal_access_tokens.up.sql
           "$RUNNER_TEMP/forge" make:model Customer --field name:string
           "$RUNNER_TEMP/forge" make:model Invoice --field number:string --field notes:text:nullable --belongs-to customer:Customer
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
           test -f internal/resources/legacyissue/authorization.go
+          grep -q 'requireAPI(legacyissueController.Index)' routes/resources_gen.go
           grep -q 'legacyissueAuthorize := legacyissueresource.AuthorizeFunc(legacyissueresource.Authorize)' routes/resources_gen.go
           grep -q 'NewController(legacyissueRepository, legacyissueAuthorize)' routes/resources_gen.go
           grep -q 'NewWebController(legacyissueRepository, renderer, legacyissueAuthorize)' routes/resources_gen.go
@@ -272,7 +300,7 @@ jobs:
           stop_dev
           trap - EXIT
       - name: Generated PostgreSQL applications
-        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow|TestGeneratedResourceAuthorizationPostgresWorkflow|TestGeneratedModelPostgresWorkflow)$' -count=2 -v
+        run: go test ./internal/cli -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow|TestGeneratedResourceAuthorizationPostgresWorkflow|TestGeneratedModelPostgresWorkflow|TestGeneratedPersonalTokenPostgresWorkflow)$' -count=2 -v
 
   windows:
     runs-on: windows-latest

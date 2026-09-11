@@ -1272,3 +1272,72 @@ to synchronize Go and SQL by hand. Accepting a bounded schema at the command
 line makes the ORM discoverable and useful from an empty directory without
 introducing Active Record lifecycle magic, runtime schemas, or automatic
 database mutation.
+
+## D043 — Personal API tokens are opaque application-owned credentials
+
+**Status:** accepted for v0.20 implementation
+
+Format-14 applications add personal API tokens as an explicit authentication
+path for machine clients. A session-authenticated user manages named tokens
+through `GET`, `POST`, and `DELETE /auth/tokens` and through the CSRF-protected
+account-security page. Issuance requires the user's current password, a unique
+trimmed name between 1 and 80 bytes, and an explicit lifetime from 1 through 90
+days. At most ten live tokens may exist per user. Issuance locks the user row,
+revalidates the observed credential generation, prunes expired rows, checks the
+cap, and inserts the new row in one transaction.
+
+Current-password confirmation uses a dedicated account-keyed limiter with a
+twenty-attempt, fifteen-minute window. It remains bounded against a stolen
+session while allowing the ten-token transactional cap to stay authoritative
+under concurrent valid issuance. Login, password change, and recovery retain
+their stricter independent limiter policies.
+
+The displayed wire value is `goforge_pat_<selector>.<secret>`. GoForge's
+existing `security/token` primitive generates the selector and high-entropy
+secret, supplies only a SHA-256 digest for persistence, parses the exact
+canonical form, and compares the candidate digest in constant time. The raw
+value is returned only by the successful creation response. Token rows retain
+the public selector, digest, user, name, credential generation, expiry, and
+creation time; list and revoke representations never expose selector or digest.
+Responses that can contain the one-time secret use `Cache-Control: no-store`,
+`Referrer-Policy: no-referrer`, and `X-Robots-Tag: noindex`.
+
+Token management remains session-only. Bearer credentials cannot mint or list
+tokens, change a password, sign out sessions, reset credentials, or authenticate
+browser routes. A token-aware API middleware protects `/auth/me` and generated
+JSON resources. With no Authorization header it delegates to the accepted
+session middleware for compatibility. If any Authorization header is present,
+that header is authoritative: duplicates, malformed syntax, another scheme, or
+an invalid token fail with one generic 401 and never fall back to a valid cookie,
+load or save a session, or emit a cookie. Successful bearer authentication puts
+the same application-owned `auth.User` into request context and may expose only
+the non-secret token ID through a typed accessor. Existing resource policies and
+closed SQL scopes remain the authorization boundary.
+
+Each token snapshots the user's credential generation. Authentication requires
+an unexpired matching digest and the current user generation in one indexed
+lookup. Individual user-scoped deletion makes revocation effective for every
+subsequent request, while password change, password reset, and sign-out-everywhere
+invalidate all older tokens across processes and restarts. A missing or
+cross-user token ID has the same not-found result. No raw value, Authorization
+header, selector, digest, or parsing detail may reach errors or request logs.
+
+The feature is generated ordinary Go plus a plain `000006` PostgreSQL migration.
+It deliberately stays outside the ORM so generic create/update inputs cannot
+expose credential material. Formats 4 through 13 remain unchanged. The public
+v0.19.0 module already contains the required token primitive, so v0.20 needs no
+runtime-first bootstrap release; fresh format-14 projects can pin that immutable
+module. Older applications may copy and adapt the generated interfaces,
+repository, middleware, controllers, routes, view, and migration directly.
+
+Token abilities, OAuth/OIDC, JWTs, service accounts, indefinite credentials,
+last-used auditing, rotation, device binding, operator token commands, and a
+generic runtime credential store remain separate work. Component attribute bags
+and accessible generated-form wiring remain the next independent frontend
+milestone rather than sharing this security boundary.
+
+Reason: authenticated JSON CRUD is not a complete API workflow if automation
+must reproduce a browser cookie session. One opaque, digest-backed credential
+path makes the existing JSON, policy, and SQL-scope stack usable by machine
+clients while preserving visible application ownership and avoiding a second
+authorization system or token runtime.

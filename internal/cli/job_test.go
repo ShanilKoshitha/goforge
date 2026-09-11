@@ -502,7 +502,7 @@ func TestMakeJobRollsBackInitiallyMissingManagedArtifactsAndDirectories(t *testi
 }
 
 func TestMakeJobRequiresSupportedProjectFormat(t *testing.T) {
-	for _, version := range []string{"5", "14"} {
+	for _, version := range []string{"5", "15"} {
 		t.Run(version, func(t *testing.T) {
 			directory := jobProject(t, version)
 			t.Chdir(directory)

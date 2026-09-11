@@ -1,0 +1,119 @@
+package auth_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/session"
+
+	"[[.Module]]/internal/auth"
+)
+
+type personalTokenAuthenticatorFunc func(context.Context, string) (auth.PersonalTokenAuthentication, error)
+
+func (authenticate personalTokenAuthenticatorFunc) Authenticate(ctx context.Context, token string) (auth.PersonalTokenAuthentication, error) {
+	return authenticate(ctx, token)
+}
+
+type tokenMiddlewareUsers struct{}
+
+func (tokenMiddlewareUsers) ByID(context.Context, int64) (auth.User, error) {
+	return auth.User{}, auth.ErrUserNotFound
+}
+
+type observedSessionStore struct {
+	inner *session.MemoryStore
+	reads int
+}
+
+func (store *observedSessionStore) Get(ctx context.Context, id string) ([]byte, error) {
+	store.reads++
+	return store.inner.Get(ctx, id)
+}
+func (store *observedSessionStore) Create(ctx context.Context, id string, data []byte, expires time.Time) error {
+	return store.inner.Create(ctx, id, data, expires)
+}
+func (store *observedSessionStore) Update(ctx context.Context, id string, data []byte, expires time.Time) error {
+	return store.inner.Update(ctx, id, data, expires)
+}
+func (store *observedSessionStore) Rotate(ctx context.Context, oldID, newID string, data []byte, expires time.Time) error {
+	return store.inner.Rotate(ctx, oldID, newID, data, expires)
+}
+func (store *observedSessionStore) Delete(ctx context.Context, id string) error {
+	return store.inner.Delete(ctx, id)
+}
+
+func TestRequireAPITreatsAuthorizationAsAuthoritative(t *testing.T) {
+	store := &observedSessionStore{inner: session.NewMemoryStore()}
+	manager, err := session.NewManager(store, []byte(strings.Repeat("s", 32)), session.Cookie{}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticator := personalTokenAuthenticatorFunc(func(_ context.Context, presented string) (auth.PersonalTokenAuthentication, error) {
+		if presented != "goforge_pat_valid" {
+			return auth.PersonalTokenAuthentication{}, auth.ErrInvalidPersonalToken
+		}
+		return auth.PersonalTokenAuthentication{TokenID: 41, User: auth.User{ID: 7, CredentialVersion: 2}}, nil
+	})
+	router := httpx.NewRouter()
+	router.Group("", auth.RequireAPI(manager, tokenMiddlewareUsers{}, authenticator)).GET("/private", func(ctx *httpx.Context) error {
+		user, userOK := auth.UserFrom(ctx)
+		tokenID, tokenOK := auth.TokenIDFrom(ctx.Request.Context())
+		return ctx.JSON(http.StatusOK, map[string]any{"user_id": user.ID, "user_ok": userOK, "token_id": tokenID, "token_ok": tokenOK})
+	})
+
+	valid := httptest.NewRequest(http.MethodGet, "/private", nil)
+	valid.Header.Set("Authorization", "Bearer goforge_pat_valid")
+	validResponse := httptest.NewRecorder()
+	router.ServeHTTP(validResponse, valid)
+	if validResponse.Code != http.StatusOK || !strings.Contains(validResponse.Body.String(), `"token_id":41`) || store.reads != 0 {
+		t.Fatalf("valid bearer response = %d %s, session reads = %d", validResponse.Code, validResponse.Body.String(), store.reads)
+	}
+
+	for _, header := range []string{"Basic abc", "bearer goforge_pat_valid", "Bearer", "Bearer  goforge_pat_valid", "Bearer goforge_pat_invalid"} {
+		request := httptest.NewRequest(http.MethodGet, "/private", nil)
+		request.Header.Set("Authorization", header)
+		request.Header.Set("Cookie", "goforge_session=ambient-cookie")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") != "Bearer" || !strings.Contains(response.Body.String(), "authentication required") {
+			t.Fatalf("header %q response = %d %s", header, response.Code, response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), header) || response.Header().Get("Set-Cookie") != "" || store.reads != 0 {
+			t.Fatalf("header %q leaked or touched session: body=%q cookie=%q reads=%d", header, response.Body.String(), response.Header().Get("Set-Cookie"), store.reads)
+		}
+	}
+
+	duplicate := httptest.NewRequest(http.MethodGet, "/private", nil)
+	duplicate.Header.Add("Authorization", "Bearer goforge_pat_valid")
+	duplicate.Header.Add("Authorization", "Bearer goforge_pat_valid")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, duplicate)
+	if response.Code != http.StatusUnauthorized || store.reads != 0 {
+		t.Fatalf("duplicate authorization response = %d, session reads = %d", response.Code, store.reads)
+	}
+}
+
+func TestRequireAPIDoesNotDisguiseAuthenticatorFailure(t *testing.T) {
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := httpx.NewRouter()
+	router.Group("", auth.RequireAPI(manager, tokenMiddlewareUsers{}, personalTokenAuthenticatorFunc(func(context.Context, string) (auth.PersonalTokenAuthentication, error) {
+		return auth.PersonalTokenAuthentication{}, errors.New("database unavailable")
+	}))).GET("/private", func(ctx *httpx.Context) error { return ctx.NoContent(http.StatusNoContent) })
+	request := httptest.NewRequest(http.MethodGet, "/private", nil)
+	request.Header.Set("Authorization", "Bearer goforge_pat_valid")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError || response.Header().Get("WWW-Authenticate") != "" {
+		t.Fatalf("response = %d, authenticate=%q", response.Code, response.Header().Get("WWW-Authenticate"))
+	}
+}

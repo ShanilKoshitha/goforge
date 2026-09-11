@@ -33,8 +33,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
 		t.Fatal("project name must be quoted YAML")
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 13") {
-		t.Fatal("fresh scaffold must declare format 13")
+	if !strings.Contains(files["forge.yaml"], "version: 14") {
+		t.Fatal("fresh scaffold must declare format 14")
 	}
 	if !strings.Contains(files["resources/views/pages/welcome.forge.html"], "{{.Title}}") {
 		t.Fatal("HTML template expression was altered")
@@ -42,7 +42,7 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["go.mod"], `=> "`) {
 		t.Fatal("local replacement path must be quoted")
 	}
-	if strings.Contains(files["go.sum"], "github.com/ShanilKoshitha/goforge v0.14.2") {
+	if strings.Contains(files["go.sum"], "github.com/ShanilKoshitha/goforge v0.17.0") {
 		t.Fatal("fresh scaffold retains a stale framework checksum")
 	}
 	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {
@@ -67,7 +67,7 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 		}
 	}
 	readme := files["README.md"]
-	for _, guidance := range []string{"APP_ENABLE_HSTS", "always uses HTTPS", "TRUSTED_PROXIES", "comma-separated CIDR", "forwarding headers are ignored", "SESSION_IDLE_LIFETIME", "SESSION_ABSOLUTE_LIFETIME", "/settings/security", "forge dev", "FORGE_DEV_SHUTDOWN_TIMEOUT", "worker", "scheduler"} {
+	for _, guidance := range []string{"APP_ENABLE_HSTS", "always uses HTTPS", "TRUSTED_PROXIES", "comma-separated CIDR", "forwarding headers are ignored", "SESSION_IDLE_LIFETIME", "SESSION_ABSOLUTE_LIFETIME", "/settings/security", "Authorization: Bearer", "personal_tokens.go", "forge dev", "FORGE_DEV_SHUTDOWN_TIMEOUT", "worker", "scheduler"} {
 		if !strings.Contains(readme, guidance) {
 			t.Errorf("generated README omits deployment guidance %q", guidance)
 		}
@@ -90,6 +90,33 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	for _, forbidden := range []string{"presented_token", "raw_token", "recipient", "subject", "body", "email TEXT"} {
 		if strings.Contains(recoveryMigration, forbidden) {
 			t.Errorf("recovery migration persists forbidden plaintext field %q", forbidden)
+		}
+	}
+	personalTokenMigration := files["database/migrations/000006_create_personal_access_tokens.up.sql"]
+	for _, want := range []string{
+		"personal_access_tokens", "OCTET_LENGTH(selector) = 22",
+		"selector ~ '^[A-Za-z0-9_-]{22}$'", "OCTET_LENGTH(secret_digest) = 32",
+		"UNIQUE (user_id, name)", "REFERENCES users (id) ON DELETE CASCADE",
+	} {
+		if !strings.Contains(personalTokenMigration, want) {
+			t.Errorf("personal-token migration omits %q", want)
+		}
+	}
+	for _, forbidden := range []string{"raw_token", "presented_token", "secret TEXT", "password"} {
+		if strings.Contains(personalTokenMigration, forbidden) {
+			t.Errorf("personal-token migration persists forbidden field %q", forbidden)
+		}
+	}
+	personalTokens := files["internal/auth/personal_tokens.go"]
+	for _, want := range []string{"securitytoken.Issue()", "securitytoken.MatchDigest", "FOR UPDATE", "maximumLivePersonalTokens", "PersonalTokenAuthenticator"} {
+		if !strings.Contains(personalTokens, want) {
+			t.Errorf("generated personal-token repository omits %q", want)
+		}
+	}
+	apiMiddleware := files["internal/auth/api_middleware.go"]
+	for _, want := range []string{"Header.Values(\"Authorization\")", "bearerUnauthorized", "TokenIDFrom", "sessionHandler"} {
+		if !strings.Contains(apiMiddleware, want) {
+			t.Errorf("generated API middleware omits %q", want)
 		}
 	}
 	mailbox := files["internal/mailbox/store.go"]

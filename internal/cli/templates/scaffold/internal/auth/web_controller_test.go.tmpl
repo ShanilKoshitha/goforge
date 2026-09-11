@@ -21,6 +21,26 @@ import (
 
 var csrfInput = regexp.MustCompile(`name="_token" value="([^"]+)"`)
 
+type renderingPersonalTokens struct {
+	items []auth.PersonalToken
+}
+
+func (tokens renderingPersonalTokens) Authenticate(context.Context, string) (auth.PersonalTokenAuthentication, error) {
+	return auth.PersonalTokenAuthentication{}, nil
+}
+
+func (tokens renderingPersonalTokens) Issue(context.Context, auth.User, string, int) (auth.IssuedPersonalToken, error) {
+	return auth.IssuedPersonalToken{}, nil
+}
+
+func (tokens renderingPersonalTokens) List(context.Context, auth.User) ([]auth.PersonalToken, error) {
+	return tokens.items, nil
+}
+
+func (renderingPersonalTokens) Revoke(context.Context, int64, int64) error {
+	return nil
+}
+
 func TestBrowserAuthenticationLifecycle(t *testing.T) {
 	users := &fakeUsers{}
 	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
@@ -366,6 +386,59 @@ func TestBrowserPasswordChangeThrottleRendersSafeHTML(t *testing.T) {
 	for _, secret := range []string{"incorrect password", "a replacement passphrase", encoded} {
 		if strings.Contains(second.Body.String(), secret) {
 			t.Fatalf("password throttle disclosed %q: %s", secret, second.Body.String())
+		}
+	}
+}
+
+func TestBrowserSecurityRendersTokenRevokeCSRF(t *testing.T) {
+	users := &fakeUsers{user: auth.User{
+		ID: 25, Name: "Ada", Email: "ada@example.com", PasswordHash: "unused", CredentialVersion: 1,
+	}}
+	manager, err := session.NewManager(
+		session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("user_id", users.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Put("credential_version", users.user.CredentialVersion); err != nil {
+		t.Fatal(err)
+	}
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil {
+		t.Fatal(err)
+	}
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := renderingPersonalTokens{items: []auth.PersonalToken{{
+		ID: 91, Name: "deployment", ExpiresAt: time.Date(2030, time.January, 2, 3, 4, 5, 0, time.UTC), CreatedAt: time.Now(),
+	}}}
+	controller := auth.NewControllerWithPersonalTokens(
+		users, manager, password.Hasher{Iterations: 1}, testAttemptLimiter(t), testAttemptLimiter(t), tokens,
+	)
+	browser := auth.NewWebController(controller, renderer)
+	router := httpx.NewRouter()
+	private := router.Group("", web.Sessions(manager), auth.RequireWeb(users), web.CSRF())
+	private.GET("/settings/security", browser.Security)
+
+	page := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/settings/security", nil)
+	request.AddCookie(seed.Result().Cookies()[0])
+	router.ServeHTTP(page, request)
+	if page.Code != http.StatusOK {
+		t.Fatalf("security page: %d: %s", page.Code, page.Body.String())
+	}
+	for _, expected := range []string{"deployment", `action="/settings/tokens/91/revoke"`, `name="_token" value="`} {
+		if !strings.Contains(page.Body.String(), expected) {
+			t.Fatalf("security page omitted %q: %s", expected, page.Body.String())
 		}
 	}
 }

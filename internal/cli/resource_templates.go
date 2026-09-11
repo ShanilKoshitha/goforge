@@ -24,7 +24,12 @@ func generatedResourceRegistryForFormat(module string, state resourceState, form
 		Module                string
 		Resources             []resourceSpec
 		AuthorizationPolicies bool
-	}{Module: module, Resources: state.Resources, AuthorizationPolicies: format >= 13}
+		TokenAuthentication   bool
+	}{
+		Module: module, Resources: state.Resources,
+		AuthorizationPolicies: format >= 13,
+		TokenAuthentication:   format >= 14,
+	}
 	return renderTemplate("templates/resource/registry.go.tmpl", "routes/resources_gen.go", data)
 }
 

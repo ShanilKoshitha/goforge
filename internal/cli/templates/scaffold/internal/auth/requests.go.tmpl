@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/mail"
+	"strconv"
 	"strings"
 
 	"github.com/ShanilKoshitha/goforge/httpx"
@@ -165,6 +166,80 @@ type PasswordChangeRequest struct {
 	passwordConfirmationInput validation.Input[string]
 }
 
+// PersonalTokenRequest is shared by session-authenticated JSON and browser
+// issuance. CurrentPassword is never normalized or copied into page state.
+type PersonalTokenRequest struct {
+	Name            string `json:"name" form:"name"`
+	CurrentPassword string `json:"current_password" form:"current_password"`
+	ExpiresInDays   int64  `json:"expires_in_days" form:"expires_in_days"`
+
+	nameInput            validation.Input[string]
+	currentPasswordInput validation.Input[string]
+	expiresInDaysInput   validation.Input[int64]
+}
+
+func (request *PersonalTokenRequest) DecodeJSON(ctx *httpx.Context) error {
+	var body *struct {
+		Name            json.RawMessage `json:"name"`
+		CurrentPassword json.RawMessage `json:"current_password"`
+		ExpiresInDays   json.RawMessage `json:"expires_in_days"`
+	}
+	if err := ctx.BindJSON(&body); err != nil {
+		return err
+	}
+	if body == nil {
+		return httpx.NewHTTPError(http.StatusBadRequest, "JSON body must be an object")
+	}
+	var err error
+	if request.Name, request.nameInput, err = decodeString("name", body.Name, strings.TrimSpace); err != nil {
+		return err
+	}
+	if request.CurrentPassword, request.currentPasswordInput, err = decodeString("current_password", body.CurrentPassword, identity); err != nil {
+		return err
+	}
+	request.ExpiresInDays, request.expiresInDaysInput, err = decodeInt64("expires_in_days", body.ExpiresInDays)
+	return err
+}
+
+func (request *PersonalTokenRequest) DecodeForm(ctx *httpx.Context) error {
+	form, err := ctx.Form()
+	if err != nil {
+		return err
+	}
+	if request.Name, request.nameInput, err = formString(form, "name", strings.TrimSpace); err != nil {
+		return err
+	}
+	if request.CurrentPassword, request.currentPasswordInput, err = formString(form, "current_password", identity); err != nil {
+		return err
+	}
+	request.ExpiresInDays, request.expiresInDaysInput, err = formInt64(form, "expires_in_days")
+	return err
+}
+
+func (request PersonalTokenRequest) Validate() validation.Report {
+	name := fallbackInput(request.nameInput, request.Name, strings.TrimSpace)
+	current := fallbackInput(request.currentPasswordInput, request.CurrentPassword, identity)
+	expires := request.expiresInDaysInput
+	if expires.State() == validation.StateMissing && request.ExpiresInDays != 0 {
+		expires = validation.Present(request.ExpiresInDays)
+	}
+	byteLength := validation.RuleFunc[string](func(input validation.Input[string]) []validation.Issue {
+		value, present := input.Value()
+		if present && len(value) > 80 {
+			return []validation.Issue{{Code: "string.bytes", Message: "must be at most 80 bytes"}}
+		}
+		return nil
+	})
+	return validation.Join(
+		validation.Apply("name", name,
+			validation.Required[string](), byteLength, validationrules.SafeText()),
+		validation.Apply("current_password", current,
+			validation.Required[string](), validation.StringLength(0, 128)),
+		validation.Apply("expires_in_days", expires,
+			validation.Required[int64](), validation.NumberRange[int64](1, maximumPersonalTokenDays)),
+	)
+}
+
 func (request *PasswordChangeRequest) DecodeJSON(ctx *httpx.Context) error {
 	var body *struct {
 		CurrentPassword      json.RawMessage `json:"current_password"`
@@ -255,6 +330,20 @@ func decodeString(field string, raw json.RawMessage, normalize func(string) stri
 	return value, validation.Present(value), nil
 }
 
+func decodeInt64(field string, raw json.RawMessage) (int64, validation.Input[int64], error) {
+	if raw == nil {
+		return 0, validation.Missing[int64](), nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return 0, validation.Null[int64](), nil
+	}
+	var value int64
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return 0, validation.Missing[int64](), httpx.NewHTTPError(http.StatusBadRequest, field+" must be an integer").WithCause(err)
+	}
+	return value, validation.Present(value), nil
+}
+
 func formString(form httpx.Form, field string, normalize func(string) string) (string, validation.Input[string], error) {
 	value, err := form.Value(field)
 	if err != nil {
@@ -268,6 +357,25 @@ func formString(form httpx.Form, field string, normalize func(string) string) (s
 		return "", validation.Empty[string](), nil
 	}
 	return value, validation.Present(value), nil
+}
+
+func formInt64(form httpx.Form, field string) (int64, validation.Input[int64], error) {
+	value, err := form.Value(field)
+	if err != nil {
+		return 0, validation.Missing[int64](), err
+	}
+	if !form.Has(field) {
+		return 0, validation.Missing[int64](), nil
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, validation.Empty[int64](), nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, validation.Missing[int64](), httpx.NewHTTPError(http.StatusBadRequest, field+" must be an integer").WithCause(err)
+	}
+	return parsed, validation.Present(parsed), nil
 }
 
 func fallbackInput(input validation.Input[string], value string, normalize func(string) string) validation.Input[string] {

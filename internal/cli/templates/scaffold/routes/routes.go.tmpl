@@ -49,6 +49,10 @@ func Register(router *httpx.Router, renderer *view.Engine, staticAssets http.Han
 	if err != nil {
 		return err
 	}
+	personalTokenAttempts, err := ratelimit.New(attemptStore, ratelimit.Policy{Limit: 20, Window: 15 * time.Minute})
+	if err != nil {
+		return err
+	}
 	recoverySourceAttempts, err := ratelimit.New(attemptStore, ratelimit.Policy{Limit: 10, Window: 15 * time.Minute})
 	if err != nil {
 		return err
@@ -68,7 +72,16 @@ func Register(router *httpx.Router, renderer *view.Engine, staticAssets http.Han
 	limitRecoveryReset := ratelimit.Middleware(recoverySourceAttempts, sourceKey("password-recovery-reset"))
 
 	users := auth.NewPostgresUserRepository(db)
-	authController := auth.NewController(users, manager, password.New(), accountAttempts, registrations...)
+	var personalTokens auth.PersonalTokenManager
+	if db == nil && settings.Environment == "test" {
+		personalTokens = unavailablePersonalTokens{}
+	} else {
+		personalTokens, err = auth.NewPostgresPersonalTokens(db)
+		if err != nil {
+			return err
+		}
+	}
+	authController := auth.NewControllerWithPersonalTokens(users, manager, password.New(), accountAttempts, personalTokenAttempts, personalTokens, registrations...)
 	webAuthController := auth.NewWebController(authController, renderer)
 	if recovery == nil {
 		if db == nil && settings.Environment == "test" {
@@ -82,6 +95,7 @@ func Register(router *httpx.Router, renderer *view.Engine, staticAssets http.Han
 	}
 	recoveryController := controllers.NewPasswordRecoveryController(recovery, renderer)
 	requireAuth := auth.Require(manager, users)
+	requireAPI := auth.RequireAPI(manager, users, personalTokens)
 	requireWebAuth := auth.RequireWeb(users)
 
 	health := controllers.NewHealthController(db, migrations.Files)
@@ -94,11 +108,15 @@ func Register(router *httpx.Router, renderer *view.Engine, staticAssets http.Han
 	router.Named("auth.login", "POST", "/auth/login", limitLogin(authController.Login))
 	router.Named("auth.password.forgot", "POST", "/auth/password/forgot", passwordRecoveryPrivacy(limitRecoveryRequest(recoveryController.ForgotJSON)))
 	router.Named("auth.password.reset", "POST", "/auth/password/reset", passwordRecoveryPrivacy(limitRecoveryReset(recoveryController.ResetJSON)))
+	apiAuthenticated := router.Group("", requireAPI)
+	apiAuthenticated.GET("/auth/me", authController.Me)
 	authenticated := router.Group("", requireAuth)
-	authenticated.GET("/auth/me", authController.Me)
 	authenticated.POST("/auth/logout", authController.Logout)
 	authenticated.PUT("/auth/password", authController.ChangePassword)
 	authenticated.POST("/auth/logout-all", authController.RevokeAll)
+	authenticated.GET("/auth/tokens", authController.ListPersonalTokens)
+	authenticated.POST("/auth/tokens", authController.CreatePersonalToken)
+	authenticated.DELETE("/auth/tokens/{id}", authController.RevokePersonalToken)
 	browser := router.Group("", web.Sessions(manager), web.CSRF())
 	browser.Named("web.auth.register.form", "GET", "/register", webAuthController.RegisterForm)
 	browser.Named("web.auth.login.form", "GET", "/login", webAuthController.LoginForm)
@@ -118,7 +136,9 @@ func Register(router *httpx.Router, renderer *view.Engine, staticAssets http.Han
 	authenticatedBrowser.Named("web.auth.security", "GET", "/settings/security", webAuthController.Security)
 	authenticatedBrowser.Named("web.auth.password", "POST", "/settings/password", webAuthController.ChangePassword)
 	authenticatedBrowser.Named("web.auth.logout_all", "POST", "/settings/logout-all", webAuthController.RevokeAll)
-	if err := registerResources(router, renderer, db, manager, requireAuth, requireWebAuth); err != nil {
+	authenticatedBrowser.Named("web.auth.tokens.create", "POST", "/settings/tokens", webAuthController.CreatePersonalToken)
+	authenticatedBrowser.Named("web.auth.tokens.revoke", "POST", "/settings/tokens/{id}/revoke", webAuthController.RevokePersonalToken)
+	if err := registerResources(router, renderer, db, manager, requireAPI, requireWebAuth); err != nil {
 		return err
 	}
 	return nil
@@ -170,4 +190,22 @@ func (unavailablePasswordRecovery) Request(context.Context, string) error {
 
 func (unavailablePasswordRecovery) Reset(context.Context, string, string) error {
 	return errors.New("password recovery is unavailable")
+}
+
+type unavailablePersonalTokens struct{}
+
+func (unavailablePersonalTokens) Authenticate(context.Context, string) (auth.PersonalTokenAuthentication, error) {
+	return auth.PersonalTokenAuthentication{}, errors.New("personal access tokens are unavailable")
+}
+
+func (unavailablePersonalTokens) Issue(context.Context, auth.User, string, int) (auth.IssuedPersonalToken, error) {
+	return auth.IssuedPersonalToken{}, errors.New("personal access tokens are unavailable")
+}
+
+func (unavailablePersonalTokens) List(context.Context, auth.User) ([]auth.PersonalToken, error) {
+	return nil, errors.New("personal access tokens are unavailable")
+}
+
+func (unavailablePersonalTokens) Revoke(context.Context, int64, int64) error {
+	return errors.New("personal access tokens are unavailable")
 }
