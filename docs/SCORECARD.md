@@ -30,7 +30,7 @@ Target:
 | Fresh authentication forms are accessible and isolated | planned | Login, registration, recovery, token, password, revoke, and logout forms have unique controls and associated labels/help/errors; non-secret old input survives 422, passwords never do, and token/password errors cannot bleed across forms |
 | A typed resource form works end to end | planned | A fresh application generates string, text, integer, boolean, nullable, and belongs-to fields; an invalid browser submit preserves every valid value with exact per-field accessibility state and no write, while a corrected submit redirects and persists |
 | Compatibility and escape hatches remain explicit | passing for v0.21.0 runtime stage | Formats 4–14 retain old generated output and commands, public format-14 compatibility passes, ordinary Go-template actions/functions/raw HTML and renderer replacement remain available, and no format-15 app pins an unpublished runtime |
-| The milestone passes twice without regression | planned | Framework race/vet/build, released-format compatibility, fresh format-15 inspection, generated PostgreSQL auth/resource journeys, native Windows, and independent adversarial review pass twice on the final revision |
+| The milestone passes twice without regression | passing for v0.21.0 runtime stage; format-15 adoption pending | Framework race/vet/build, released-format compatibility, generated PostgreSQL journeys, native Windows, and independent adversarial review pass twice on the runtime candidate; fresh format-15 inspection and auth/resource journeys remain the v0.21.1 gate |
 
 ## Runnable baseline — 2026-09-14
 
@@ -68,15 +68,23 @@ Target:
   captured once in lexical scope. Range, with, component, fallback, empty old
   value, and repeated-error cases pass; every legacy spelling has an exact
   byte-for-byte expansion assertion.
-- The first complete local candidate pass succeeds: `go test ./... -count=1`
-  (`internal/cli` 178.282s), `go vet ./...`, a trimmed build reporting
-  `forge 0.21.0`, `go test -race ./view -count=1`, and `git diff --check`.
+- Two complete local candidate passes succeed: `go test ./... -count=1`
+  (`internal/cli` 178.282s and 172.969s), `go vet ./...`, trimmed builds
+  reporting `forge 0.21.0`, `go test -race ./view -count=1`, and
+  `git diff --check`.
 - A clean public v0.20.0 CLI generated a no-replace format-14 application pinned
   to v0.19.0. The current candidate added a typed resource, then passed ORM,
   view, and asset freshness; module verification; zero tidy diff; every
   generated test; vet; and application build. CI now retains this exact public
   compatibility gate. Format 15 and its accessible generated forms remain
   intentionally absent until the v0.21.0 runtime is published and verifiable.
+- Runtime candidate `6bd8014` passed exact-commit push workflow
+  [34896775139](https://github.com/ShanilKoshitha/goforge/actions/runs/34896775139)
+  in 18m35s on Linux/PostgreSQL and 6m29s on native Windows. Pull-request
+  workflow
+  [34896804219](https://github.com/ShanilKoshitha/goforge/actions/runs/34896804219)
+  independently passed the same matrix in 18m38s and 6m26s, including the
+  public v0.20.0 format-14 gate and doubled generated PostgreSQL journeys.
 
 ## Explicit non-goals
 
