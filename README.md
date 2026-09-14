@@ -19,11 +19,10 @@ Its contract is simple:
 
 ## Status
 
-The current checkout is the v0.20.0 personal-API-token candidate. Fresh
-format-14 applications pin the published v0.19.0 runtime without a local
-replace. The latest accepted public release remains v0.19.0 while this
-candidate completes its two-pass acceptance matrix. GoForge includes explicit database
-wiring,
+The current checkout is the accepted v0.20.0 personal-API-token release. Fresh
+format-14 applications intentionally pin the published v0.19.0 runtime without
+a local replace because the token workflow adds application-owned source and
+requires no new runtime package. GoForge includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -106,7 +105,7 @@ The v0.19 release adds an empty-directory domain-model workflow. Its additive
 into a complete empty-directory domain-model workflow while keeping format 13,
 the published runtime contract, and the legacy no-option command compatible.
 
-The v0.20 candidate gives fresh format-14 applications named, expiring personal
+The v0.20 release gives fresh format-14 applications named, expiring personal
 API tokens. Session-authenticated users create and revoke them through ordinary
 JSON controllers or the CSRF-protected account-security page; the raw value is
 shown once and PostgreSQL retains only its selector and SHA-256 digest. Strict
@@ -119,7 +118,7 @@ scope without adding token permissions or JWT claims. See the
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.19.0
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.20.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -170,13 +169,13 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (v0.20.0 candidate)
+## CLI (v0.20.0)
 
 The command surface below describes this checkout. Fresh applications use
 format 14 while pinning the public v0.19.0 runtime; personal tokens,
 authorization, and model generation are generated application code and need no
-new runtime package. Install `v0.19.0` for the latest accepted release, or
-`go install ./cmd/forge` when evaluating this candidate from source.
+new runtime package. Install `v0.20.0` for the accepted release, or
+`go install ./cmd/forge` when evaluating the current source checkout.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]

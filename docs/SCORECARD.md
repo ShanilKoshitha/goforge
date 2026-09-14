@@ -32,7 +32,7 @@ authorization system. The existing resource policy stays authoritative.
 | Persistence is bounded, indexed, and application-owned | passing | Plain `000006` SQL enforces the user foreign key, base64url selector and digest shape, credential generation, bounded name, expiry, uniqueness, and lookup indexes; expired rows are excluded and pruned outside the ORM |
 | Existing applications remain compatible | passing | Public format 7 and released formats 8–13 pass unchanged compatibility gates; only fresh format 14 receives token source, migration, routes, UI, and token-aware resource wiring |
 | The workflow remains conventional and replaceable | passing | Generated interfaces, repository, middleware, controllers, routes, view, migration, and tests remain readable application-owned Go and SQL using `database/sql`, `html/template`, and ordinary test/build/run commands |
-| The milestone passes twice without regression | passing | Final revision `a8243f6` passed complete push and pull-request CI, including Linux/PostgreSQL and native Windows, and merge `ef091b4` passed the same exact-main matrix; two independent reviews report no P0–P2 finding |
+| The milestone passes twice without regression | passing | Final revision `a8243f6` passed complete push and pull-request CI, including Linux/PostgreSQL and native Windows, merge `ef091b4` passed the same exact-main matrix, and Windows-stability merge `6d8371e` passed exact main; two independent reviews report no P0–P2 finding |
 
 ## Runnable baseline — 2026-09-11
 
@@ -91,6 +91,14 @@ authorization system. The existing resource policy stays authoritative.
   forms: `@csrf` resolved against a token row instead of the root page. Commit
   `a8243f6` uses the explicit root form token and adds a generated-app regression
   that renders a non-empty token list; all three final public runs pass it.
+- The accepted-main run after the documentation merge exposed a test-only
+  three-second polling deadline in the development supervisor lost-edit test on
+  Windows. Commit `ab2d649` synchronizes the assertion with the proxy's committed
+  reload event and adds bounded diagnostic state. Its push and pull-request
+  workflows passed Linux/PostgreSQL in 18m32s and 18m12s and Windows in 6m17s
+  and 5m51s. Merge `6d8371e` then passed exact-main run
+  [34653097740](https://github.com/ShanilKoshitha/goforge/actions/runs/34653097740)
+  in 18m8s on Linux/PostgreSQL and 6m55s on Windows.
 - The second independent review reports no remaining P0, P1, or P2 finding.
   It rechecked limiter separation, canonical persistence, strict Bearer/session
   precedence, policy and relationship parity, every generation-invalidation
