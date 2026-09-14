@@ -1,3 +1,67 @@
+# v0.21 component attributes and accessible forms scorecard
+
+Status: **in progress** — 2026-09-14
+
+Release boundary: v0.21.0 publishes and verifies the backward-compatible view
+compiler while retaining the format-14 scaffold and its public v0.19.0 pin.
+The v0.21.1 adoption may move fresh applications to format 15 and pin v0.21.0
+only after that runtime is available through the public Go proxy and checksum
+database.
+
+Target:
+
+> From a fresh format-15 application, compose ordinary HTML attributes through
+> static Forge components and submit accessible authentication and typed
+> resource forms. Invalid submissions return 422 with isolated, escaped old
+> input and correctly associated errors; corrected submissions persist. The
+> compiler emits deterministic ordinary `html/template` source with no runtime
+> attribute machinery, and released applications retain their existing source
+> and behavior.
+
+## Acceptance criteria
+
+| Criterion | State | Required evidence |
+| --- | --- | --- |
+| Component attributes are complete and compile-time only | planned | One static emitter, call bag, and nested forwarding workflow compiles to static names plus ordinary Go-template actions; generated output contains no Forge directive, runtime bag, reflection path, or trusted attribute type |
+| Attribute evaluation and merging are deterministic | planned | Caller expressions execute once through changed dot and nested forwarding; class order is defaults, forwarded, then local without hidden deduplication; boolean presence and meaningful ordinary empty values render exactly |
+| Attribute failures are strict and source-mapped | planned | Dynamic, malformed, unsafe, duplicate non-class, repeated-spread, conditional/multiple-sink, and no-sink cases fail at their original source locations without replacing the last-good generated artifact |
+| Contextual escaping remains authoritative | planned | Hostile text, markup, quotes, and URL values pass through `html/template`; URL-bearing attributes reject unsafe schemes and no bag can smuggle attribute names or trusted HTML |
+| Explicit form selection is additive | planned | `form=` helpers work inside range, with, components, and two-form pages with evaluate-once semantics; every released legacy spelling retains its exact `.Form` expansion and behavior |
+| Fresh authentication forms are accessible and isolated | planned | Login, registration, recovery, token, password, revoke, and logout forms have unique controls and associated labels/help/errors; non-secret old input survives 422, passwords never do, and token/password errors cannot bleed across forms |
+| A typed resource form works end to end | planned | A fresh application generates string, text, integer, boolean, nullable, and belongs-to fields; an invalid browser submit preserves every valid value with exact per-field accessibility state and no write, while a corrected submit redirects and persists |
+| Compatibility and escape hatches remain explicit | planned | Formats 4–14 retain old generated output and commands, public format-14 compatibility passes, ordinary Go-template actions/functions/raw HTML and renderer replacement remain available, and no format-15 app pins an unpublished runtime |
+| The milestone passes twice without regression | planned | Framework race/vet/build, released-format compatibility, fresh format-15 inspection, generated PostgreSQL auth/resource journeys, native Windows, and independent adversarial review pass twice on the final revision |
+
+## Runnable baseline — 2026-09-14
+
+- `main` and `origin/main` resolve to release-evidence merge `bbb8738`. Public
+  lightweight tag v0.20.0 resolves to `273f735`, its tag workflow passed the
+  complete Linux/PostgreSQL and native Windows matrix, and GitHub exposes it as
+  the latest non-prerelease release.
+- The exact baseline passes `go test ./... -count=1` with `internal/cli` in
+  194.269 seconds, followed by `go vet ./...` and a trimmed CLI build reporting
+  `forge 0.20.0`. Exact-main workflow
+  [34893983513](https://github.com/ShanilKoshitha/goforge/actions/runs/34893983513)
+  is the hosted baseline run.
+- Components currently support strict props and slots but cannot receive or
+  forward ordinary attributes. Form directives hard-code current-dot `.Form`;
+  the token page already needs a manual root-form action inside a range.
+- `SecurityPage` shares one `Form` between token and password workflows, so the
+  common `current_password` key can render one workflow's error under both
+  controls. Generated resource controls lack explicit IDs and associated ARIA
+  error state. Existing PostgreSQL journeys prove value semantics and escaping
+  but not this multi-form or accessibility boundary.
+
+## Explicit non-goals
+
+- Runtime or dynamic attribute maps/names, dynamic tags/components, reflection,
+  `template.HTMLAttr`, or implicit attribute discovery.
+- Untrusted template sandboxing, VDOM/hydration, client-side form frameworks,
+  reflective request/model binding, or browser validation replacing server
+  validation.
+- File, date, multiselect, or JavaScript widgets; asset transforms and HMR;
+  sanitizing explicit trusted safe types; or claiming complete WCAG compliance.
+
 # v0.20 personal API tokens scorecard
 
 Status: **accepted** — 2026-09-11

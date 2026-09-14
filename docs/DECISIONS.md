@@ -1341,3 +1341,71 @@ must reproduce a browser cookie session. One opaque, digest-backed credential
 path makes the existing JSON, policy, and SQL-scope stack usable by machine
 clients while preserving visible application ownership and avoiding a second
 authorization system or token runtime.
+
+## D044 — Component attributes and form state compile to ordinary templates
+
+**Status:** accepted design; staged across the v0.21 release series
+
+The Forge compiler adds one `@attributes(...)` emitter to component source and
+one final `attributes(...)` pseudo-argument to component calls. Attribute names
+are static lowercase HTML names. A wrapper may use
+`attributes(..., class="wrapper")` to forward its incoming attributes to one
+child. Every incoming bag has exactly one unconditional lexical sink: a
+component either emits it once or forwards it once, never conditionally,
+repeatedly, through slot fallback content, or into runtime discovery. Passing
+attributes to a component without a sink is a compile error.
+
+Every expression is captured once in its caller's lexical scope. Forwarding
+reuses those captures rather than evaluating them again. `class` is the only
+mergeable name and concatenates non-empty contributions in the deterministic
+order of component defaults, forwarded values, then local caller values. It
+does not trim, tokenize, or deduplicate author input. Every duplicate non-class
+name is a positioned compile error, even if a value would be false at runtime.
+Known HTML boolean names use presence semantics; ordinary attributes retain
+quoted string semantics, including meaningful empty values.
+
+The compiler rejects dynamic names and map spreads, non-canonical names, event
+handler names beginning with `on`, `style`, and `srcdoc`. Explicit handwritten
+HTML remains the conspicuous escape hatch for trusted application source. The
+compiler never creates a public or runtime attribute map, uses reflection to
+discover attributes, or serializes `template.HTMLAttr`. It emits only static
+attribute-name bytes and ordinary Go-template actions, leaving
+`html/template` contextual escaping and URL filtering authoritative.
+
+Form directives gain an additive final `form=` argument:
+`@csrf(form=.TokenForm)`, `@old("name", form=.TokenForm)`,
+`@old("name", fallback, form=.TokenForm)`, and
+`@errors("name", form=.TokenForm)`. The selected form expression is captured
+once before use. Existing spellings keep their byte-for-byte `.Form` expansion
+and meaning, including applications that deliberately use a changed dot. This
+fixes nested range, with, component, and multi-form pages without silently
+changing released templates.
+
+Fresh format-15 applications own inspectable input, textarea, and select
+components. Their controllers pass explicit `view.Form` values; no request or
+global lookup occurs during rendering. Each visible control has a page-unique
+ID, matching label, stable help/error IDs, correctly associated descriptions,
+and invalid state only when that field has errors. Multiple messages share one
+error container. Submitted empty strings, zero, false, nullable values, and
+relationship selections survive a 422 response, while password values are
+never recovered from old input. The account-security page owns separate token,
+password, and action form state so its repeated `current_password` field name
+cannot leak errors between workflows.
+
+The release is staged because generated applications execute the public view
+compiler. v0.21.0 publishes and verifies the backward-compatible compiler while
+retaining format 14 and its v0.19.0 runtime pin. Only after that tag resolves
+through the public proxy and checksum database may v0.21.1 adopt format 15 and
+pin v0.21.0. Formats 4 through 14 retain their generated view, component,
+resource, and authentication source; format 4 keeps its frozen legacy compiler.
+
+Dynamic component or tag names, runtime attribute bags, untrusted-template
+sandboxing, VDOM or hydration, reflective form/model binding, JavaScript
+validation, advanced file/date/multiselect widgets, asset compilation, and a
+claim of complete WCAG conformance remain separate work.
+
+Reason: reusable components are not complete if callers cannot supply normal
+HTML attributes, and generated forms are not production-shaped if errors are
+ambiguous or inaccessible. Resolving both at compile time provides familiar
+Blade/Twig ergonomics while preserving deterministic, inspectable Go templates
+and explicit application-owned state.
