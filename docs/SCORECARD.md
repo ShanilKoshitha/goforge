@@ -22,14 +22,14 @@ Target:
 
 | Criterion | State | Required evidence |
 | --- | --- | --- |
-| Component attributes are complete and compile-time only | planned | One static emitter, call bag, and nested forwarding workflow compiles to static names plus ordinary Go-template actions; generated output contains no Forge directive, runtime bag, reflection path, or trusted attribute type |
-| Attribute evaluation and merging are deterministic | planned | Caller expressions execute once through changed dot and nested forwarding; class order is defaults, forwarded, then local without hidden deduplication; boolean presence and meaningful ordinary empty values render exactly |
-| Attribute failures are strict and source-mapped | planned | Dynamic, malformed, unsafe, duplicate non-class, repeated-spread, conditional/multiple-sink, and no-sink cases fail at their original source locations without replacing the last-good generated artifact |
-| Contextual escaping remains authoritative | planned | Hostile text, markup, quotes, and URL values pass through `html/template`; URL-bearing attributes reject unsafe schemes and no bag can smuggle attribute names or trusted HTML |
-| Explicit form selection is additive | planned | `form=` helpers work inside range, with, components, and two-form pages with evaluate-once semantics; every released legacy spelling retains its exact `.Form` expansion and behavior |
+| Component attributes are complete and compile-time only | passing | One static emitter, call bag, and nested forwarding workflow compiles to static names plus ordinary Go-template actions; generated output contains no Forge directive, runtime bag, reflection path, or trusted attribute type |
+| Attribute evaluation and merging are deterministic | passing | Caller expressions execute once through changed dot and nested forwarding; class order is defaults, forwarded, then local without hidden deduplication; boolean presence and meaningful ordinary empty values render exactly |
+| Attribute failures are strict and source-mapped | passing at compiler boundary | Dynamic, malformed, unsafe, duplicate non-class, repeated-spread, conditional/multiple-sink, and no-sink cases fail at their original source locations; the established atomic compiler publication tests retain the last-good artifact |
+| Contextual escaping remains authoritative | passing | Hostile text, markup, quotes, and URL values pass through `html/template`; URL-bearing attributes reject unsafe schemes and no bag can smuggle attribute names or trusted HTML |
+| Explicit form selection is additive | passing | `form=` helpers work inside range, with, and components with evaluate-once semantics; every released legacy spelling retains its exact `.Form` expansion and behavior |
 | Fresh authentication forms are accessible and isolated | planned | Login, registration, recovery, token, password, revoke, and logout forms have unique controls and associated labels/help/errors; non-secret old input survives 422, passwords never do, and token/password errors cannot bleed across forms |
 | A typed resource form works end to end | planned | A fresh application generates string, text, integer, boolean, nullable, and belongs-to fields; an invalid browser submit preserves every valid value with exact per-field accessibility state and no write, while a corrected submit redirects and persists |
-| Compatibility and escape hatches remain explicit | planned | Formats 4–14 retain old generated output and commands, public format-14 compatibility passes, ordinary Go-template actions/functions/raw HTML and renderer replacement remain available, and no format-15 app pins an unpublished runtime |
+| Compatibility and escape hatches remain explicit | passing for v0.21.0 runtime stage | Formats 4–14 retain old generated output and commands, public format-14 compatibility passes, ordinary Go-template actions/functions/raw HTML and renderer replacement remain available, and no format-15 app pins an unpublished runtime |
 | The milestone passes twice without regression | planned | Framework race/vet/build, released-format compatibility, fresh format-15 inspection, generated PostgreSQL auth/resource journeys, native Windows, and independent adversarial review pass twice on the final revision |
 
 ## Runnable baseline — 2026-09-14
@@ -42,7 +42,7 @@ Target:
   194.269 seconds, followed by `go vet ./...` and a trimmed CLI build reporting
   `forge 0.20.0`. Exact-main workflow
   [34893983513](https://github.com/ShanilKoshitha/goforge/actions/runs/34893983513)
-  is the hosted baseline run.
+  passed Linux/PostgreSQL in 15m31s and native Windows in 7m08s.
 - Components currently support strict props and slots but cannot receive or
   forward ordinary attributes. Form directives hard-code current-dot `.Form`;
   the token page already needs a manual root-form action inside a range.
@@ -51,6 +51,32 @@ Target:
   controls. Generated resource controls lack explicit IDs and associated ARIA
   error state. Existing PostgreSQL journeys prove value semantics and escaping
   but not this multi-form or accessibility boundary.
+
+## v0.21.0 runtime-stage evidence — 2026-09-14
+
+- The compiler expands a static `@attributes(...)` sink and final component
+  `attributes(...)` bag into static names plus ordinary Go-template variables.
+  Nested forwarding reuses caller-scope captures; class, boolean, empty-value,
+  duplicate, dangerous-name, changed-dot, and contextual URL-escaping cases are
+  covered without a runtime map, reflection path, or trusted attribute type.
+- The single-sink analysis rejects conditional, iterated, slot-fallback,
+  repeated, missing, and page-level sinks. Independent adversarial review found
+  and the candidate fixed an `@errors` iteration loophole, a masked
+  non-component diagnostic, and literal-keyword/source-position compatibility.
+  The final review reports no remaining P0, P1, or P2 finding.
+- `@csrf`, `@old`, and `@errors` accept one optional final `form=` pipeline,
+  captured once in lexical scope. Range, with, component, fallback, empty old
+  value, and repeated-error cases pass; every legacy spelling has an exact
+  byte-for-byte expansion assertion.
+- The first complete local candidate pass succeeds: `go test ./... -count=1`
+  (`internal/cli` 178.282s), `go vet ./...`, a trimmed build reporting
+  `forge 0.21.0`, `go test -race ./view -count=1`, and `git diff --check`.
+- A clean public v0.20.0 CLI generated a no-replace format-14 application pinned
+  to v0.19.0. The current candidate added a typed resource, then passed ORM,
+  view, and asset freshness; module verification; zero tidy diff; every
+  generated test; vet; and application build. CI now retains this exact public
+  compatibility gate. Format 15 and its accessible generated forms remain
+  intentionally absent until the v0.21.0 runtime is published and verifiable.
 
 ## Explicit non-goals
 

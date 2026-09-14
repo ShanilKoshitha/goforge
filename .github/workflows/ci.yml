@@ -212,9 +212,30 @@ jobs:
           "$RUNNER_TEMP/forge" test
           go vet ./...
           "$RUNNER_TEMP/forge" build
+      - name: Public v0.20.0 format-14 view compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format14-cli"
+          GOBIN="$RUNNER_TEMP/released-format14-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.20.0
+          "$RUNNER_TEMP/released-format14-cli/forge" new "$RUNNER_TEMP/released-format14-app" --module example.com/releasedformat14
+          cd "$RUNNER_TEMP/released-format14-app"
+          "$RUNNER_TEMP/forge" make:resource SubsequentIssue --field title:string
+          test "$("$RUNNER_TEMP/released-format14-cli/forge" version)" = 'forge 0.20.0'
+          grep -q '^version: 14$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.19.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          test -f internal/auth/personal_tokens.go
+          test -f internal/resources/subsequentissue/authorization.go
+          "$RUNNER_TEMP/forge" orm:generate --check
+          "$RUNNER_TEMP/forge" views:compile --check
+          "$RUNNER_TEMP/forge" assets:check
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.20.0'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.21.0'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.19.0' go.mod
