@@ -16,6 +16,18 @@ type compileEnvironment struct {
 	bindings       map[string]string
 	slots          map[string]slotValue
 	componentStack []string
+	attributes     []boundAttribute
+}
+
+type boundAttributeValue struct {
+	variable string
+	span     sourceSpan
+}
+
+type boundAttribute struct {
+	name   string
+	values []boundAttributeValue
+	span   sourceSpan
 }
 
 type slotValue struct {
@@ -121,6 +133,12 @@ func (compiler *forgeCompiler) validateDocument(name string, context []string, e
 			return
 		}
 		dependency := normalizeReference(item.name)
+		if item.kind == nodeComponent && item.attributes != nil {
+			if target, exists := compiler.documents[dependency]; exists && target.component && !target.attributeSink {
+				dependencyErr = compiler.nodeError(item, context, "component %q receives attributes but has no attribute sink", dependency)
+				return
+			}
+		}
 		label := "include " + dependency
 		if item.kind == nodeComponent {
 			label = "component " + dependency
@@ -359,21 +377,28 @@ func (compiler *forgeCompiler) compileNodes(builder *sourceBuilder, nodes []node
 				}
 			}
 		case nodeCSRF:
-			builder.append(`<input type="hidden" name="_token" value="{{.Form.CSRFToken}}">`, item.span, itemContext)
+			form := compiler.compileFormBinding(builder, item, environment, itemContext)
+			builder.append(`<input type="hidden" name="_token" value="{{`+form+`.CSRFToken}}">`, item.span, itemContext)
 		case nodeMethod:
 			builder.append(`<input type="hidden" name="_method" value="`+htmlAttribute(item.name)+`">`, item.span, itemContext)
 		case nodeOld:
-			action := `{{.Form.Old ` + strconv.Quote(item.name)
+			form := compiler.compileFormBinding(builder, item, environment, itemContext)
+			action := `{{` + form + `.Old ` + strconv.Quote(item.name)
 			if item.text != "" {
 				action += ` ` + rewriteVariables(item.text, environment.bindings)
 			}
 			builder.append(action+`}}`, item.span, itemContext)
 		case nodeErrors:
-			builder.append(`{{range .Form.Errors `+strconv.Quote(item.name)+`}}`, item.span, itemContext)
+			form := compiler.compileFormBinding(builder, item, environment, itemContext)
+			builder.append(`{{range `+form+`.Errors `+strconv.Quote(item.name)+`}}`, item.span, itemContext)
 			if err := compiler.compileNodes(builder, item.children, environment, stacks, itemContext); err != nil {
 				return err
 			}
 			builder.append(`{{end}}`, item.span, itemContext)
+		case nodeAttributes:
+			if err := compiler.compileAttributeEmitter(builder, item, environment, itemContext); err != nil {
+				return err
+			}
 		case nodeExtends, nodeSection, nodeProps:
 			return compiler.nodeError(item, itemContext, "misplaced structural directive")
 		default:
@@ -381,6 +406,20 @@ func (compiler *forgeCompiler) compileNodes(builder *sourceBuilder, nodes []node
 		}
 	}
 	return nil
+}
+
+func (compiler *forgeCompiler) compileFormBinding(builder *sourceBuilder, item node, environment compileEnvironment, context []string) string {
+	if item.form == "" {
+		return ".Form"
+	}
+	compiler.sequence++
+	variable := fmt.Sprintf("$__forge_form_%d", compiler.sequence)
+	span := item.formSpan
+	if span.path == "" {
+		span = item.span
+	}
+	builder.append(`{{`+variable+` := `+rewriteVariables(item.form, environment.bindings)+`}}`, span, append(context, "form"))
+	return variable
 }
 
 func (compiler *forgeCompiler) compileComponent(builder *sourceBuilder, call node, outer compileEnvironment, stacks map[string][][]node, context []string) error {
@@ -455,12 +494,163 @@ func (compiler *forgeCompiler) compileComponent(builder *sourceBuilder, call nod
 		}
 		builder.append(`{{`+variable+` := `+value+`}}`, call.span, componentContext)
 	}
-	environment := compileEnvironment{bindings: bindings, slots: providedSlots, componentStack: append(append([]string{}, outer.componentStack...), name)}
+	attributes, err := compiler.compileCallAttributes(builder, call, outer, prefix, componentContext)
+	if err != nil {
+		return err
+	}
+	environment := compileEnvironment{
+		bindings: bindings, slots: providedSlots,
+		componentStack: append(append([]string{}, outer.componentStack...), name),
+		attributes:     attributes,
+	}
 	if err := compiler.compileNodes(builder, component.nodes, environment, stacks, componentContext); err != nil {
 		return err
 	}
 	builder.append(`{{end}}`, call.span, componentContext)
 	return nil
+}
+
+func (compiler *forgeCompiler) compileCallAttributes(
+	builder *sourceBuilder,
+	call node,
+	outer compileEnvironment,
+	prefix string,
+	context []string,
+) ([]boundAttribute, error) {
+	if call.attributes == nil {
+		return nil, nil
+	}
+	var result []boundAttribute
+	if call.attributes.forward {
+		result = copyBoundAttributes(outer.attributes)
+	}
+	for index, spec := range call.attributes.entries {
+		variable := fmt.Sprintf("%sattr_%d", prefix, index+1)
+		builder.append(`{{`+variable+` := `+rewriteVariables(spec.value, outer.bindings)+`}}`, spec.span, append(context, "attribute "+spec.name))
+		var err error
+		result, err = compiler.mergeBoundAttributes(result, []boundAttribute{{
+			name: spec.name, values: []boundAttributeValue{{variable: variable, span: spec.span}}, span: spec.span,
+		}}, context)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (compiler *forgeCompiler) compileAttributeEmitter(
+	builder *sourceBuilder,
+	item node,
+	environment compileEnvironment,
+	context []string,
+) error {
+	if item.attributes == nil {
+		return compiler.nodeError(item, context, "invalid component attribute emitter")
+	}
+	compiler.sequence++
+	prefix := fmt.Sprintf("$__forge_attributes_%d_", compiler.sequence)
+	defaults := make([]boundAttribute, 0, len(item.attributes.entries))
+	for index, spec := range item.attributes.entries {
+		variable := fmt.Sprintf("%sdefault_%d", prefix, index+1)
+		builder.append(`{{`+variable+` := `+rewriteVariables(spec.value, environment.bindings)+`}}`, spec.span, append(context, "attribute "+spec.name))
+		var err error
+		defaults, err = compiler.mergeBoundAttributes(defaults, []boundAttribute{{
+			name: spec.name, values: []boundAttributeValue{{variable: variable, span: spec.span}}, span: spec.span,
+		}}, context)
+		if err != nil {
+			return err
+		}
+	}
+	attributes, err := compiler.mergeBoundAttributes(defaults, environment.attributes, context)
+	if err != nil {
+		return err
+	}
+	compiler.serializeAttributes(builder, attributes, item.span, context, prefix)
+	return nil
+}
+
+func (compiler *forgeCompiler) mergeBoundAttributes(
+	target []boundAttribute,
+	values []boundAttribute,
+	context []string,
+) ([]boundAttribute, error) {
+	result := copyBoundAttributes(target)
+	positions := make(map[string]int, len(result))
+	for index, attribute := range result {
+		positions[attribute.name] = index
+	}
+	for _, attribute := range values {
+		if index, exists := positions[attribute.name]; exists {
+			if attribute.name == "class" {
+				result[index].values = append(result[index].values, attribute.values...)
+				continue
+			}
+			first := result[index].span
+			item := node{span: attribute.span}
+			return nil, compiler.nodeError(item, context, "duplicate non-class attribute %q; first declared at %s:%d:%d", attribute.name, first.path, first.line, first.column)
+		}
+		positions[attribute.name] = len(result)
+		result = append(result, attribute)
+	}
+	return result, nil
+}
+
+func (compiler *forgeCompiler) serializeAttributes(
+	builder *sourceBuilder,
+	attributes []boundAttribute,
+	span sourceSpan,
+	context []string,
+	prefix string,
+) {
+	if len(attributes) == 0 {
+		return
+	}
+	written := prefix + "written"
+	builder.append(`{{`+written+` := false}}`, span, context)
+	for index, attribute := range attributes {
+		attributeContext := append(context, "attribute "+attribute.name)
+		value := attribute.values[0].variable
+		if attribute.name == "class" {
+			variables := make([]string, 0, len(attribute.values))
+			for _, part := range attribute.values {
+				variables = append(variables, part.variable)
+			}
+			condition := variables[0]
+			if len(variables) > 1 {
+				condition = "or " + strings.Join(variables, " ")
+			}
+			classWritten := fmt.Sprintf("%sclass_%d_written", prefix, index+1)
+			builder.append(`{{if `+condition+`}}{{if `+written+`}} {{end}}class="{{`+classWritten+` := false}}`, span, attributeContext)
+			for _, part := range attribute.values {
+				builder.append(`{{if `+part.variable+`}}{{if `+classWritten+`}} {{end}}{{`+part.variable+`}}{{`+classWritten+` = true}}{{end}}`, part.span, attributeContext)
+			}
+			builder.append(`"{{`+written+` = true}}{{end}}`, span, attributeContext)
+			continue
+		}
+		if booleanAttribute(attribute.name) {
+			builder.append(`{{if `+value+`}}{{if `+written+`}} {{end}}`+attribute.name+`{{`+written+` = true}}{{end}}`, span, attributeContext)
+			continue
+		}
+		builder.append(`{{if `+written+`}} {{end}}`+attribute.name+`="{{`+value+`}}"{{`+written+` = true}}`, span, attributeContext)
+	}
+}
+
+func copyBoundAttributes(source []boundAttribute) []boundAttribute {
+	result := make([]boundAttribute, len(source))
+	for index, attribute := range source {
+		result[index] = attribute
+		result[index].values = append([]boundAttributeValue{}, attribute.values...)
+	}
+	return result
+}
+
+func booleanAttribute(name string) bool {
+	switch name {
+	case "allowfullscreen", "async", "autofocus", "autoplay", "checked", "controls", "default", "defer", "disabled", "formnovalidate", "hidden", "inert", "ismap", "itemscope", "loop", "multiple", "muted", "nomodule", "novalidate", "open", "playsinline", "readonly", "required", "reversed", "selected":
+		return true
+	default:
+		return false
+	}
 }
 
 func collectSlotDefinitions(nodes []node, result map[string]struct{}) *node {
