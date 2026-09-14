@@ -1,6 +1,6 @@
 # v0.21 component attributes and accessible forms scorecard
 
-Status: **in progress** — 2026-09-14
+Status: **in progress** — v0.21.0 runtime accepted; v0.21.1 adoption next — 2026-09-14
 
 Release boundary: v0.21.0 publishes and verifies the backward-compatible view
 compiler while retaining the format-14 scaffold and its public v0.19.0 pin.
@@ -85,6 +85,29 @@ Target:
   [34896804219](https://github.com/ShanilKoshitha/goforge/actions/runs/34896804219)
   independently passed the same matrix in 18m38s and 6m26s, including the
   public v0.20.0 format-14 gate and doubled generated PostgreSQL journeys.
+
+## v0.21.0 public release evidence — 2026-09-14
+
+- Lightweight unsigned tag `v0.21.0` points directly to accepted merge
+  `a1960a4cfb5a20c4da12a04d2c7db6af954f1b7f`; local and remote object type is
+  `commit`, not an annotated tag. Exact-main workflow
+  [34900623499](https://github.com/ShanilKoshitha/goforge/actions/runs/34900623499)
+  passed Linux/PostgreSQL in 16m02s and native Windows in 5m48s before tagging.
+- Exact-tag workflow
+  [34902098802](https://github.com/ShanilKoshitha/goforge/actions/runs/34902098802)
+  passed the complete matrix in 18m28s and 6m03s. GitHub publishes
+  [GoForge v0.21.0](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.21.0)
+  as the latest non-draft, non-prerelease release.
+- The public Go proxy reports origin hash `a1960a4` for `refs/tags/v0.21.0`.
+  SumDB records module checksum
+  `h1:i2oJUQaIbA3nbJJJUV6ewMm2Mds8kLYgmIC+50dBNU0=` and go.mod checksum
+  `h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`.
+- A clean proxy-only `go install` reports `forge 0.21.0` and embeds the same
+  module checksum. Its no-replace scaffold remains format 14 pinned to public
+  v0.19.0, then passes view/ORM/asset freshness, module verification, zero tidy
+  diff, every generated test, vet, and server/worker/scheduler/console builds.
+  As designed, format 14 continues using its pinned compiler; v0.21 syntax enters
+  generated applications only when the v0.21.1 format-15 adoption pins v0.21.0.
 
 ## Explicit non-goals
 
