@@ -19,9 +19,9 @@ Its contract is simple:
 
 ## Status
 
-The current checkout is the v0.21.0 backward-compatible view-runtime candidate;
-v0.20.0 remains the latest accepted public release. Fresh format-14 applications
-still intentionally pin the published v0.19.0 runtime without
+The current checkout is the accepted v0.21.0 backward-compatible view-runtime
+release. Fresh format-14 applications still intentionally pin the published
+v0.19.0 runtime without
 a local replace because the token workflow adds application-owned source and
 requires no new runtime package. GoForge includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
@@ -114,18 +114,18 @@ Bearer authentication feeds the existing `auth.User`, resource policy, and SQL
 scope without adding token permissions or JWT claims. See the
 [personal API token guide](docs/api-tokens.md).
 
-The v0.21.0 candidate adds compile-time component attributes, deterministic
+The v0.21.0 release publishes compile-time component attributes, deterministic
 class composition and forwarding, and explicit form selection for nested or
 multi-form views. It deliberately keeps format 14 and the public v0.19.0 runtime
-pin; the format-15 accessible-form scaffold is a separately gated v0.21.1
-adoption after this compiler is publicly available.
+pin; the separately gated v0.21.1 adoption will move fresh accessible-form
+scaffolds to format 15 and pin this now-public compiler.
 
 ## Install and try it
 
 Install the released CLI and generate an application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.20.0
+go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.21.0
 forge new myapp --module example.com/myapp
 cd myapp
 docker compose up -d
@@ -176,12 +176,11 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (v0.21.0 candidate)
+## CLI (v0.21.0)
 
 The command surface below describes this checkout. Fresh applications continue
-to use format 14 while pinning the public v0.19.0 runtime. Install `v0.20.0` for
-the accepted release, or `go install ./cmd/forge` when evaluating the v0.21.0
-candidate from source.
+to use format 14 while pinning the public v0.19.0 runtime. Install `v0.21.0` for
+the accepted release, or `go install ./cmd/forge` when evaluating current source.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
