@@ -105,6 +105,30 @@ authorization system. The existing resource policy stays authoritative.
   path, cap error identity, format-13 compatibility, the public module pin, and
   documentation honesty.
 
+## Public release evidence — 2026-09-14
+
+- Lightweight tag `v0.20.0` points directly to accepted merge
+  `273f735d0afb75c19353943b831708143b7b9aa7`; the GitHub tag object is a
+  commit reference rather than an annotated tag. Tag workflow
+  [34852151949](https://github.com/ShanilKoshitha/goforge/actions/runs/34852151949)
+  passed the full Linux/PostgreSQL matrix in 19m02s and native Windows in
+  6m46s on that exact commit.
+- The public Go proxy serves the version metadata, module file, and archive
+  with origin hash `273f735d0afb75c19353943b831708143b7b9aa7`. The checksum
+  database records module sum
+  `h1:od4qWVarHhAJFxLraS+Wl64a3i/q/6mET0TEwtLxsDQ=` and `go.mod` sum
+  `h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`.
+- An isolated public-proxy and checksum-database install of
+  `github.com/ShanilKoshitha/goforge/cmd/forge@v0.20.0` reports
+  `forge 0.20.0`. That binary generated a no-replace format-14 application
+  pinned to the public v0.19.0 runtime; module verification, zero tidy diff,
+  generated view/ORM/asset freshness, every generated test, vet, and the
+  server, worker, scheduler, and console builds passed.
+- [GoForge v0.20.0](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.20.0)
+  is the latest non-draft, non-prerelease GitHub Release. An independent
+  read-only audit confirmed the tag target, workflow result, proxy origin,
+  checksum-database records, and release visibility.
+
 ## Explicit non-goals
 
 - OAuth2, OpenID Connect, JWTs, refresh tokens, authorization codes, device
