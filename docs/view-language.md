@@ -78,6 +78,40 @@ unknown props, duplicate or unknown slots, and slot directives outside their
 valid component context. Component prop variables are lexically scoped and
 renamed during expansion so nested components cannot collide.
 
+A component may expose one compile-time-only HTML attribute sink:
+
+```html
+@props(title)
+<article @attributes(class="card", data-title=$title)>
+  @slot("default")@endslot
+</article>
+```
+
+The final `attributes(...)` pseudo-argument supplies static attribute names and
+caller-scoped values. A wrapper may forward its incoming attributes once with a
+leading `...`:
+
+```html
+@component("components/card", title=.Title,
+  attributes(id=.ID, class="featured"))
+  {{.Body}}
+@endcomponent
+
+@component("components/card", title=$title,
+  attributes(..., class="wrapper"))
+  @slot("default")@endslot
+@endcomponent
+```
+
+Every attribute expression is evaluated once. `class` contributions concatenate
+in default, forwarded, then local order without trimming or deduplication. Known
+boolean attributes use presence semantics; ordinary attributes remain quoted,
+including empty values. Duplicate non-class names, dynamic or malformed names,
+map spreads, conditional or repeated sinks, and bags passed to a component with
+no sink fail compilation. Event-handler names, `style`, and `srcdoc` require
+explicit handwritten HTML. The compiler emits static names and ordinary
+Go-template actions—there is no runtime attribute bag or trusted attribute type.
+
 ## Control flow
 
 Control directives are thin structural forms over standard Go-template
@@ -113,8 +147,8 @@ a literal `@`.
 
 ## Forms
 
-Form directives read an explicit `.Form` value supplied by the controller. They
-never inspect a request or global context:
+Form directives default to an explicit `.Form` value supplied by the controller.
+They never inspect a request or global context:
 
 ```html
 <form method="post" action="/issues/{{.Issue.ID}}">
@@ -130,6 +164,19 @@ method-override field. `@old` returns a submitted value even when it is the
 empty string; it uses the fallback only when the field was not submitted.
 `@errors` iterates every message. All resulting values remain ordinary strings
 subject to `html/template` contextual escaping.
+
+Nested and multi-form pages can select a form with an additive final named
+argument:
+
+```html
+@csrf(form=.TokenForm)
+@old("name", form=.TokenForm)
+@old("name", .Issue.Name, form=.TokenForm)
+@errors("name", form=.TokenForm)<p role="alert">{{.}}</p>@enderrors
+```
+
+The selected pipeline is captured once in its lexical scope. Existing directive
+spellings retain their exact `.Form` expansion and behavior.
 
 ## Application functions and escape hatches
 
