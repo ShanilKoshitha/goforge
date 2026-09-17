@@ -334,6 +334,30 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 	}
 [[end]]}
 
+func TestPostgresRepositoryUpdateHidesTargetBeforeClassifyingAssociation(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := NewPostgresRepository(db)
+	connection := repositoryConnectionFrom(t, db)
+	connection.updateFound = false
+	connection.exists = false
+	connection.associationExists = false
+	expectedVersion := int64(3)
+
+	_, err = repository.Update(context.Background(), [[if .AuthorizationPolicies]]OwnerScope(10)[[else]]10[[end]], 41, updatedAttributes(), sampleAssociations(), &expectedVersion)
+	var invalid *InvalidAssociationError
+	if !errors.Is(err, ErrNotFound) || errors.As(err, &invalid) {
+		t.Fatalf("wrong-owner update disclosed association validity: invalid=%#v err=%v", invalid, err)
+	}
+	if len(connection.queries) != 2 || !strings.HasPrefix(connection.queries[0], "UPDATE ") || !strings.HasPrefix(connection.queries[1], "SELECT EXISTS") {
+		t.Fatalf("wrong-owner update did not establish target visibility first: %#v", connection.queries)
+	}
+}
+
 func TestPostgresRepositoryClassifiesRelationshipConstraintRaces(t *testing.T) {
 [[range .Relationships]]	t.Run("[[.Name]]", func(t *testing.T) {
 		err := &pgconn.PgError{Code: "23503", ConstraintName: "[[.ConstraintName]]"}

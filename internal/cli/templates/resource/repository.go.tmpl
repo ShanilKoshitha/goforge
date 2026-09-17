@@ -234,15 +234,7 @@ func (repository *PostgresRepository) Update(ctx context.Context, [[if .Authoriz
 	[[end]]if expectedVersion != nil && *expectedVersion < 1 {
 		return [[.Name]]{}, fmt.Errorf("update [[.Package]]: expected version must be at least 1")
 	}
-[[if .Relationships]][[if .AuthorizationPolicies]]	if !scope.AllRecords() {
-		if err := repository.validateAssociations(ctx, scope.ActorID(), associations); err != nil {
-			return [[.Name]]{}, err
-		}
-	}
-[[else]]	if err := repository.validateAssociations(ctx, userID, associations); err != nil {
-		return [[.Name]]{}, err
-	}
-[[end]][[end]]	changes := models.[[.Name]]Changes{
+	changes := models.[[.Name]]Changes{
 [[range .Fields]]		[[.GoName]]: [[if .Nullable]]nullableField(attributes.[[.GoName]])[[else]]orm.Value(attributes.[[.GoName]])[[end]],
 [[end]]	}
 	updatedAt := orm.SetCurrentTime(models.[[.Name]]Columns.UpdatedAt)

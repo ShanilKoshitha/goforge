@@ -1436,3 +1436,22 @@ Reason: a successful binary write is not a usable CLI installation when the
 shell cannot resolve `forge`. Keeping the operating-system-specific mutation in
 an inspectable installer preserves the normal Go distribution path while
 making progress, discovery, persistence, and verification explicit.
+
+## D046 — Resource update visibility precedes association classification
+
+**Status:** accepted
+
+Relationship-backed updates execute the authorization-scoped member mutation
+before classifying association failures. A missing or inaccessible target row
+therefore returns the same not-found result regardless of whether a submitted
+foreign key names a missing, owned, or foreign association. For a visible row,
+the generated composite owner/target foreign key remains authoritative and its
+named constraint maps to the existing field-level `association.invalid` 422.
+Create retains its explicit owner-scoped association preflight because no
+existing member identity must be hidden.
+
+Reason: validating an association before establishing target visibility lets a
+cross-owner update disclose information through a 422 response instead of the
+required indistinguishable 404. Letting PostgreSQL enforce the update closes
+the validation/write race, removes one successful-update query, and preserves
+the existing useful validation response for visible rows.

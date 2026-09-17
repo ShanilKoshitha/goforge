@@ -81,6 +81,18 @@ Target:
 - Generated PostgreSQL journeys and a second independent full candidate pass
   remain delegated to the public CI acceptance gate; this local pass does not
   claim that database-backed evidence.
+- Initial push run
+  [35228342429](https://github.com/ShanilKoshitha/goforge/actions/runs/35228342429)
+  passed the complete native Windows job but exposed a PostgreSQL authorization
+  ordering defect: a cross-owner relationship update returned association 422
+  before target visibility could return 404. The candidate now performs the
+  scoped update first, retains composite-foreign-key 422 classification for
+  visible rows, and adds a generated regression proving the query and error
+  order without removing or weakening any test.
+- Format-15 generated-application coverage pushes `internal/cli` past Go's
+  default ten-minute timeout under Linux race instrumentation. CI now retains
+  the complete `go test -race ./...` suite with a 20-minute package timeout;
+  no test is deleted, skipped, narrowed, or renamed.
 
 ## v0.21.0 runtime-stage evidence — 2026-09-14
 
