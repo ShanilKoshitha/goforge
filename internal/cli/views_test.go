@@ -407,8 +407,17 @@ func main() {
 	}()
 	client := &http.Client{Timeout: time.Second}
 	var body string
-	deadline := time.Now().Add(15 * time.Second)
+	// The first serve includes a fresh Go build before the supervisor applies its
+	// own bounded candidate-health timeout. A cold, loaded Windows runner can
+	// legitimately spend more than 15 seconds compiling that binary.
+	deadline := time.Now().Add(time.Minute)
 	for {
+		select {
+		case serveErr := <-serveResult:
+			cancelServe()
+			t.Fatalf("format-4 serve exited before becoming reachable: %v\n%s", serveErr, served.String())
+		default:
+		}
 		response, requestErr := client.Get("http://" + address + "/")
 		if requestErr == nil {
 			contents, readErr := io.ReadAll(response.Body)
@@ -420,7 +429,8 @@ func main() {
 		}
 		if time.Now().After(deadline) {
 			cancelServe()
-			t.Fatalf("format-4 serve did not become reachable: %s", served.String())
+			serveErr := <-serveResult
+			t.Fatalf("format-4 serve did not become reachable within one minute: %v\n%s", serveErr, served.String())
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

@@ -100,6 +100,17 @@ Target:
   ticket with a category owned by the earlier JSON user. The fixture now creates
   a separate browser-owned category, preserving both the owner constraint and
   the full accessible browser correction journey.
+- Run
+  [35233911130](https://github.com/ShanilKoshitha/goforge/actions/runs/35233911130)
+  passed the complete Linux/PostgreSQL matrix in 18m42s, while native Windows
+  exposed an undersized test-only readiness budget in the frozen format-4
+  serve journey. Its first local cold build took 15.92 seconds, exceeding the
+  old 15-second whole-startup allowance before the supervisor's separate
+  candidate-health timeout could begin. The test now retains the real build,
+  process, HTTP render, shutdown, and last-good checks, allows one minute for a
+  cold build, fails immediately if serve exits, and drains cancellation on
+  timeout. Five consecutive focused runs and the full native Windows package
+  set pass; no test was removed, skipped, or weakened.
 
 ## v0.21.0 runtime-stage evidence — 2026-09-14
 
