@@ -410,7 +410,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-owner delete: expected 404, got %d: %s", response.StatusCode, body)
 	}
-	ticketCategoryID := exerciseTypedTicketJSON(t, baseURL, first, second)
+	exerciseTypedTicketJSON(t, baseURL, first, second)
 
 	response, body = requestJSON(t, first, http.MethodPut, issueURL, `{"name":"Updated issue"}`)
 	if response.StatusCode != http.StatusOK || !strings.Contains(body, "Updated issue") || !strings.Contains(body, fmt.Sprintf(`"version":%d`, guarded.Data.Version+1)) {
@@ -514,7 +514,8 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(body, "other sessions were signed out") {
 		t.Fatalf("browser password-change session was not preserved: %d: %s", response.StatusCode, body)
 	}
-	exerciseTypedTicketBrowser(t, baseURL, browser, second, ticketCategoryID)
+	browserCategoryID := createTypedTicketCategory(t, baseURL, browser)
+	exerciseTypedTicketBrowser(t, baseURL, browser, second, browserCategoryID)
 	response, body = requestBrowser(t, browser, http.MethodGet, baseURL+"/app/issues/new", nil)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("browser new issue: %d: %s", response.StatusCode, body)

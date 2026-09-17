@@ -93,6 +93,13 @@ Target:
   default ten-minute timeout under Linux race instrumentation. CI now retains
   the complete `go test -race ./...` suite with a 20-minute package timeout;
   no test is deleted, skipped, narrowed, or renamed.
+- Follow-up run
+  [35232274693](https://github.com/ShanilKoshitha/goforge/actions/runs/35232274693)
+  passed the complete native Windows job and the original cross-owner JSON
+  regression, then correctly rejected the browser user's attempt to create a
+  ticket with a category owned by the earlier JSON user. The fixture now creates
+  a separate browser-owned category, preserving both the owner constraint and
+  the full accessible browser correction journey.
 
 ## v0.21.0 runtime-stage evidence — 2026-09-14
 
