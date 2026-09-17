@@ -1,4 +1,25 @@
-<form action="{{.Action}}" method="post">
+[[if .AccessibleForms]]<form action="{{.Action}}" method="post">
+  @csrf(form=.Form)
+  {{if .Method}}<input type="hidden" name="_method" value="{{.Method}}">{{end}}
+  {{if .Version}}<input type="hidden" name="version" value="{{.Version}}">{{end}}
+[[range .Fields]][[if .String]]  @component("components/input", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", recover=true, help="[[if .Nullable]]Optional. [[end]][[if $.SchemaDriven]]Use at most 255 characters.[[else]]Use between 2 and 200 characters.[[end]]", attributes([[if $.SchemaDriven]]maxlength="255"[[else]]minlength="2", maxlength="200"[[end]][[if .Required]], required=true[[end]]))@endcomponent
+[[else if .Text]]  @component("components/textarea", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", help="[[if .Nullable]]Optional. [[end]]Use at most 65,535 characters.", attributes(maxlength="65535"[[if .Required]], required=true[[end]]))@endcomponent
+[[else if .Integer]]  @component("components/input", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", recover=true, type="number", help="[[if .Nullable]]Optional. Enter a whole number or leave this blank.[[else]]Enter a whole number.[[end]]", attributes(step="1"[[if .Required]], required=true[[end]]))@endcomponent
+[[else]]  @component("components/select", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", help="[[if .Nullable]]Optional. Choose true, false, or not set.[[else]]Choose true or false.[[end]]", attributes([[if .Required]]required=true[[end]]))
+      {{$[[.Name]]Value := .Form.Old "[[.Name]]"}}
+      <option value="" {{if eq $[[.Name]]Value ""}}selected{{end}}>[[if .Nullable]]Not set[[else]]Choose true or false[[end]]</option>
+      <option value="false" {{if eq (.Form.Old "[[.Name]]") "false"}}selected{{end}}>False</option>
+      <option value="true" {{if eq (.Form.Old "[[.Name]]") "true"}}selected{{end}}>True</option>
+      {{if and $[[.Name]]Value (ne $[[.Name]]Value "false") (ne $[[.Name]]Value "true")}}<option value="{{$[[.Name]]Value}}" selected>Unavailable selection</option>{{end}}
+    @endcomponent
+[[end]][[end]][[range .Relationships]]  @component("components/select", form=.Form, id="[[$.Package]]-[[.ForeignKey]]", name="[[.ForeignKey]]", label="[[.Label]]", help="Choose an available [[.TargetSpec.Name]].", attributes(required=true))
+      <option value=""{{if eq ($.Form.Old "[[.ForeignKey]]") ""}} selected{{end}}>Choose [[.TargetSpec.Name]]</option>
+      {{range .[[.GoName]]Choices}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{else}}<option value="" disabled>No [[.TargetSpec.Name]] choices available</option>{{end}}
+    @endcomponent
+[[end]]  {{with .Form.Errors "version"}}<div id="[[$.Package]]-version-errors" role="alert"><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+  <button type="submit">{{.Submit}}</button>
+</form>
+[[else]]<form action="{{.Action}}" method="post">
   @csrf
   {{if .Method}}<input type="hidden" name="_method" value="{{.Method}}">{{end}}
   {{if .Version}}<input type="hidden" name="version" value="{{.Version}}">{{end}}
@@ -29,3 +50,4 @@
 [[end]]  @errors("version")<p role="alert">{{.}}</p>@enderrors
   <button type="submit">{{.Submit}}</button>
 </form>
+[[end]]

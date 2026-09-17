@@ -1,5 +1,5 @@
 @props(title, tone="neutral")
-<article class="card card--{{$tone}}">
+[[if .Attributes]]<article @attributes(class="card", class=(printf "card--%s" $tone))>[[else]]<article class="card card--{{$tone}}">[[end]]
   <header><h2>{{$title}}</h2></header>
   <div>@slot("default")@endslot</div>
   <footer>@slot("actions")@endslot</footer>

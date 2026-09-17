@@ -33,8 +33,20 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
 		t.Fatal("project name must be quoted YAML")
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 14") {
-		t.Fatal("fresh scaffold must declare format 14")
+	if !strings.Contains(files["forge.yaml"], "version: 15") {
+		t.Fatal("fresh scaffold must declare format 15")
+	}
+	for _, name := range []string{
+		"resources/views/components/input.forge.html",
+		"resources/views/components/textarea.forge.html",
+		"resources/views/components/select.forge.html",
+	} {
+		if strings.Count(files[name], "@attributes(") != 1 {
+			t.Errorf("fresh scaffold component %s must expose exactly one compile-time attribute sink", name)
+		}
+	}
+	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.21.0") {
+		t.Fatal("fresh format-15 scaffold must pin the public v0.21.0 compiler")
 	}
 	if !strings.Contains(files["resources/views/pages/welcome.forge.html"], "{{.Title}}") {
 		t.Fatal("HTML template expression was altered")

@@ -14,5 +14,6 @@ func Functions() template.FuncMap {
 	return template.FuncMap{
 		"asset":    assets.URL,
 		"headline": strings.TrimSpace,
+		"lower":    strings.ToLower,
 	}
 }

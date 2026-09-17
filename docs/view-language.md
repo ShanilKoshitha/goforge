@@ -178,6 +178,24 @@ argument:
 The selected pipeline is captured once in its lexical scope. Existing directive
 spellings retain their exact `.Form` expansion and behavior.
 
+Fresh format-15 applications provide ordinary application-owned `input`,
+`textarea`, and `select` components. Their form prop is explicit, not ambient:
+
+```html
+@component("components/input", form=.Form, id="profile-email",
+  name="email", label="Email", recover=true, type="email",
+  attributes(autocomplete="email", required=true))@endcomponent
+```
+
+The components own matching labels, stable help/error IDs, conditional
+`aria-describedby`, and `aria-invalid="true"` only when errors exist. Multiple
+messages share one alert container. Each component has one compile-time
+attribute sink, so forwarded attributes still compile to static names and
+ordinary actions. Input callers must state whether old input is recoverable;
+`type="password"` is structurally blank even if `recover=true` is passed by
+mistake. The components and controller-supplied `view.Form` values remain
+editable generated source rather than a reflective form runtime.
+
 ## Application functions and escape hatches
 
 Format-5 applications own `resources/views/functions.go`. Its

@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.21.0\n" {
+	if output.String() != "forge 0.21.1\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -69,6 +69,9 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		"internal/http/requests/password_recovery.go",
 		"resources/views/layouts/app.forge.html",
 		"resources/views/components/card.forge.html",
+		"resources/views/components/input.forge.html",
+		"resources/views/components/textarea.forge.html",
+		"resources/views/components/select.forge.html",
 		"resources/views/functions.go",
 		"resources/views/viewfuncs/functions.go",
 		"resources/views/pages/welcome.forge.html",
@@ -96,8 +99,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "version: 14") {
-		t.Fatalf("fresh scaffold is not format 14:\n%s", manifest)
+	if !strings.Contains(string(manifest), "version: 15") {
+		t.Fatalf("fresh scaffold is not format 15:\n%s", manifest)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {
@@ -108,6 +111,11 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	}
 	if !strings.Contains(string(compiledViews), `asset \"app.css\"`) || !strings.Contains(string(compiledViews), `asset \"app.js\"`) {
 		t.Fatalf("generated layout does not use the application asset resolver:\n%s", compiledViews)
+	}
+	for _, forbidden := range []string{"@attributes", "attributes(", "AttributeBag", "HTMLAttr", "reflect."} {
+		if strings.Contains(string(compiledViews), forbidden) {
+			t.Fatalf("generated views retain %q instead of ordinary html/template source:\n%s", forbidden, compiledViews)
+		}
 	}
 	generatedORM, err := os.ReadFile(filepath.Join(directory, "internal", "models", "zz_orm_gen.go"))
 	if err != nil {
@@ -121,16 +129,16 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.19.0") {
-		t.Fatalf("scaffold does not pin GoForge v0.19.0:\n%s", moduleFile)
+	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.21.0") {
+		t.Fatalf("scaffold does not pin GoForge v0.21.0:\n%s", moduleFile)
 	}
 	moduleSums, err := os.ReadFile(filepath.Join(directory, "go.sum"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"github.com/ShanilKoshitha/goforge v0.19.0 h1:06YyBa1ivkFwtkA9XNTprNzERN/FJMgFEhqtgSzoFQg=",
-		"github.com/ShanilKoshitha/goforge v0.19.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+		"github.com/ShanilKoshitha/goforge v0.21.0 h1:i2oJUQaIbA3nbJJJUV6ewMm2Mds8kLYgmIC+50dBNU0=",
+		"github.com/ShanilKoshitha/goforge v0.21.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 	} {
 		if !strings.Contains(string(moduleSums), want) {
 			t.Errorf("scaffold is missing public runtime checksum %q", want)
@@ -155,8 +163,12 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err := Run([]string{"make:component", "Notice"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold cannot generate a component: %v\n%s", err, checkOutput.String())
 	}
-	if _, err := os.Stat(filepath.Join("resources", "views", "components", "notice.forge.html")); err != nil {
+	noticePath := filepath.Join("resources", "views", "components", "notice.forge.html")
+	if _, err := os.Stat(noticePath); err != nil {
 		t.Fatalf("generated component is missing: %v", err)
+	}
+	if notice, err := os.ReadFile(noticePath); err != nil || !bytes.Contains(notice, []byte("@attributes(")) {
+		t.Fatalf("format-15 component does not expose its compile-time attribute sink: %v\n%s", err, notice)
 	}
 	if err := Run([]string{"views:compile", "--check"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold views are not current: %v\n%s", err, checkOutput.String())
@@ -308,7 +320,7 @@ func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
-			if err := os.WriteFile("forge.yaml", []byte("version: 15\n"), 0o644); err != nil {
+			if err := os.WriteFile("forge.yaml", []byte("version: 16\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer

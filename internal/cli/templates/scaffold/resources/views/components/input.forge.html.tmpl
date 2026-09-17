@@ -1,0 +1,17 @@
+@props(form, id, name, label, recover, type="text", help="", fallback="")
+{{$errors := $form.Errors $name}}
+{{$inputType := lower $type}}
+{{$value := ""}}
+@if(and $recover (ne $inputType "password"))
+  {{$value = $form.Old $name $fallback}}
+@endif
+<div class="field">
+  <label for="{{$id}}">{{$label}}</label>
+  @if($help)<p id="{{$id}}-help" class="field__help">{{$help}}</p>@endif
+  <input @attributes(id=$id, name=$name, type=$type, value=$value, class="field__control")
+    @if(and $help $errors)aria-describedby="{{$id}}-help {{$id}}-errors"
+    @elseif($help)aria-describedby="{{$id}}-help"
+    @elseif($errors)aria-describedby="{{$id}}-errors"@endif
+    @if($errors)aria-invalid="true"@endif>
+  @if($errors)<div id="{{$id}}-errors" class="field__errors" role="alert">@for($errors)<p>{{.}}</p>@endfor</div>@endif
+</div>

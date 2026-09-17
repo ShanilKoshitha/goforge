@@ -14,7 +14,9 @@ import (
 
 	"github.com/ShanilKoshitha/goforge/httpx"
 	"github.com/ShanilKoshitha/goforge/session"
-	"github.com/ShanilKoshitha/goforge/web"
+[[if .AccessibleForms]]	"github.com/ShanilKoshitha/goforge/validation"
+	"github.com/ShanilKoshitha/goforge/view"
+[[end]]	"github.com/ShanilKoshitha/goforge/web"
 
 	"[[.Module]]/internal/auth"
 [[if .Relationships]]	"[[.Module]]/internal/models"
@@ -84,10 +86,12 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 [[range .Fields]]	if !strings.Contains(newPage.Body.String(), `name="[[.Name]]"`) {
 		t.Fatalf("new page has no [[.Name]] control: %s", newPage.Body.String())
 	}
-[[end]][[range .Relationships]]	if !strings.Contains(newPage.Body.String(), `name="[[.ForeignKey]]"`) || !strings.Contains(newPage.Body.String(), `[[.TargetSpec.Name]] #7`) {
+[[if $.AccessibleForms]]	assertAccessibleControl(t, newPage.Body.String(), "[[$.Package]]-[[.Name]]", "[[.Label]]", false)
+[[end]][[end]][[range .Relationships]]	if !strings.Contains(newPage.Body.String(), `name="[[.ForeignKey]]"`) || !strings.Contains(newPage.Body.String(), `[[.TargetSpec.Name]] #7`) {
 		t.Fatalf("new page has no bounded [[.Label]] choices: %s", newPage.Body.String())
 	}
-[[end]]	token := browserCSRFToken(t, newPage.Body.String())
+[[if $.AccessibleForms]]	assertAccessibleControl(t, newPage.Body.String(), "[[$.Package]]-[[.ForeignKey]]", "[[.Label]]", false)
+[[end]][[end]]	token := browserCSRFToken(t, newPage.Body.String())
 	cookie = responseCookie(newPage, cookie)
 
 	missing := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", sampleResourceFormValues(), cookie)
@@ -101,7 +105,33 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	if controlText.Code != http.StatusUnprocessableEntity || !strings.Contains(controlText.Body.String(), "must not contain [[if .FirstTextualField.Text]]unsupported [[end]]control characters") || strings.Contains(controlText.Body.String(), "\x00") || repository.item.ID != 0 {
 		t.Fatalf("control-text form reached persistence: %d item=%+v: %s", controlText.Code, repository.item, controlText.Body.String())
 	}
-[[end]]	for _, field := range []string{
+[[end]][[if .AccessibleForms]][[range .Fields]][[if or .Integer .Boolean]]	invalid[[.GoName]]Values := accessibleEdgeResourceFormValues()
+	invalid[[.GoName]]Values.Set("_token", token)
+	invalid[[.GoName]]Values.Set("[[.Name]]", "not-a-[[if .Integer]]number[[else]]boolean[[end]]")
+	invalid[[.GoName]] := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", invalid[[.GoName]]Values, cookie)
+	if invalid[[.GoName]].Code != http.StatusUnprocessableEntity || repository.item.ID != 0 || !reflect.DeepEqual(repository.createdAttributes, resource.Attributes{}) ||
+		!strings.Contains(invalid[[.GoName]].Body.String(), "must be [[if .Integer]]an integer[[else]]true or false[[end]]") {
+		t.Fatalf("malformed [[.Name]] reached persistence or was not recoverable: %d item=%+v attributes=%+v: %s", invalid[[.GoName]].Code, repository.item, repository.createdAttributes, invalid[[.GoName]].Body.String())
+	}
+	assertResourceFormValues(t, invalid[[.GoName]].Body.String(), invalid[[.GoName]]Values)
+	assertAccessibleControl(t, invalid[[.GoName]].Body.String(), "[[$.Package]]-[[.Name]]", "[[.Label]]", true)
+	token = browserCSRFToken(t, invalid[[.GoName]].Body.String())
+	cookie = responseCookie(invalid[[.GoName]], cookie)
+
+[[end]][[end]][[range .Relationships]]	invalid[[.ForeignKeyGoName]]Values := accessibleEdgeResourceFormValues()
+	invalid[[.ForeignKeyGoName]]Values.Set("_token", token)
+	invalid[[.ForeignKeyGoName]]Values.Set("[[.ForeignKey]]", "not-an-id")
+	invalid[[.ForeignKeyGoName]] := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", invalid[[.ForeignKeyGoName]]Values, cookie)
+	if invalid[[.ForeignKeyGoName]].Code != http.StatusUnprocessableEntity || repository.item.ID != 0 || !reflect.DeepEqual(repository.createdAttributes, resource.Attributes{}) ||
+		!strings.Contains(invalid[[.ForeignKeyGoName]].Body.String(), "must be an integer") || !strings.Contains(invalid[[.ForeignKeyGoName]].Body.String(), "Unavailable selection") {
+		t.Fatalf("malformed [[.ForeignKey]] reached persistence or was not retained: %d item=%+v attributes=%+v: %s", invalid[[.ForeignKeyGoName]].Code, repository.item, repository.createdAttributes, invalid[[.ForeignKeyGoName]].Body.String())
+	}
+	assertResourceFormValues(t, invalid[[.ForeignKeyGoName]].Body.String(), invalid[[.ForeignKeyGoName]]Values)
+	assertAccessibleControl(t, invalid[[.ForeignKeyGoName]].Body.String(), "[[$.Package]]-[[.ForeignKey]]", "[[.Label]]", true)
+	token = browserCSRFToken(t, invalid[[.ForeignKeyGoName]].Body.String())
+	cookie = responseCookie(invalid[[.ForeignKeyGoName]], cookie)
+
+[[end]][[end]]	for _, field := range []string{
 [[range .Fields]]		"[[.Name]]",
 [[end]][[range .Relationships]]		"[[.ForeignKey]]",
 [[end]]	} {
@@ -362,6 +392,37 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	}
 }
 
+[[if .AccessibleForms]]func TestAccessibleResourceErrorsShareOneAssociatedContainer(t *testing.T) {
+	renderer, err := views.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	problems := validation.Errors{
+[[range .Fields]]		"[[.Name]]": {"[[.Name]] first problem", "[[.Name]] second problem"},
+[[end]][[range .Relationships]]		"[[.ForeignKey]]": {"[[.ForeignKey]] first problem", "[[.ForeignKey]] second problem"},
+[[end]]	}
+	response := httptest.NewRecorder()
+	err = renderer.Render(response, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", resource.FormPage{
+		Title: "New [[.Name]]", Action: "/app/[[.Plural]]", Submit: "Create [[.Name]]",
+		Form: view.Form{ValidationErrors: problems}, Errors: problems,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := response.Body.String()
+[[range .Fields]]	assertAccessibleControl(t, body, "[[$.Package]]-[[.Name]]", "[[.Label]]", true)
+	if strings.Count(body, `id="[[$.Package]]-[[.Name]]-errors"`) != 1 ||
+		strings.Count(body, "[[.Name]] first problem") != 1 || strings.Count(body, "[[.Name]] second problem") != 1 {
+		t.Errorf("[[.Name]] messages do not share one stable container: %s", body)
+	}
+[[end]][[range .Relationships]]	assertAccessibleControl(t, body, "[[$.Package]]-[[.ForeignKey]]", "[[.Label]]", true)
+	if strings.Count(body, `id="[[$.Package]]-[[.ForeignKey]]-errors"`) != 1 ||
+		strings.Count(body, "[[.ForeignKey]] first problem") != 1 || strings.Count(body, "[[.ForeignKey]] second problem") != 1 {
+		t.Errorf("[[.ForeignKey]] messages do not share one stable container: %s", body)
+	}
+[[end]]}
+
+[[end]]
 [[if .AuthorizationPolicies]]func TestBrowserAuthorizationPrecedesParsingAndPersistence(t *testing.T) {
 	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
 	if err != nil {
@@ -602,7 +663,16 @@ func updatedResourceFormValues() url.Values {
 [[end]]	return values
 }
 
-func sampleWebAttributes() resource.Attributes {
+[[if .AccessibleForms]]func accessibleEdgeResourceFormValues() url.Values {
+	values := sampleResourceFormValues()
+[[range .Fields]][[if .Nullable]][[if or .String .Text .Integer]]	values.Set("[[.Name]]", "")
+[[else]]	values.Set("[[.Name]]", "false")
+[[end]][[else if .Integer]]	values.Set("[[.Name]]", "0")
+[[else if .Boolean]]	values.Set("[[.Name]]", "false")
+[[end]][[end]]	return values
+}
+
+[[end]]func sampleWebAttributes() resource.Attributes {
 	return resource.Attributes{
 [[range .Fields]]		[[.GoName]]: [[.SampleGoValue]],
 [[end]]	}
@@ -642,10 +712,17 @@ func assertResourceFormValues(t *testing.T, body string, values url.Values) {
 	t.Helper()
 [[range .Fields]]	{
 		value := html.EscapeString(values.Get("[[.Name]]"))
-[[if .Text]]	marker := `>` + value + `</textarea>`
+[[if $.AccessibleForms]][[if .Text]]		marker := `>` + value + `</textarea>`
+[[else if .Boolean]]		marker := `value="` + value + `" selected`
+[[else]]		control := accessibleControlTag(t, body, "[[$.Package]]-[[.Name]]")
+		if !strings.Contains(control, `name="[[.Name]]"`) || !strings.Contains(control, `value="`+value+`"`) {
+			t.Errorf("form does not retain [[.Name]] %q in control %q: %s", value, control, body)
+		}
+		marker := ""
+[[end]][[else]][[if .Text]]	marker := `>` + value + `</textarea>`
 [[else if .Boolean]]	marker := `value="` + value + `" selected`
 [[else]]	marker := `name="[[.Name]]" value="` + value + `"`
-[[end]]		if !strings.Contains(body, marker) {
+[[end]][[end]]		if marker != "" && !strings.Contains(body, marker) {
 			t.Errorf("form does not retain [[.Name]] %q using marker %q: %s", value, marker, body)
 		}
 	}
@@ -658,7 +735,36 @@ func assertResourceFormValues(t *testing.T, body string, values url.Values) {
 	}
 [[end]]}
 
-func browserRequest(router http.Handler, method, target string, values url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
+[[if .AccessibleForms]]func assertAccessibleControl(t *testing.T, body, id, label string, invalid bool) {
+	t.Helper()
+	if !strings.Contains(body, `<label for="`+id+`">`+label+`</label>`) {
+		t.Errorf("control %s has no matching label %q: %s", id, label, body)
+	}
+	control := accessibleControlTag(t, body, id)
+	if !strings.Contains(body, `id="`+id+`-help"`) || !strings.Contains(control, id+`-help`) {
+		t.Errorf("control %s is not associated with its stable help text: control=%s body=%s", id, control, body)
+	}
+	if invalid {
+		if !strings.Contains(control, `aria-invalid="true"`) || !strings.Contains(control, id+`-errors`) ||
+			!strings.Contains(body, `id="`+id+`-errors"`) {
+			t.Errorf("invalid control %s is not associated with one error container: control=%s body=%s", id, control, body)
+		}
+	} else if strings.Contains(control, "aria-invalid") || strings.Contains(control, id+`-errors`) || strings.Contains(body, `id="`+id+`-errors"`) {
+		t.Errorf("valid control %s exposes invalid state: control=%s body=%s", id, control, body)
+	}
+}
+
+func accessibleControlTag(t *testing.T, body, id string) string {
+	t.Helper()
+	pattern := regexp.MustCompile(`<(?:input|textarea|select)\b[^>]*\bid="` + regexp.QuoteMeta(id) + `"[^>]*>`)
+	control := pattern.FindString(body)
+	if control == "" {
+		t.Fatalf("control %s has no page-unique id: %s", id, body)
+	}
+	return control
+}
+
+[[end]]func browserRequest(router http.Handler, method, target string, values url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
 	var body *strings.Reader
 	if values == nil {
 		body = strings.NewReader("")

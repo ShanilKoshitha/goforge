@@ -45,6 +45,7 @@ type resourceTemplateData struct {
 	HasTextualFields      bool
 	FirstTextualField     *resourceTemplateField
 	AuthorizationPolicies bool
+	AccessibleForms       bool
 }
 
 // resourceTemplateRelationship exposes only resolved, deterministic names to
@@ -108,6 +109,7 @@ func resourceFilesForFormat(module string, definition resourceDefinition, format
 		SchemaDriven:          definition.SchemaDriven,
 		OwnerCandidateKey:     format >= 10,
 		AuthorizationPolicies: format >= 13,
+		AccessibleForms:       format >= 15,
 	}
 	if data.OwnerCandidateKey {
 		data.OwnerKeyName = spec.Plural + "_owner_id_key"

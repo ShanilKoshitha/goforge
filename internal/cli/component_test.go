@@ -12,6 +12,14 @@ import (
 	"testing"
 )
 
+const legacyGeneratedComponentSource = `@props(title, tone="neutral")
+<article class="card card--{{$tone}}">
+  <header><h2>{{$title}}</h2></header>
+  <div>@slot("default")@endslot</div>
+  <footer>@slot("actions")@endslot</footer>
+</article>
+`
+
 func TestMakeComponentCreatesStrictSourceAndCompilesViews(t *testing.T) {
 	directory := componentProject(t, 5)
 	t.Chdir(directory)
@@ -25,10 +33,8 @@ func TestMakeComponentCreatesStrictSourceAndCompilesViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"@props(title, tone=\"neutral\")", "$tone", "@slot(\"default\")", "@slot(\"actions\")"} {
-		if !strings.Contains(string(contents), expected) {
-			t.Errorf("component omits %q:\n%s", expected, contents)
-		}
+	if string(contents) != legacyGeneratedComponentSource {
+		t.Fatalf("format-5 component source changed:\n%s", contents)
 	}
 	if process.name != "go" || strings.Join(process.args, " ") != "run ./cmd/views" {
 		t.Fatalf("component compiler command = %s %v", process.name, process.args)
@@ -38,6 +44,48 @@ func TestMakeComponentCreatesStrictSourceAndCompilesViews(t *testing.T) {
 	}
 	if err := makeComponent(context.Background(), "Status Card", nil, io.Discard, io.Discard, process); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
 		t.Fatalf("duplicate component error = %v", err)
+	}
+}
+
+func TestMakeComponentFormatFourteenRetainsLegacySource(t *testing.T) {
+	directory := componentProject(t, 14)
+	t.Chdir(directory)
+	if err := makeComponent(context.Background(), "Status Card", nil, io.Discard, io.Discard, &recordedProcess{}); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(filepath.Join("resources", "views", "components", "status-card.forge.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != legacyGeneratedComponentSource {
+		t.Fatalf("format-14 component source changed:\n%s", contents)
+	}
+}
+
+func TestMakeComponentFormatFifteenCreatesAttributeSink(t *testing.T) {
+	directory := componentProject(t, 15)
+	t.Chdir(directory)
+	process := &recordedProcess{}
+	var output bytes.Buffer
+	if err := makeComponent(context.Background(), "Status Card", nil, &output, io.Discard, process); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join("resources", "views", "components", "status-card.forge.html")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	if strings.Count(source, "@attributes(") != 1 ||
+		!strings.Contains(source, `@attributes(class="card", class=(printf "card--%s" $tone))`) ||
+		strings.Contains(source, `<article class="card`) {
+		t.Fatalf("format-15 component lacks one compile-time attribute sink:\n%s", source)
+	}
+	if process.name != "go" || strings.Join(process.args, " ") != "run ./cmd/views" {
+		t.Fatalf("component compiler command = %s %v", process.name, process.args)
+	}
+	if !strings.Contains(output.String(), filepath.ToSlash(path)) {
+		t.Fatalf("component output = %q", output.String())
 	}
 }
 

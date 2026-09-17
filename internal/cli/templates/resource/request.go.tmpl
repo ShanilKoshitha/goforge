@@ -28,6 +28,8 @@ type WriteRequest struct {
 [[end]][[range .Relationships]]	[[.ForeignKey]]Input validation.Input[int64]
 [[end]]	versionInput validation.Input[int64]
 	formValues  map[string]string
+[[if .AccessibleForms]]	formErrors  validation.Errors
+[[end]]
 }
 
 func (request *WriteRequest) DecodeJSON(ctx *httpx.Context) error {
@@ -146,39 +148,65 @@ func (request *WriteRequest) DecodeForm(ctx *httpx.Context) error {
 		return err
 	}
 	request.formValues = make(map[string]string, [[len .Fields]])
+[[if .AccessibleForms]]	request.formErrors = make(validation.Errors)
+[[end]]
 [[range .Fields]][[if or .String .Text]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, err := decodeFormString(form, "[[.Name]]", [[.Text]])
-[[else if .Integer]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, err := decodeFormInt64(form, "[[.Name]]")
+[[else if .Integer]][[if $.AccessibleForms]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, [[.Name]]Problem, err := decodeAccessibleFormInt64(form, "[[.Name]]")
+[[else]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, err := decodeFormInt64(form, "[[.Name]]")
+[[end]][[else]][[if $.AccessibleForms]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, [[.Name]]Problem, err := decodeAccessibleFormBoolean(form, "[[.Name]]")
 [[else]]	[[if .Nullable]]_[[else]][[.Name]]Value[[end]], [[.Name]]Input, [[.Name]]Raw, err := decodeFormBoolean(form, "[[.Name]]")
+[[end]]
 [[end]]	if err != nil {
 		return err
 	}
-	request.[[.Name]]Input = [[.Name]]Input
+[[if and $.AccessibleForms (or .Integer .Boolean)]]	if [[.Name]]Problem != "" {
+		request.formErrors["[[.Name]]"] = append(request.formErrors["[[.Name]]"], [[.Name]]Problem)
+	}
+[[end]]	request.[[.Name]]Input = [[.Name]]Input
 	if form.Has("[[.Name]]") {
 		request.formValues["[[.Name]]"] = [[.Name]]Raw
 	}
 [[if .Nullable]]	request.Attributes.[[.GoName]] = inputPointer([[.Name]]Input)
 [[else]]	request.Attributes.[[.GoName]] = [[.Name]]Value
-[[end]][[end]][[range .Relationships]]	[[.ForeignKey]]Value, [[.ForeignKey]]Input, [[.ForeignKey]]Raw, err := decodeFormInt64(form, "[[.ForeignKey]]")
-	if err != nil {
+[[end]][[end]][[range .Relationships]][[if $.AccessibleForms]]	[[.ForeignKey]]Value, [[.ForeignKey]]Input, [[.ForeignKey]]Raw, [[.ForeignKey]]Problem, err := decodeAccessibleFormInt64(form, "[[.ForeignKey]]")
+[[else]]	[[.ForeignKey]]Value, [[.ForeignKey]]Input, [[.ForeignKey]]Raw, err := decodeFormInt64(form, "[[.ForeignKey]]")
+[[end]]	if err != nil {
 		return err
 	}
-	request.[[.ForeignKey]]Input = [[.ForeignKey]]Input
+[[if $.AccessibleForms]]	if [[.ForeignKey]]Problem != "" {
+		request.formErrors["[[.ForeignKey]]"] = append(request.formErrors["[[.ForeignKey]]"], [[.ForeignKey]]Problem)
+	}
+[[end]]	request.[[.ForeignKey]]Input = [[.ForeignKey]]Input
 	request.Associations.[[.ForeignKeyGoName]] = [[.ForeignKey]]Value
 	if form.Has("[[.ForeignKey]]") {
 		request.formValues["[[.ForeignKey]]"] = [[.ForeignKey]]Raw
 	}
-[[end]]	_, versionInput, versionRaw, err := decodeFormInt64(form, "version")
-	if err != nil {
+[[end]][[if .AccessibleForms]]	_, versionInput, versionRaw, versionProblem, err := decodeAccessibleFormInt64(form, "version")
+[[else]]	_, versionInput, versionRaw, err := decodeFormInt64(form, "version")
+[[end]]	if err != nil {
 		return err
 	}
-	request.Version, request.versionInput = inputPointer(versionInput), versionInput
+[[if .AccessibleForms]]	if versionProblem != "" {
+		request.formErrors["version"] = append(request.formErrors["version"], versionProblem)
+	}
+[[end]]	request.Version, request.versionInput = inputPointer(versionInput), versionInput
 	if form.Has("version") {
 		request.formValues["version"] = versionRaw
 	}
 	return nil
 }
 
-func (request WriteRequest) ValidateCreate() validation.Report {
+[[if .AccessibleForms]]// FormErrors returns a defensive copy of recoverable browser scalar errors.
+// Structural form errors are still returned directly from DecodeForm.
+func (request WriteRequest) FormErrors() validation.Errors {
+	errors := make(validation.Errors, len(request.formErrors))
+	for field, messages := range request.formErrors {
+		errors[field] = append([]string(nil), messages...)
+	}
+	return errors
+}
+
+[[end]]func (request WriteRequest) ValidateCreate() validation.Report {
 	return validation.Join(
 		request.validate(false),
 		validation.Apply("version", request.versionInput, versionNotAllowedOnCreate()),
@@ -326,7 +354,47 @@ func decodeFormBoolean(form httpx.Form, field string) (bool, validation.Input[bo
 	}
 }
 
-func inputPointer[T any](input validation.Input[T]) *T {
+[[if .AccessibleForms]]func decodeAccessibleFormInt64(form httpx.Form, field string) (int64, validation.Input[int64], string, string, error) {
+	raw, err := form.Value(field)
+	if err != nil {
+		return 0, validation.Missing[int64](), "", "", err
+	}
+	if !form.Has(field) {
+		return 0, validation.Missing[int64](), "", "", nil
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, validation.Empty[int64](), raw, "", nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, validation.Missing[int64](), raw, "must be an integer", nil
+	}
+	return value, validation.Present(value), raw, "", nil
+}
+
+func decodeAccessibleFormBoolean(form httpx.Form, field string) (bool, validation.Input[bool], string, string, error) {
+	raw, err := form.Value(field)
+	if err != nil {
+		return false, validation.Missing[bool](), "", "", err
+	}
+	if !form.Has(field) {
+		return false, validation.Missing[bool](), "", "", nil
+	}
+	raw = strings.TrimSpace(raw)
+	switch raw {
+	case "":
+		return false, validation.Empty[bool](), raw, "", nil
+	case "true":
+		return true, validation.Present(true), raw, "", nil
+	case "false":
+		return false, validation.Present(false), raw, "", nil
+	default:
+		return false, validation.Missing[bool](), raw, "must be true or false", nil
+	}
+}
+
+[[end]]func inputPointer[T any](input validation.Input[T]) *T {
 	value, present := input.Value()
 	if !present {
 		return nil

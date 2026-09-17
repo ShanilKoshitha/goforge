@@ -56,6 +56,9 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "make:resource", "Issue"); err != nil {
 		t.Fatalf("forge make:resource: %v\n%s", err, output)
 	}
+	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "make:resource", "Category", "--field", "title:string"); err != nil {
+		t.Fatalf("forge make:resource ticket Category: %v\n%s", err, output)
+	}
 	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary,
 		"make:resource", "Ticket",
 		"--field", "title:string",
@@ -64,6 +67,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 		"--field", "estimate:integer:nullable",
 		"--field", "active:boolean",
 		"--field", "featured:boolean:nullable",
+		"--belongs-to", "category:Category",
 	); err != nil {
 		t.Fatalf("forge make:resource typed Ticket: %v\n%s", err, output)
 	}
@@ -79,7 +83,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 			t.Fatalf("generated view artifact omits %q:\n%s", expected, compiledViews)
 		}
 	}
-	for _, directive := range []string{"@component(", "@slot(", "@if(", "@for(", "@csrf", "@push(", "@stack("} {
+	for _, directive := range []string{"@component(", "@slot(", "@if(", "@for(", "@csrf", "@push(", "@stack(", "@attributes", "attributes("} {
 		if bytes.Contains(compiledViews, []byte(directive)) {
 			t.Fatalf("generated view artifact retains Forge directive %q:\n%s", directive, compiledViews)
 		}
@@ -406,7 +410,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-owner delete: expected 404, got %d: %s", response.StatusCode, body)
 	}
-	exerciseTypedTicketJSON(t, baseURL, first, second)
+	ticketCategoryID := exerciseTypedTicketJSON(t, baseURL, first, second)
 
 	response, body = requestJSON(t, first, http.MethodPut, issueURL, `{"name":"Updated issue"}`)
 	if response.StatusCode != http.StatusOK || !strings.Contains(body, "Updated issue") || !strings.Contains(body, fmt.Sprintf(`"version":%d`, guarded.Data.Version+1)) {
@@ -510,7 +514,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(body, "other sessions were signed out") {
 		t.Fatalf("browser password-change session was not preserved: %d: %s", response.StatusCode, body)
 	}
-	exerciseTypedTicketBrowser(t, baseURL, browser, second)
+	exerciseTypedTicketBrowser(t, baseURL, browser, second, ticketCategoryID)
 	response, body = requestBrowser(t, browser, http.MethodGet, baseURL+"/app/issues/new", nil)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("browser new issue: %d: %s", response.StatusCode, body)
@@ -1534,25 +1538,47 @@ func proveCredentialCAS(ctx context.Context, db *sql.DB, email, oldPlain, newPla
 `
 
 type typedTicket struct {
-	ID       int64   `json:"id"`
-	Title    string  `json:"title"`
-	Notes    *string `json:"notes"`
-	Priority int64   `json:"priority"`
-	Estimate *int64  `json:"estimate"`
-	Active   bool    `json:"active"`
-	Featured *bool   `json:"featured"`
-	Version  int64   `json:"version"`
+	ID         int64   `json:"id"`
+	CategoryID int64   `json:"category_id"`
+	Title      string  `json:"title"`
+	Notes      *string `json:"notes"`
+	Priority   int64   `json:"priority"`
+	Estimate   *int64  `json:"estimate"`
+	Active     bool    `json:"active"`
+	Featured   *bool   `json:"featured"`
+	Version    int64   `json:"version"`
 }
 
-func exerciseTypedTicketJSON(t *testing.T, baseURL string, owner, other *http.Client) {
+func createTypedTicketCategory(t *testing.T, baseURL string, owner *http.Client) int64 {
 	t.Helper()
+	response, body := requestJSON(t, owner, http.MethodPost, baseURL+"/categories", `{"title":"Ticket category"}`)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create typed ticket category: expected 201, got %d: %s", response.StatusCode, body)
+	}
+	var envelope struct {
+		Data struct {
+			ID int64 `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil || envelope.Data.ID < 1 {
+		t.Fatalf("decode typed ticket category: %v: %s", err, body)
+	}
+	return envelope.Data.ID
+}
+
+func exerciseTypedTicketJSON(t *testing.T, baseURL string, owner, other *http.Client) int64 {
+	t.Helper()
+	categoryID := createTypedTicketCategory(t, baseURL, owner)
 	response, body := requestJSON(t, owner, http.MethodPost, baseURL+"/tickets",
-		`{"title":"<script>JSON ticket</script>","notes":"First line\nSecond line","priority":7,"estimate":13,"active":true,"featured":false}`)
+		fmt.Sprintf(`{"title":"<script>JSON ticket</script>","notes":"First line\nSecond line","priority":7,"estimate":13,"active":true,"featured":false,"category_id":%d}`, categoryID))
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create typed ticket: expected 201, got %d: %s", response.StatusCode, body)
 	}
 	created := decodeTypedTicket(t, body)
 	assertTypedTicket(t, created, "<script>JSON ticket</script>", "First line\nSecond line", 7, 13, true, false, 1)
+	if created.CategoryID != categoryID {
+		t.Fatalf("created typed ticket category_id=%d, want %d", created.CategoryID, categoryID)
+	}
 
 	ticketURL := fmt.Sprintf("%s/tickets/%d", baseURL, created.ID)
 	response, body = requestJSON(t, owner, http.MethodGet, baseURL+"/tickets", "")
@@ -1573,12 +1599,12 @@ func exerciseTypedTicketJSON(t *testing.T, baseURL string, owner, other *http.Cl
 	assertTypedTicket(t, decodeTypedTicket(t, body), "<script>JSON ticket</script>", "First line\nSecond line", 7, 13, true, false, 1)
 
 	response, body = requestJSON(t, owner, http.MethodPut, ticketURL,
-		`{"title":"Missing version","notes":null,"priority":0,"estimate":null,"active":false,"featured":null}`)
+		fmt.Sprintf(`{"title":"Missing version","notes":null,"priority":0,"estimate":null,"active":false,"featured":null,"category_id":%d}`, categoryID))
 	if response.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "version") {
 		t.Fatalf("typed update without version: expected version validation 422, got %d: %s", response.StatusCode, body)
 	}
 	response, body = requestJSON(t, owner, http.MethodPut, ticketURL,
-		fmt.Sprintf(`{"title":"JSON ticket with nullable zeroes","notes":null,"priority":0,"estimate":0,"active":false,"featured":false,"version":%d}`, created.Version))
+		fmt.Sprintf(`{"title":"JSON ticket with nullable zeroes","notes":null,"priority":0,"estimate":0,"active":false,"featured":false,"category_id":%d,"version":%d}`, categoryID, created.Version))
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("update typed ticket with nullable zeroes: expected 200, got %d: %s", response.StatusCode, body)
 	}
@@ -1586,7 +1612,7 @@ func exerciseTypedTicketJSON(t *testing.T, baseURL string, owner, other *http.Cl
 	assertTypedTicketNullableZeroes(t, withZeroes, "JSON ticket with nullable zeroes", 0, false, created.Version+1)
 
 	response, body = requestJSON(t, owner, http.MethodPut, ticketURL,
-		fmt.Sprintf(`{"title":"<strong>JSON ticket updated</strong>","notes":null,"priority":0,"estimate":null,"active":false,"featured":null,"version":%d}`, withZeroes.Version))
+		fmt.Sprintf(`{"title":"<strong>JSON ticket updated</strong>","notes":null,"priority":0,"estimate":null,"active":false,"featured":null,"category_id":%d,"version":%d}`, categoryID, withZeroes.Version))
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("update and clear typed ticket: expected 200, got %d: %s", response.StatusCode, body)
 	}
@@ -1594,7 +1620,7 @@ func exerciseTypedTicketJSON(t *testing.T, baseURL string, owner, other *http.Cl
 	assertTypedTicketNullablesCleared(t, updated, "<strong>JSON ticket updated</strong>", 0, false, withZeroes.Version+1)
 
 	response, body = requestJSON(t, owner, http.MethodPut, ticketURL,
-		fmt.Sprintf(`{"title":"Stale typed overwrite","notes":"stale","priority":88,"estimate":89,"active":true,"featured":true,"version":%d}`, created.Version))
+		fmt.Sprintf(`{"title":"Stale typed overwrite","notes":"stale","priority":88,"estimate":89,"active":true,"featured":true,"category_id":%d,"version":%d}`, categoryID, created.Version))
 	if response.StatusCode != http.StatusConflict || !strings.Contains(body, "was changed") {
 		t.Fatalf("stale typed update: expected useful 409, got %d: %s", response.StatusCode, body)
 	}
@@ -1615,7 +1641,7 @@ func exerciseTypedTicketJSON(t *testing.T, baseURL string, owner, other *http.Cl
 		t.Fatalf("cross-owner typed JSON read: expected 404, got %d: %s", response.StatusCode, body)
 	}
 	response, body = requestJSON(t, other, http.MethodPut, ticketURL,
-		fmt.Sprintf(`{"title":"Stolen ticket","notes":"stolen","priority":1,"estimate":2,"active":true,"featured":false,"version":%d}`, updated.Version))
+		fmt.Sprintf(`{"title":"Stolen ticket","notes":"stolen","priority":1,"estimate":2,"active":true,"featured":false,"category_id":%d,"version":%d}`, categoryID, updated.Version))
 	if response.StatusCode != http.StatusNotFound || strings.Contains(body, "was changed") {
 		t.Fatalf("cross-owner typed JSON update: expected 404 without version disclosure, got %d: %s", response.StatusCode, body)
 	}
@@ -1623,9 +1649,10 @@ func exerciseTypedTicketJSON(t *testing.T, baseURL string, owner, other *http.Cl
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-owner typed JSON delete: expected 404, got %d: %s", response.StatusCode, body)
 	}
+	return categoryID
 }
 
-func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http.Client) {
+func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http.Client, categoryID int64) {
 	t.Helper()
 	response, body := requestBrowser(t, owner, http.MethodGet, baseURL+"/app/tickets/new", nil)
 	if response.StatusCode != http.StatusOK {
@@ -1637,10 +1664,37 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 		}
 	}
 	csrfToken := browserCSRF(t, body)
-	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+"/app/tickets", url.Values{
-		"_token": {csrfToken}, "title": {"<em>Browser ticket</em>"}, "notes": {"<script>Browser notes</script>\nSecond line"},
-		"priority": {"23"}, "estimate": {"34"}, "active": {"true"}, "featured": {"false"},
-	})
+	beforeInvalid := typedTicketCount(t, baseURL, owner)
+	invalidValues := url.Values{
+		"_token": {csrfToken}, "title": {"<em>Retained browser ticket</em>"}, "notes": {""},
+		"priority": {"not-an-integer"}, "estimate": {"0"}, "active": {"false"}, "featured": {""},
+		"category_id": {strconv.FormatInt(categoryID, 10)},
+	}
+	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+"/app/tickets", invalidValues)
+	if response.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "must be an integer") ||
+		!strings.Contains(body, `<label for="ticket-priority">Priority</label>`) ||
+		!strings.Contains(body, `aria-describedby="ticket-priority-help ticket-priority-errors"`) ||
+		!strings.Contains(body, `aria-invalid="true"`) ||
+		!strings.Contains(body, `value="&lt;em&gt;Retained browser ticket&lt;/em&gt;"`) ||
+		!strings.Contains(body, `id="ticket-estimate" name="estimate" type="number" value="0"`) ||
+		!strings.Contains(body, `<option value="false" selected>False</option>`) ||
+		!strings.Contains(body, `<option value="" selected>Not set</option>`) ||
+		!strings.Contains(body, `value="`+strconv.FormatInt(categoryID, 10)+`" selected`) {
+		t.Fatalf("invalid typed browser form did not retain accessible edge state: %d: %s", response.StatusCode, body)
+	}
+	if afterInvalid := typedTicketCount(t, baseURL, owner); afterInvalid != beforeInvalid {
+		t.Fatalf("invalid typed browser form wrote a row: before=%d after=%d", beforeInvalid, afterInvalid)
+	}
+	csrfToken = browserCSRF(t, body)
+	correctedValues := invalidValues
+	correctedValues.Set("_token", csrfToken)
+	correctedValues.Set("title", "<em>Browser ticket</em>")
+	correctedValues.Set("notes", "<script>Browser notes</script>\nSecond line")
+	correctedValues.Set("priority", "23")
+	correctedValues.Set("estimate", "34")
+	correctedValues.Set("active", "true")
+	correctedValues.Set("featured", "false")
+	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+"/app/tickets", correctedValues)
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("browser create typed ticket: expected 303, got %d: %s", response.StatusCode, body)
 	}
@@ -1655,6 +1709,9 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 	}
 	created := decodeTypedTicket(t, body)
 	assertTypedTicket(t, created, "<em>Browser ticket</em>", "<script>Browser notes</script>\nSecond line", 23, 34, true, false, 1)
+	if created.CategoryID != categoryID {
+		t.Fatalf("browser-created ticket category_id=%d, want %d", created.CategoryID, categoryID)
+	}
 
 	for _, path := range []string{"/app/tickets", browserPath} {
 		response, body = requestBrowser(t, owner, http.MethodGet, baseURL+path, nil)
@@ -1677,6 +1734,7 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 	response, body = requestBrowser(t, other, http.MethodPost, baseURL+browserPath, url.Values{
 		"_token": {otherToken}, "_method": {http.MethodPut}, "title": {"Stolen browser ticket"}, "notes": {"stolen"},
 		"priority": {"1"}, "estimate": {"2"}, "active": {"true"}, "featured": {"false"}, "version": {fmt.Sprint(created.Version)},
+		"category_id": {strconv.FormatInt(categoryID, 10)},
 	})
 	if response.StatusCode != http.StatusNotFound || strings.Contains(body, "was changed") {
 		t.Fatalf("cross-owner typed browser update: expected 404 without version disclosure, got %d: %s", response.StatusCode, body)
@@ -1695,7 +1753,7 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 	csrfToken = browserCSRF(t, body)
 	staleVersion := browserVersion(t, body)
 	response, body = requestJSON(t, owner, http.MethodPut, baseURL+apiPath,
-		fmt.Sprintf(`{"title":"Concurrent typed ticket","notes":"winner","priority":99,"estimate":100,"active":true,"featured":true,"version":%d}`, staleVersion))
+		fmt.Sprintf(`{"title":"Concurrent typed ticket","notes":"winner","priority":99,"estimate":100,"active":true,"featured":true,"category_id":%d,"version":%d}`, categoryID, staleVersion))
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("concurrent typed ticket update: expected 200, got %d: %s", response.StatusCode, body)
 	}
@@ -1704,6 +1762,7 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+browserPath, url.Values{
 		"_token": {csrfToken}, "_method": {http.MethodPut}, "title": {"Stale browser ticket"}, "notes": {"stale notes"},
 		"priority": {"44"}, "estimate": {"45"}, "active": {"false"}, "featured": {"true"}, "version": {fmt.Sprint(staleVersion)},
+		"category_id": {strconv.FormatInt(categoryID, 10)},
 	})
 	if response.StatusCode != http.StatusConflict || !strings.Contains(body, "was changed by another request") || !strings.Contains(body, "Stale browser ticket") {
 		t.Fatalf("stale typed browser update did not safely re-render: %d: %s", response.StatusCode, body)
@@ -1716,6 +1775,7 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+browserPath, url.Values{
 		"_token": {csrfToken}, "_method": {http.MethodPut}, "title": {"<strong>Browser ticket updated</strong>"}, "notes": {""},
 		"priority": {"0"}, "estimate": {""}, "active": {"false"}, "featured": {""}, "version": {fmt.Sprint(refreshedVersion)},
+		"category_id": {strconv.FormatInt(categoryID, 10)},
 	})
 	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != browserPath {
 		t.Fatalf("browser typed update and nullable clear: expected 303 %s, got %d %q: %s", browserPath, response.StatusCode, response.Header.Get("Location"), body)
@@ -1741,6 +1801,21 @@ func decodeTypedTicket(t *testing.T, body string) typedTicket {
 		t.Fatalf("decode typed ticket: %v: %s", err, body)
 	}
 	return envelope.Data
+}
+
+func typedTicketCount(t *testing.T, baseURL string, client *http.Client) int {
+	t.Helper()
+	response, body := requestJSON(t, client, http.MethodGet, baseURL+"/tickets", "")
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("list typed tickets for count: expected 200, got %d: %s", response.StatusCode, body)
+	}
+	var envelope struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatalf("decode typed ticket count: %v: %s", err, body)
+	}
+	return len(envelope.Data)
 }
 
 func assertTypedTicket(t *testing.T, ticket typedTicket, title, notes string, priority, estimate int64, active, featured bool, version int64) {

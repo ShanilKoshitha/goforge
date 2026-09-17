@@ -3,23 +3,11 @@
 @section("content")
   @component("components/card", title=.Title, tone="auth")
     <form action="/register" method="post">
-      @csrf
-      <label>Name
-        <input name="name" value="@old("name", "")" autocomplete="name" required>
-      </label>
-      @errors("name")<p role="alert">{{.}}</p>@enderrors
-      <label>Email
-        <input type="email" name="email" value="@old("email", "")" autocomplete="email" required>
-      </label>
-      @errors("email")<p role="alert">{{.}}</p>@enderrors
-      <label>Password
-        <input type="password" name="password" autocomplete="new-password" minlength="12" required>
-      </label>
-      @errors("password")<p role="alert">{{.}}</p>@enderrors
-      <label>Confirm password
-        <input type="password" name="password_confirmation" autocomplete="new-password" minlength="12" required>
-      </label>
-      @errors("password_confirmation")<p role="alert">{{.}}</p>@enderrors
+      @csrf(form=.Form)
+      @component("components/input", form=.Form, id="register-name", name="name", label="Name", recover=true, attributes(autocomplete="name", required=true))@endcomponent
+      @component("components/input", form=.Form, id="register-email", name="email", label="Email", recover=true, type="email", attributes(autocomplete="email", required=true))@endcomponent
+      @component("components/input", form=.Form, id="register-password", name="password", label="Password", recover=false, type="password", attributes(autocomplete="new-password", minlength=12, required=true))@endcomponent
+      @component("components/input", form=.Form, id="register-password-confirmation", name="password_confirmation", label="Confirm password", recover=false, type="password", attributes(autocomplete="new-password", minlength=12, required=true))@endcomponent
       <button type="submit">Create account</button>
     </form>
     @slot("actions")<a href="/login">Already have an account?</a>@endslot

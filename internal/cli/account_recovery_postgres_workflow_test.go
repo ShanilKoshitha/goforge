@@ -52,8 +52,8 @@ func TestGeneratedAccountRecoveryPostgresWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(manifest, []byte("version: 14")) {
-		t.Fatalf("fresh recovery application is not format 14:\n%s", manifest)
+	if !bytes.Contains(manifest, []byte("version: 15")) {
+		t.Fatalf("fresh recovery application is not format 15:\n%s", manifest)
 	}
 
 	schema := fmt.Sprintf("goforge_recovery_acceptance_%d", time.Now().UnixNano())
