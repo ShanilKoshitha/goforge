@@ -1409,3 +1409,49 @@ HTML attributes, and generated forms are not production-shaped if errors are
 ambiguous or inaccessible. Resolving both at compile time provides familiar
 Blade/Twig ergonomics while preserving deterministic, inspectable Go templates
 and explicit application-owned state.
+
+## D045 — Windows installation owns discovery and verification outside the CLI
+
+**Status:** accepted
+
+The recommended Windows installation path is a reviewable PowerShell script.
+It announces progress before invoking `go install -v`, resolves the destination
+from `GOBIN` or the first `GOPATH` entry, executes the installed binary directly
+to verify both its Go module metadata and exact CLI version, then adds that
+directory to the current process and persistent user `PATH` and prints the
+first useful command. An explicit version may be requested; the default remains
+Go's latest released module. CI and managed environments may limit the update
+to the current session or skip the `PATH` mutation while retaining installation
+and verification. The documented remote flow downloads and displays the
+installer for review before executing it; it does not pipe mutable branch
+content directly into PowerShell.
+
+The ordinary `go install` command remains supported and documented, but cannot
+provide this experience: Go owns that process, may legitimately print nothing
+when its work is cached, never executes the installed program, and does not
+modify the shell's `PATH`. The Forge binary therefore cannot repair discovery
+or print a post-install success message from inside `go install`.
+
+Reason: a successful binary write is not a usable CLI installation when the
+shell cannot resolve `forge`. Keeping the operating-system-specific mutation in
+an inspectable installer preserves the normal Go distribution path while
+making progress, discovery, persistence, and verification explicit.
+
+## D046 — Resource update visibility precedes association classification
+
+**Status:** accepted
+
+Relationship-backed updates execute the authorization-scoped member mutation
+before classifying association failures. A missing or inaccessible target row
+therefore returns the same not-found result regardless of whether a submitted
+foreign key names a missing, owned, or foreign association. For a visible row,
+the generated composite owner/target foreign key remains authoritative and its
+named constraint maps to the existing field-level `association.invalid` 422.
+Create retains its explicit owner-scoped association preflight because no
+existing member identity must be hidden.
+
+Reason: validating an association before establishing target visibility lets a
+cross-owner update disclose information through a 422 response instead of the
+required indistinguishable 404. Letting PostgreSQL enforce the update closes
+the validation/write race, removes one successful-update query, and preserves
+the existing useful validation response for visible rows.

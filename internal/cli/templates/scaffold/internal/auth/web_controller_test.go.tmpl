@@ -89,6 +89,8 @@ func TestBrowserAuthenticationLifecycle(t *testing.T) {
 	if strings.Contains(invalid.Body.String(), secret) {
 		t.Fatal("registration page redisplayed the submitted password")
 	}
+	assertAssociatedControl(t, invalid.Body.String(), "register-name", true)
+	assertAssociatedControl(t, invalid.Body.String(), "register-email", false)
 	mismatched := submitForm(router, http.MethodPost, "/register", url.Values{
 		"_token": {token}, "name": {"Ada"}, "email": {"ada@example.com"},
 		"password": {"a secure passphrase"}, "password_confirmation": {"a different passphrase"},
@@ -152,9 +154,12 @@ func TestBrowserAuthenticationLifecycle(t *testing.T) {
 	badLogin := submitForm(router, http.MethodPost, "/login", url.Values{
 		"_token": {loginToken}, "email": {"ada@example.com"}, "password": {"wrong password"},
 	}, loginCookie)
-	if badLogin.Code != http.StatusUnprocessableEntity || !strings.Contains(badLogin.Body.String(), "invalid credentials") {
+	if badLogin.Code != http.StatusUnprocessableEntity || !strings.Contains(badLogin.Body.String(), "invalid credentials") ||
+		strings.Contains(badLogin.Body.String(), "wrong password") {
 		t.Fatalf("bad login: %d: %s", badLogin.Code, badLogin.Body.String())
 	}
+	assertAssociatedControl(t, badLogin.Body.String(), "login-email", true)
+	assertAssociatedControl(t, badLogin.Body.String(), "login-password", false)
 	login := submitForm(router, http.MethodPost, "/login", url.Values{
 		"_token": {loginToken}, "email": {"ada@example.com"}, "password": {"a secure passphrase"},
 	}, loginCookie)
@@ -383,6 +388,8 @@ func TestBrowserPasswordChangeThrottleRendersSafeHTML(t *testing.T) {
 	if contentType := second.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
 		t.Fatalf("password throttle content type = %q", contentType)
 	}
+	assertAssociatedControl(t, second.Body.String(), "security-current-password", true)
+	assertAssociatedControl(t, second.Body.String(), "token-current-password", false)
 	for _, secret := range []string{"incorrect password", "a replacement passphrase", encoded} {
 		if strings.Contains(second.Body.String(), secret) {
 			t.Fatalf("password throttle disclosed %q: %s", secret, second.Body.String())
@@ -391,8 +398,13 @@ func TestBrowserPasswordChangeThrottleRendersSafeHTML(t *testing.T) {
 }
 
 func TestBrowserSecurityRendersTokenRevokeCSRF(t *testing.T) {
+	hasher := password.Hasher{Iterations: 1}
+	encoded, err := hasher.Hash("a secure passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
 	users := &fakeUsers{user: auth.User{
-		ID: 25, Name: "Ada", Email: "ada@example.com", PasswordHash: "unused", CredentialVersion: 1,
+		ID: 25, Name: "Ada", Email: "ada@example.com", PasswordHash: encoded, CredentialVersion: 1,
 	}}
 	manager, err := session.NewManager(
 		session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour,
@@ -422,12 +434,14 @@ func TestBrowserSecurityRendersTokenRevokeCSRF(t *testing.T) {
 		ID: 91, Name: "deployment", ExpiresAt: time.Date(2030, time.January, 2, 3, 4, 5, 0, time.UTC), CreatedAt: time.Now(),
 	}}}
 	controller := auth.NewControllerWithPersonalTokens(
-		users, manager, password.Hasher{Iterations: 1}, testAttemptLimiter(t), testAttemptLimiter(t), tokens,
+		users, manager, hasher, testAttemptLimiter(t), strictAttemptLimiter(t), tokens,
 	)
 	browser := auth.NewWebController(controller, renderer)
 	router := httpx.NewRouter()
 	private := router.Group("", web.Sessions(manager), auth.RequireWeb(users), web.CSRF())
 	private.GET("/settings/security", browser.Security)
+	private.POST("/settings/tokens", browser.CreatePersonalToken)
+	private.POST("/settings/password", browser.ChangePassword)
 
 	page := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/settings/security", nil)
@@ -441,6 +455,127 @@ func TestBrowserSecurityRendersTokenRevokeCSRF(t *testing.T) {
 			t.Fatalf("security page omitted %q: %s", expected, page.Body.String())
 		}
 	}
+	assertUniqueIDs(t, page.Body.String())
+	for _, id := range []string{
+		"token-name", "token-expires-in-days", "token-current-password", "security-current-password",
+		"security-new-password", "security-password-confirmation",
+	} {
+		assertAssociatedControl(t, page.Body.String(), id, false)
+	}
+	if count := strings.Count(page.Body.String(), `name="_token"`); count != 4 {
+		t.Fatalf("security page rendered %d CSRF fields, want token, revoke, password, and action forms: %s", count, page.Body.String())
+	}
+
+	cookie := page.Result().Cookies()[0]
+	csrf := csrfToken(t, page.Body.String())
+	const tokenSecret = "token current password must stay private"
+	empty := submitForm(router, http.MethodPost, "/settings/tokens", url.Values{
+		"_token": {csrf}, "name": {"empty-expiry"}, "expires_in_days": {""}, "current_password": {tokenSecret},
+	}, cookie)
+	if empty.Code != http.StatusUnprocessableEntity || strings.Contains(empty.Body.String(), tokenSecret) {
+		t.Fatalf("empty token expiry response was unsafe: %d: %s", empty.Code, empty.Body.String())
+	}
+	assertAssociatedControl(t, empty.Body.String(), "token-expires-in-days", true)
+	assertAssociatedControl(t, empty.Body.String(), "security-current-password", false)
+	if tag := controlTag(t, empty.Body.String(), "token-expires-in-days"); !strings.Contains(tag, `value=""`) {
+		t.Fatalf("submitted empty expiry was not retained: %s", tag)
+	}
+
+	cookie = lastResponseCookie(t, empty)
+	csrf = csrfToken(t, empty.Body.String())
+	zero := submitForm(router, http.MethodPost, "/settings/tokens", url.Values{
+		"_token": {csrf}, "name": {"zero-expiry"}, "expires_in_days": {"0"}, "current_password": {tokenSecret},
+	}, cookie)
+	if zero.Code != http.StatusUnprocessableEntity || strings.Contains(zero.Body.String(), tokenSecret) {
+		t.Fatalf("zero token expiry response was unsafe: %d: %s", zero.Code, zero.Body.String())
+	}
+	if tag := controlTag(t, zero.Body.String(), "token-expires-in-days"); !strings.Contains(tag, `value="0"`) {
+		t.Fatalf("submitted zero expiry was not retained: %s", tag)
+	}
+
+	cookie = lastResponseCookie(t, zero)
+	csrf = csrfToken(t, zero.Body.String())
+	wrongTokenPassword := submitForm(router, http.MethodPost, "/settings/tokens", url.Values{
+		"_token": {csrf}, "name": {"wrong-secret"}, "expires_in_days": {"30"}, "current_password": {tokenSecret},
+	}, cookie)
+	if wrongTokenPassword.Code != http.StatusUnprocessableEntity || strings.Contains(wrongTokenPassword.Body.String(), tokenSecret) {
+		t.Fatalf("token current-password failure was unsafe: %d: %s", wrongTokenPassword.Code, wrongTokenPassword.Body.String())
+	}
+	assertAssociatedControl(t, wrongTokenPassword.Body.String(), "token-current-password", true)
+	assertAssociatedControl(t, wrongTokenPassword.Body.String(), "security-current-password", false)
+
+	cookie = lastResponseCookie(t, wrongTokenPassword)
+	csrf = csrfToken(t, wrongTokenPassword.Body.String())
+	limitedToken := submitForm(router, http.MethodPost, "/settings/tokens", url.Values{
+		"_token": {csrf}, "name": {"limited-secret"}, "expires_in_days": {"30"}, "current_password": {tokenSecret},
+	}, cookie)
+	if limitedToken.Code != http.StatusTooManyRequests || strings.Contains(limitedToken.Body.String(), tokenSecret) {
+		t.Fatalf("token rate-limit response was unsafe: %d: %s", limitedToken.Code, limitedToken.Body.String())
+	}
+	assertAssociatedControl(t, limitedToken.Body.String(), "token-current-password", true)
+	assertAssociatedControl(t, limitedToken.Body.String(), "security-current-password", false)
+
+	cookie = lastResponseCookie(t, limitedToken)
+	csrf = csrfToken(t, limitedToken.Body.String())
+	const replacement = "a private replacement passphrase"
+	wrongPassword := submitForm(router, http.MethodPost, "/settings/password", url.Values{
+		"_token": {csrf}, "current_password": {tokenSecret}, "password": {replacement}, "password_confirmation": {replacement},
+	}, cookie)
+	if wrongPassword.Code != http.StatusUnprocessableEntity || strings.Contains(wrongPassword.Body.String(), tokenSecret) || strings.Contains(wrongPassword.Body.String(), replacement) {
+		t.Fatalf("password-change failure was unsafe: %d: %s", wrongPassword.Code, wrongPassword.Body.String())
+	}
+	assertAssociatedControl(t, wrongPassword.Body.String(), "security-current-password", true)
+	assertAssociatedControl(t, wrongPassword.Body.String(), "token-current-password", false)
+}
+
+func assertAssociatedControl(t *testing.T, body, id string, invalid bool) {
+	t.Helper()
+	if !strings.Contains(body, `for="`+id+`"`) {
+		t.Fatalf("control %q has no matching label: %s", id, body)
+	}
+	tag := controlTag(t, body, id)
+	hasInvalid := strings.Contains(tag, `aria-invalid="true"`)
+	if hasInvalid != invalid {
+		t.Fatalf("control %q invalid=%t, want %t: %s", id, hasInvalid, invalid, tag)
+	}
+	errorID := id + "-errors"
+	if invalid {
+		if !strings.Contains(tag, errorID) || strings.Count(body, `id="`+errorID+`"`) != 1 {
+			t.Fatalf("control %q is not associated with one stable error container: %s", id, body)
+		}
+	} else if strings.Contains(tag, errorID) || strings.Contains(body, `id="`+errorID+`"`) {
+		t.Fatalf("valid control %q rendered error state: %s", id, body)
+	}
+}
+
+func controlTag(t *testing.T, body, id string) string {
+	t.Helper()
+	pattern := regexp.MustCompile(`<(?:input|textarea|select)\b[^>]*\bid="` + regexp.QuoteMeta(id) + `"[^>]*>`)
+	tag := pattern.FindString(body)
+	if tag == "" {
+		t.Fatalf("response has no control with id %q: %s", id, body)
+	}
+	return tag
+}
+
+func assertUniqueIDs(t *testing.T, body string) {
+	t.Helper()
+	seen := make(map[string]struct{})
+	for _, match := range regexp.MustCompile(`\bid="([^"]+)"`).FindAllStringSubmatch(body, -1) {
+		if _, exists := seen[match[1]]; exists {
+			t.Fatalf("duplicate id %q: %s", match[1], body)
+		}
+		seen[match[1]] = struct{}{}
+	}
+}
+
+func lastResponseCookie(t *testing.T, response *httptest.ResponseRecorder) *http.Cookie {
+	t.Helper()
+	cookies := response.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatalf("response has no session cookie: %d: %s", response.Code, response.Body.String())
+	}
+	return cookies[len(cookies)-1]
 }
 
 func csrfToken(t *testing.T, body string) string {

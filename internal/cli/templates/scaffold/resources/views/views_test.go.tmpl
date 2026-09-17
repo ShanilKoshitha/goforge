@@ -1,8 +1,13 @@
 package views
 
 import (
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/ShanilKoshitha/goforge/view"
 
@@ -20,4 +25,174 @@ func TestCompiledViewsAreCurrent(t *testing.T) {
 	if _, err := view.ParseCompiled(compiled, viewfuncs.Functions()); err != nil {
 		t.Fatalf("compiled views do not match application functions: %v", err)
 	}
+}
+
+func TestFormComponentsRenderAccessibleExplicitState(t *testing.T) {
+	files := fstest.MapFS{
+		"pages/component-contract.forge.html": {Data: []byte(`
+@component("components/input", form=.Form, id="contract-count", name="count", label="Count", recover=true, type="number", help=.Help, attributes(class="counter", data-note=.Note, required=true))@endcomponent
+@component("components/textarea", form=.Form, id="contract-notes", name="notes", label="Notes", help="Notes help", attributes(maxlength=80))@endcomponent
+@component("components/select", form=.Form, id="contract-flag", name="flag", label="Flag", attributes(required=true))
+  <option value="">Choose</option>
+  <option value="false"{{if eq (.Form.Old "flag") "false"}} selected{{end}}>False</option>
+  <option value="true"{{if eq (.Form.Old "flag") "true"}} selected{{end}}>True</option>
+@endcomponent
+@component("components/input", form=.Form, id="contract-empty", name="empty", label="Empty", recover=true)@endcomponent
+@component("components/input", form=.Form, id="contract-password-title", name="password_title", label="Title-case password", recover=true, type="Password", fallback="poisoned-title-fallback")@endcomponent
+@component("components/input", form=.Form, id="contract-password-upper", name="password_upper", label="Upper-case password", recover=true, type="PASSWORD", fallback="poisoned-upper-fallback")@endcomponent
+@component("components/input", form=.Form, id="contract-unrecovered", name="unrecovered", label="Unrecovered", recover=false, fallback="poisoned-unrecovered-fallback")@endcomponent
+`)},
+	}
+	for _, name := range []string{
+		"components/input.forge.html",
+		"components/textarea.forge.html",
+		"components/select.forge.html",
+	} {
+		source, err := fs.ReadFile(Files, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(string(source), "@attributes(") != 1 {
+			t.Fatalf("%s must own exactly one attribute sink:\n%s", name, source)
+		}
+		files[name] = &fstest.MapFile{Data: source}
+	}
+	compiled, err := view.CompileForge(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range compiled {
+		for _, forbidden := range []string{"@attributes(", "AttributeBag", "HTMLAttr"} {
+			if strings.Contains(item.Source, forbidden) {
+				t.Fatalf("compiled %s retains %q or runtime attribute machinery:\n%s", item.Name, forbidden, item.Source)
+			}
+		}
+	}
+	engine, err := view.ParseCompiled(compiled, viewfuncs.Functions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := struct {
+		Form view.Form
+		Help string
+		Note string
+	}{
+		Form: view.Form{
+			OldValues: map[string]string{
+				"count": "0", "notes": "<notes & more>", "flag": "false", "empty": "",
+				"password_title": "poisoned-title-old", "password_upper": "poisoned-upper-old",
+				"unrecovered": "poisoned-unrecovered-old",
+			},
+			ValidationErrors: map[string][]string{
+				"count": {"first <failure>", "second & failure"},
+				"flag":  {"choose one"},
+			},
+		},
+		Help: "Count <help>",
+		Note: `"><strong>unsafe</strong>`,
+	}
+	response := httptest.NewRecorder()
+	if err := engine.Render(response, http.StatusUnprocessableEntity, "pages/component-contract", data); err != nil {
+		t.Fatal(err)
+	}
+	body := response.Body.String()
+
+	count := renderedControlTag(t, body, "input", "contract-count")
+	for _, want := range []string{
+		`name="count"`, `type="number"`, `value="0"`, `class="field__control counter"`,
+		`data-note="&#34;&gt;&lt;strong&gt;unsafe&lt;/strong&gt;"`, `required`,
+		`aria-describedby="contract-count-help contract-count-errors"`, `aria-invalid="true"`,
+	} {
+		if !strings.Contains(count, want) {
+			t.Errorf("count input omits %q: %s", want, count)
+		}
+	}
+	for _, want := range []string{
+		`<label for="contract-count">Count</label>`,
+		`id="contract-count-help" class="field__help">Count &lt;help&gt;</p>`,
+		`id="contract-count-errors" class="field__errors" role="alert">`,
+		`first &lt;failure&gt;`, `second &amp; failure`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rendered component page omits %q: %s", want, body)
+		}
+	}
+	if strings.Count(body, `id="contract-count-errors"`) != 1 {
+		t.Fatalf("multiple errors must share one stable container: %s", body)
+	}
+	for id, label := range map[string]string{
+		"contract-notes": "Notes", "contract-flag": "Flag", "contract-empty": "Empty",
+		"contract-password-title": "Title-case password", "contract-password-upper": "Upper-case password",
+		"contract-unrecovered": "Unrecovered",
+	} {
+		if !strings.Contains(body, `<label for="`+id+`">`+label+`</label>`) {
+			t.Errorf("control %s has no matching label: %s", id, body)
+		}
+	}
+
+	notes := renderedControlTag(t, body, "textarea", "contract-notes")
+	if !strings.Contains(notes, `aria-describedby="contract-notes-help"`) || strings.Contains(notes, "aria-invalid") || strings.Contains(notes, "contract-notes-errors") {
+		t.Fatalf("help-only textarea state is incorrect: %s", notes)
+	}
+	if !strings.Contains(body, `&lt;notes &amp; more&gt;</textarea>`) {
+		t.Fatalf("textarea did not retain and escape its old value: %s", body)
+	}
+
+	flag := renderedControlTag(t, body, "select", "contract-flag")
+	if !strings.Contains(flag, `aria-describedby="contract-flag-errors"`) || !strings.Contains(flag, `aria-invalid="true"`) || strings.Contains(flag, "contract-flag-help") {
+		t.Fatalf("error-only select state is incorrect: %s", flag)
+	}
+	if !strings.Contains(body, `<option value="false" selected>False</option>`) {
+		t.Fatalf("select did not retain the exact false string: %s", body)
+	}
+
+	empty := renderedControlTag(t, body, "input", "contract-empty")
+	if !strings.Contains(empty, `value=""`) || strings.Contains(empty, "aria-describedby") || strings.Contains(empty, "aria-invalid") {
+		t.Fatalf("empty input state is incorrect: %s", empty)
+	}
+	for id, inputType := range map[string]string{
+		"contract-password-title": "Password",
+		"contract-password-upper": "PASSWORD",
+	} {
+		password := renderedControlTag(t, body, "input", id)
+		if !strings.Contains(password, `type="`+inputType+`"`) || !strings.Contains(password, `value=""`) {
+			t.Fatalf("case-insensitive password input %s must render an explicit blank value: %s", id, password)
+		}
+	}
+	unrecovered := renderedControlTag(t, body, "input", "contract-unrecovered")
+	if !strings.Contains(unrecovered, `value=""`) {
+		t.Fatalf("recover=false must render an explicit blank value: %s", unrecovered)
+	}
+	for _, poison := range []string{
+		"poisoned-title-old", "poisoned-title-fallback", "poisoned-upper-old", "poisoned-upper-fallback",
+		"poisoned-unrecovered-old", "poisoned-unrecovered-fallback",
+	} {
+		if strings.Contains(body, poison) {
+			t.Fatalf("component recovered forbidden old value %q: %s", poison, body)
+		}
+	}
+}
+
+func renderedControlTag(t *testing.T, body, element, id string) string {
+	t.Helper()
+	needle := "<" + element
+	for offset := 0; offset < len(body); {
+		start := strings.Index(body[offset:], needle)
+		if start < 0 {
+			break
+		}
+		start += offset
+		end := strings.Index(body[start:], ">")
+		if end < 0 {
+			break
+		}
+		end += start + 1
+		tag := body[start:end]
+		if strings.Contains(tag, `id="`+id+`"`) {
+			return tag
+		}
+		offset = end
+	}
+	t.Fatalf("rendered page has no <%s> with id %q: %s", element, id, body)
+	return ""
 }

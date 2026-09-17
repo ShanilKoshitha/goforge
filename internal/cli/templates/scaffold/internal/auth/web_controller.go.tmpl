@@ -26,7 +26,9 @@ type DashboardPage struct {
 
 type SecurityPage struct {
 	Title        string
-	Form         view.Form
+	TokenForm    view.Form
+	PasswordForm view.Form
+	ActionForm   view.Form
 	Notice       string
 	User         User
 	Tokens       []PersonalToken
@@ -154,12 +156,12 @@ func (controller *WebController) ChangePassword(ctx *httpx.Context) error {
 	}
 	page := SecurityPage{Title: "Account security", User: user}
 	if problems := request.Validate(); !problems.Empty() {
-		page.Form.ValidationErrors = problems.Messages()
+		page.PasswordForm.ValidationErrors = problems.Messages()
 		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
 	}
 	updated, err := controller.auth.changePassword(ctx, user, request)
 	if errors.Is(err, ErrInvalidCurrentPassword) {
-		page.Form.ValidationErrors = currentPasswordProblem().Messages()
+		page.PasswordForm.ValidationErrors = currentPasswordProblem().Messages()
 		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
 	}
 	if errors.Is(err, ErrCredentialsChanged) {
@@ -168,7 +170,7 @@ func (controller *WebController) ChangePassword(ctx *httpx.Context) error {
 		}
 		return web.Redirect(ctx, "/login")
 	}
-	if limited, response := controller.renderSecurityRateLimit(ctx, err, page); limited {
+	if limited, response := controller.renderSecurityRateLimit(ctx, err, page, securityPasswordForm); limited {
 		return response
 	}
 	if err != nil {
@@ -219,28 +221,25 @@ func (controller *WebController) CreatePersonalToken(ctx *httpx.Context) error {
 		return httpx.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 	page := SecurityPage{
-		Title: "Account security",
-		User:  user,
-		Form: view.Form{OldValues: map[string]string{
-			"name":            request.Name,
-			"expires_in_days": strconv.FormatInt(request.ExpiresInDays, 10),
-		}},
+		Title:     "Account security",
+		User:      user,
+		TokenForm: view.Form{OldValues: personalTokenOldValues(request)},
 	}
 	if problems := request.Validate(); !problems.Empty() {
-		page.Form.ValidationErrors = problems.Messages()
+		page.TokenForm.ValidationErrors = problems.Messages()
 		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
 	}
 	issued, err := controller.auth.issuePersonalToken(ctx, user, request)
 	if errors.Is(err, ErrInvalidCurrentPassword) {
-		page.Form.ValidationErrors = currentPasswordProblem().Messages()
+		page.TokenForm.ValidationErrors = currentPasswordProblem().Messages()
 		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
 	}
 	if errors.Is(err, ErrPersonalTokenName) {
-		page.Form.ValidationErrors = personalTokenNameProblem().Messages()
+		page.TokenForm.ValidationErrors = personalTokenNameProblem().Messages()
 		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
 	}
 	if errors.Is(err, ErrPersonalTokenLimit) {
-		page.Form.ValidationErrors = personalTokenLimitProblem().Messages()
+		page.TokenForm.ValidationErrors = personalTokenLimitProblem().Messages()
 		return controller.renderSecurity(ctx, http.StatusUnprocessableEntity, page)
 	}
 	if errors.Is(err, ErrCredentialsChanged) {
@@ -249,13 +248,14 @@ func (controller *WebController) CreatePersonalToken(ctx *httpx.Context) error {
 		}
 		return web.Redirect(ctx, "/login")
 	}
-	if limited, response := controller.renderSecurityRateLimit(ctx, err, page); limited {
+	if limited, response := controller.renderSecurityRateLimit(ctx, err, page, securityTokenForm); limited {
 		return response
 	}
 	if err != nil {
 		return err
 	}
-	page.Form.OldValues = nil
+	page.TokenForm.OldValues = nil
+	page.TokenForm.ValidationErrors = nil
 	page.Notice = "Copy this token now. It will not be shown again."
 	page.CreatedToken = issued.Token
 	return controller.renderSecurity(ctx, http.StatusCreated, page)
@@ -331,13 +331,9 @@ func (controller *WebController) renderSecurity(ctx *httpx.Context, status int, 
 	if err != nil {
 		return err
 	}
-	page.Form.CSRFToken = token
-	if page.Form.ValidationErrors == nil {
-		page.Form.ValidationErrors = make(validation.Errors)
-	}
-	if page.Form.OldValues == nil {
-		page.Form.OldValues = make(map[string]string)
-	}
+	page.TokenForm = prepareSecurityForm(page.TokenForm, token)
+	page.PasswordForm = prepareSecurityForm(page.PasswordForm, token)
+	page.ActionForm = prepareSecurityForm(page.ActionForm, token)
 	if page.User.ID > 0 && controller.auth.tokens != nil {
 		page.Tokens, err = controller.auth.tokens.List(ctx.Request.Context(), page.User)
 		if err != nil {
@@ -347,15 +343,49 @@ func (controller *WebController) renderSecurity(ctx *httpx.Context, status int, 
 	return web.Render(ctx, controller.views, status, "auth/security", page)
 }
 
-func (controller *WebController) renderSecurityRateLimit(ctx *httpx.Context, err error, page SecurityPage) (bool, error) {
+type securityFormTarget uint8
+
+const (
+	securityTokenForm securityFormTarget = iota
+	securityPasswordForm
+)
+
+func (controller *WebController) renderSecurityRateLimit(ctx *httpx.Context, err error, page SecurityPage, target securityFormTarget) (bool, error) {
 	var httpError *httpx.HTTPError
 	if !errors.As(err, &httpError) || httpError.Status != http.StatusTooManyRequests {
 		return false, nil
 	}
-	page.Form.ValidationErrors = validation.Errors{
+	problems := validation.Errors{
 		"current_password": {"Too many attempts. Try again later."},
 	}
+	if target == securityTokenForm {
+		page.TokenForm.ValidationErrors = problems
+	} else {
+		page.PasswordForm.ValidationErrors = problems
+	}
 	return true, controller.renderSecurity(ctx, http.StatusTooManyRequests, page)
+}
+
+func prepareSecurityForm(form view.Form, token string) view.Form {
+	form.CSRFToken = token
+	if form.ValidationErrors == nil {
+		form.ValidationErrors = make(validation.Errors)
+	}
+	if form.OldValues == nil {
+		form.OldValues = make(map[string]string)
+	}
+	return form
+}
+
+func personalTokenOldValues(request PersonalTokenRequest) map[string]string {
+	values := map[string]string{"name": request.Name}
+	switch request.expiresInDaysInput.State() {
+	case validation.StateEmpty:
+		values["expires_in_days"] = ""
+	case validation.StatePresent:
+		values["expires_in_days"] = strconv.FormatInt(request.ExpiresInDays, 10)
+	}
+	return values
 }
 
 func (controller *WebController) authenticated(ctx *httpx.Context, user User, notice string) error {

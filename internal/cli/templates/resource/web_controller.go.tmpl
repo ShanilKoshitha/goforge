@@ -136,7 +136,12 @@ func (controller *WebController) Create(ctx *httpx.Context) error {
 	if err := request.DecodeForm(ctx); err != nil {
 		return err
 	}
-	if problems := request.ValidateCreate(); !problems.Empty() {
+[[if .AccessibleForms]]	if problems := request.FormErrors(); len(problems) > 0 {
+		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
+			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(), Errors: problems,
+		})
+	}
+[[end]]	if problems := request.ValidateCreate(); !problems.Empty() {
 		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
 			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(), Errors: problems.Messages(),
 		})
@@ -229,7 +234,17 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 	if err := request.DecodeForm(ctx); err != nil {
 		return err
 	}
-	if problems := request.ValidateUpdate(); !problems.Empty() {
+[[if .AccessibleForms]]	if problems := request.FormErrors(); len(problems) > 0 {
+[[if and .AuthorizationPolicies .Relationships]]		formOwnerID, err := controller.formOwnerForItem(ctx, scope, id)
+		if err != nil {
+			return err
+		}
+[[end]]		return controller.renderForm(ctx, [[if and .AuthorizationPolicies .Relationships]]formOwnerID[[else]]user.ID[[end]], http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
+			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
+			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: request.Version, Errors: problems,
+		})
+	}
+[[end]]	if problems := request.ValidateUpdate(); !problems.Empty() {
 [[if and .AuthorizationPolicies .Relationships]]		formOwnerID, err := controller.formOwnerForItem(ctx, scope, id)
 		if err != nil {
 			return err

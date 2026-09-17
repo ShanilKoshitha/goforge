@@ -19,11 +19,10 @@ Its contract is simple:
 
 ## Status
 
-The current checkout is the accepted v0.21.0 backward-compatible view-runtime
-release. Fresh format-14 applications still intentionally pin the published
-v0.19.0 runtime without
-a local replace because the token workflow adds application-owned source and
-requires no new runtime package. GoForge includes explicit database wiring,
+The current checkout is the v0.21.1 format-15 adoption candidate. Fresh
+applications pin the published v0.21.0 runtime without a local replace so their
+component attributes and explicit multi-form helpers are compiled by the same
+immutable release verified through the public Go proxy. GoForge includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -41,7 +40,7 @@ boundary adds typed composable validation, exact JSON/form failure semantics,
 bounded HTTP timeouts and headers, correlated completion logs, validated CORS
 and security policy, trusted-proxy parsing, and PostgreSQL authentication
 throttles shared across processes and restarts.
-Newly generated format-13 and format-14 resources own a typed action/access
+Newly generated format-13 through format-15 resources own a typed action/access
 function shared by their JSON and browser
 controllers. Owner-only remains the default; application code can explicitly
 grant all-record access or deny an action, while repositories apply the derived
@@ -79,7 +78,7 @@ IANA civil time and DST behavior, bounded misfire coalescing, conservative
 active-job overlap suppression, fail-closed definition fingerprints,
 competing-process row coordination, read-only inspection, and payload-free
 observers.
-Fresh format-11 through format-14 scaffolds own the schedule registry, PostgreSQL
+Fresh format-11 through format-15 scaffolds own the schedule registry, PostgreSQL
 migration, isolated configuration, scheduler process, inspection command, and
 direct Go escape hatches. The v0.16.0 release pinned the immutable public
 v0.14.2 runtime and demonstrated its cancellation-aware dynamic schedule
@@ -116,17 +115,60 @@ scope without adding token permissions or JWT claims. See the
 
 The v0.21.0 release publishes compile-time component attributes, deterministic
 class composition and forwarding, and explicit form selection for nested or
-multi-form views. It deliberately keeps format 14 and the public v0.19.0 runtime
-pin; the separately gated v0.21.1 adoption will move fresh accessible-form
-scaffolds to format 15 and pin this now-public compiler.
+multi-form views. The v0.21.1 candidate adopts that public compiler in fresh
+format-15 scaffolds and adds inspectable input, textarea, and select components,
+isolated authentication form state, and accessible typed resource forms. Formats
+4 through 14 keep their released generator behavior.
 
 ## Install and try it
 
-Install the released CLI and generate an application:
+On Windows, use the PowerShell installer. It shows each installation step,
+installs the latest released CLI, adds Go's binary directory to both the current
+PowerShell session and your persistent user `PATH`, and verifies the exact Go
+module and CLI versions. Download and inspect the script first:
+
+```powershell
+$installer = Join-Path $env:TEMP 'goforge-install.ps1'
+Invoke-WebRequest 'https://raw.githubusercontent.com/ShanilKoshitha/goforge/main/scripts/install.ps1' -OutFile $installer
+Get-Content $installer
+```
+
+After reviewing it, run:
+
+```powershell
+& $installer -Version v0.21.0
+forge version
+forge new myapp --module example.com/myapp
+```
+
+The installer is [plain PowerShell](scripts/install.ps1) and can be reviewed
+in the repository too. Omit `-Version` to install the latest release. If a
+locked-down Windows configuration prevents the persistent `PATH` update, the
+installer keeps `forge` available in the current session and prints the
+directory to add manually.
+
+On macOS and Linux, install the released CLI and verify it before generating an
+application:
 
 ```sh
-go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.21.0
+go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.21.0
+gobin="$(go env GOBIN)"
+if [ -z "$gobin" ]; then gopath="$(go env GOPATH)"; gobin="${gopath%%:*}/bin"; fi
+export PATH="$gobin:$PATH"
+forge version
 forge new myapp --module example.com/myapp
+```
+
+`go install` itself is quiet when it has nothing new to download or compile and
+does not edit `PATH`. A manual Windows `go install` places `forge.exe` in
+`go env GOBIN`, or in the `bin` directory under the first `go env GOPATH` entry
+when `GOBIN` is empty. Add that directory to `PATH` before invoking `forge`.
+The shell snippet above updates the current macOS/Linux shell; add the same
+export to your shell profile to retain it in future terminals.
+
+After generating the application on any platform:
+
+```sh
 cd myapp
 docker compose up -d
 forge make:resource Issue
@@ -176,11 +218,11 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (v0.21.0)
+## CLI (v0.21.1 candidate)
 
-The command surface below describes this checkout. Fresh applications continue
-to use format 14 while pinning the public v0.19.0 runtime. Install `v0.21.0` for
-the accepted release, or `go install ./cmd/forge` when evaluating current source.
+The command surface below describes this checkout. Fresh applications use
+format 15 while pinning the public v0.21.0 runtime. Install `v0.21.0` for the
+accepted release, or `go install ./cmd/forge` when evaluating current source.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
@@ -238,7 +280,7 @@ runtime schema. Updates replace the complete writable resource: a missing,
 `null`, or empty nullable value clears that column to SQL `NULL`, while numeric
 `0` and boolean `false` remain present values.
 
-Format-10 through format-14 applications can generate a required owner-scoped
+Format-10 through format-15 applications can generate a required owner-scoped
 relationship to an existing resource:
 
 ```sh
@@ -253,7 +295,7 @@ protected foreign key, association value, validation, eager loading, browser
 choices, and presentation; generated SQL owns the composite owner/target
 constraint. No relationship registry or runtime schema is added.
 
-Format-13 and format-14 resources also own `authorization.go`. Its `AuthorizeFunc` receives a
+Format-13 through format-15 resources also own `authorization.go`. Its `AuthorizeFunc` receives a
 typed list, create, view, update, or delete action and returns denied, owner, or
 all-record access. `Authorize` is the editable owner-only default, and the same
 function is visibly injected into both controllers in `routes/resources_gen.go`.
@@ -264,7 +306,7 @@ fetch-then-write race. Edit this ordinary Go file, inject another function, or
 replace the controller/repository wiring when the closed scope is insufficient.
 
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-14 projects. Both non-mutating preflights check the
+format-4 through format-15 projects. Both non-mutating preflights check the
 generated ORM first, compiled views second, and format-12-or-newer embedded assets third.
 Testing then runs exactly `go test ./...`. Building stages a trimmed
 `./cmd/server` executable and publishes
@@ -285,7 +327,7 @@ go run ./cmd/scheduler --once
 ```
 
 Use direct Go commands for custom packages, flags, tags, targets, output paths,
-or worker and console builds. `forge dev` is the complete format-11-through-14 development
+or worker and console builds. `forge dev` is the complete format-11-through-15 development
 default: it labels and supervises `forge serve`, the application-owned worker,
 and the scheduler under one cancellation boundary, and reports ready only after
 all three startup contracts succeed. Any service exit stops its peers. It does

@@ -1,5 +1,5 @@
 @props(title, tone="neutral")
-<article class="card card--{{$tone}}">
+<article @attributes(class="card", class=(printf "card--%s" $tone))>
   <header><h1>{{headline $title}}</h1></header>
   <div>@slot("default")@endslot</div>
   <footer>@slot("actions")@endslot</footer>

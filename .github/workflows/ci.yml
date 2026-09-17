@@ -34,7 +34,11 @@ jobs:
           cache: true
       - name: Go formatting
         run: test -z "$(gofmt -l $(git ls-files '*.go'))"
-      - run: go test -race ./...
+      # Generated-application acceptance tests intentionally compile and run
+      # nested Go projects under the race detector. Format 15 adds another
+      # relationship-backed application journey, so retain every test while
+      # giving the package enough time to finish on shared Linux runners.
+      - run: go test -race -timeout 20m ./...
       - run: go vet ./...
       - run: go build -o "$RUNNER_TEMP/forge" ./cmd/forge
       - name: Public v0.7.0 format-7 model compatibility
@@ -235,17 +239,22 @@ jobs:
           "$RUNNER_TEMP/forge" build
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.21.0'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.21.1'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.19.0' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.21.0' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.19.0 h1:06YyBa1ivkFwtkA9XNTprNzERN/FJMgFEhqtgSzoFQg=' go.sum
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.19.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
-          grep -q '^version: 14$' forge.yaml
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.21.0 h1:i2oJUQaIbA3nbJJJUV6ewMm2Mds8kLYgmIC+50dBNU0=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.21.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
+          grep -q '^version: 15$' forge.yaml
           test -f internal/auth/personal_tokens.go
           test -f internal/auth/api_middleware.go
           test -f database/migrations/000006_create_personal_access_tokens.up.sql
+          test -f resources/views/components/input.forge.html
+          test -f resources/views/components/textarea.forge.html
+          test -f resources/views/components/select.forge.html
+          grep -q '@attributes' resources/views/components/input.forge.html
+          test -z "$(grep -E '@attributes|attributes\(|AttributeBag|HTMLAttr|reflect\.' resources/views/views_gen.go || true)"
           "$RUNNER_TEMP/forge" make:model Customer --field name:string
           "$RUNNER_TEMP/forge" make:model Invoice --field number:string --field notes:text:nullable --belongs-to customer:Customer
           "$RUNNER_TEMP/forge" make:resource LegacyIssue
@@ -331,9 +340,39 @@ jobs:
         with:
           go-version: "1.25.x"
           cache: true
+      - name: Windows installer smoke
+        shell: pwsh
+        run: |
+          $previousUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          $env:GOBIN = $null
+          $env:GOPATH = Join-Path $env:RUNNER_TEMP 'goforge-installer-gopath'
+          $installBin = Join-Path $env:GOPATH 'bin'
+          $env:Path = (($env:Path -split [IO.Path]::PathSeparator) |
+            Where-Object { $_.Trim().TrimEnd('\', '/') -ine $installBin.TrimEnd('\', '/') }) -join [IO.Path]::PathSeparator
+          try {
+            $firstOutput = (& .\scripts\install.ps1 -Version v0.21.0 *>&1 | Out-String)
+            if ($firstOutput -notmatch '\[1/4\] Checking the Go toolchain' -or
+                $firstOutput -notmatch 'Success: forge 0\.21\.0 is installed') {
+              throw "Installer did not report progress and success:`n$firstOutput"
+            }
+            if ((Get-Command forge -ErrorAction Stop).Source -ne (Join-Path $installBin 'forge.exe')) {
+              throw 'forge did not resolve from GOPATH/bin after installation'
+            }
+            if ((forge version) -ne 'forge 0.21.0') {
+              throw 'the installed forge did not report v0.21.0'
+            }
+            & .\scripts\install.ps1 -Version v0.21.0 | Out-Null
+            $userEntries = @(([Environment]::GetEnvironmentVariable('Path', 'User') -split [IO.Path]::PathSeparator) |
+              Where-Object { $_.Trim().TrimEnd('\', '/') -ieq $installBin.TrimEnd('\', '/') })
+            if ($userEntries.Count -ne 1) {
+              throw "installer left $($userEntries.Count) user PATH entries for GOBIN"
+            }
+          } finally {
+            [Environment]::SetEnvironmentVariable('Path', $previousUserPath, 'User')
+          }
       - name: Windows CLI tests
-        run: go test ./asset ./cmd/forge ./internal/cli
+        run: go test . ./asset ./cmd/forge ./internal/cli
       - name: Windows CLI vet
-        run: go vet ./asset ./cmd/forge ./internal/cli
+        run: go vet . ./asset ./cmd/forge ./internal/cli
       - name: Windows CLI build
         run: go build -o "$env:RUNNER_TEMP\forge.exe" ./cmd/forge

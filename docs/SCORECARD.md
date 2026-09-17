@@ -1,12 +1,12 @@
 # v0.21 component attributes and accessible forms scorecard
 
-Status: **in progress** — v0.21.0 runtime accepted; v0.21.1 adoption next — 2026-09-14
+Status: **in progress** — v0.21.0 runtime accepted; v0.21.1 format-15 adoption underway — 2026-09-16
 
 Release boundary: v0.21.0 publishes and verifies the backward-compatible view
 compiler while retaining the format-14 scaffold and its public v0.19.0 pin.
-The v0.21.1 adoption may move fresh applications to format 15 and pin v0.21.0
-only after that runtime is available through the public Go proxy and checksum
-database.
+The public proxy and checksum database now serve v0.21.0. The v0.21.1
+candidate therefore moves only fresh applications to format 15 and pins that
+immutable runtime; formats 4 through 14 retain their released behavior.
 
 Target:
 
@@ -32,17 +32,16 @@ Target:
 | Compatibility and escape hatches remain explicit | passing for v0.21.0 runtime stage | Formats 4–14 retain old generated output and commands, public format-14 compatibility passes, ordinary Go-template actions/functions/raw HTML and renderer replacement remain available, and no format-15 app pins an unpublished runtime |
 | The milestone passes twice without regression | passing for v0.21.0 runtime stage; format-15 adoption pending | Framework race/vet/build, released-format compatibility, generated PostgreSQL journeys, native Windows, and independent adversarial review pass twice on the runtime candidate; fresh format-15 inspection and auth/resource journeys remain the v0.21.1 gate |
 
-## Runnable baseline — 2026-09-14
+## Runnable baseline — 2026-09-16
 
-- `main` and `origin/main` resolve to release-evidence merge `bbb8738`. Public
-  lightweight tag v0.20.0 resolves to `273f735`, its tag workflow passed the
-  complete Linux/PostgreSQL and native Windows matrix, and GitHub exposes it as
-  the latest non-prerelease release.
+- `main` and `origin/main` resolve to v0.21.0 release-evidence merge `14411b0`.
+  Lightweight tag `v0.21.0` remains fixed at accepted runtime merge `a1960a4`,
+  and GitHub exposes it as the latest non-prerelease release.
 - The exact baseline passes `go test ./... -count=1` with `internal/cli` in
-  194.269 seconds, followed by `go vet ./...` and a trimmed CLI build reporting
-  `forge 0.20.0`. Exact-main workflow
-  [34893983513](https://github.com/ShanilKoshitha/goforge/actions/runs/34893983513)
-  passed Linux/PostgreSQL in 15m31s and native Windows in 7m08s.
+  213.674 seconds. Exact-main workflow
+  [34905720592](https://github.com/ShanilKoshitha/goforge/actions/runs/34905720592)
+  passed Linux/PostgreSQL in 15m37s and native Windows in 6m20s, including all
+  public-format compatibility gates and generated PostgreSQL applications.
 - Components currently support strict props and slots but cannot receive or
   forward ordinary attributes. Form directives hard-code current-dot `.Form`;
   the token page already needs a manual root-form action inside a range.
@@ -51,6 +50,67 @@ Target:
   controls. Generated resource controls lack explicit IDs and associated ARIA
   error state. Existing PostgreSQL journeys prove value semantics and escaping
   but not this multi-form or accessibility boundary.
+
+## Windows installation experience — 2026-09-17
+
+- The recommended PowerShell installer reports toolchain, installation, PATH,
+  and verification progress instead of relying on `go install`'s intentionally
+  quiet success behavior.
+- It resolves the actual Go binary destination from `GOBIN`/`GOPATH`, updates
+  the current and persistent user PATH without duplicating entries, verifies
+  exact module metadata and CLI version, and gives the next `forge new` command.
+- A native Windows integration test uses an isolated fake Go toolchain and
+  first-`GOPATH` install directory to prove the version pin, verbose install
+  invocation, progress messages, output location, idempotent session discovery,
+  and rejection of a mismatched CLI without changing the test user's PATH.
+- A real Windows 11 / Go 1.25.3 run with empty `GOBIN` installed public
+  `v0.21.0` to `C:\Users\Shani\go\bin\forge.exe`, added that directory to the
+  user PATH, verified both build metadata and `forge 0.21.0`, and reported the
+  already-present PATH entry on a second run.
+
+## v0.21.1 local candidate evidence — 2026-09-17
+
+- `go test ./... -count=1` passed in 172.017 seconds, with `internal/cli` in
+  170.396 seconds. `go vet ./...`, a trimmed CLI build, PowerShell parsing, and
+  `git diff --check` also passed; the built CLI reports `forge 0.21.1`.
+- A fresh format-15 application pinned to the local checkout generated a typed
+  string/text/integer/boolean resource, retained current view/ORM artifacts,
+  and passed every generated test. Inspection confirmed explicit component
+  form state, static accessible IDs/descriptions/errors, password non-recovery,
+  and isolated token/password/action forms in ordinary generated source.
+- Generated PostgreSQL journeys and a second independent full candidate pass
+  remain delegated to the public CI acceptance gate; this local pass does not
+  claim that database-backed evidence.
+- Initial push run
+  [35228342429](https://github.com/ShanilKoshitha/goforge/actions/runs/35228342429)
+  passed the complete native Windows job but exposed a PostgreSQL authorization
+  ordering defect: a cross-owner relationship update returned association 422
+  before target visibility could return 404. The candidate now performs the
+  scoped update first, retains composite-foreign-key 422 classification for
+  visible rows, and adds a generated regression proving the query and error
+  order without removing or weakening any test.
+- Format-15 generated-application coverage pushes `internal/cli` past Go's
+  default ten-minute timeout under Linux race instrumentation. CI now retains
+  the complete `go test -race ./...` suite with a 20-minute package timeout;
+  no test is deleted, skipped, narrowed, or renamed.
+- Follow-up run
+  [35232274693](https://github.com/ShanilKoshitha/goforge/actions/runs/35232274693)
+  passed the complete native Windows job and the original cross-owner JSON
+  regression, then correctly rejected the browser user's attempt to create a
+  ticket with a category owned by the earlier JSON user. The fixture now creates
+  a separate browser-owned category, preserving both the owner constraint and
+  the full accessible browser correction journey.
+- Run
+  [35233911130](https://github.com/ShanilKoshitha/goforge/actions/runs/35233911130)
+  passed the complete Linux/PostgreSQL matrix in 18m42s, while native Windows
+  exposed an undersized test-only readiness budget in the frozen format-4
+  serve journey. Its first local cold build took 15.92 seconds, exceeding the
+  old 15-second whole-startup allowance before the supervisor's separate
+  candidate-health timeout could begin. The test now retains the real build,
+  process, HTTP render, shutdown, and last-good checks, allows one minute for a
+  cold build, fails immediately if serve exits, and drains cancellation on
+  timeout. Five consecutive focused runs and the full native Windows package
+  set pass; no test was removed, skipped, or weakened.
 
 ## v0.21.0 runtime-stage evidence — 2026-09-14
 

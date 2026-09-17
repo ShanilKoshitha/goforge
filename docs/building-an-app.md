@@ -44,7 +44,7 @@ templates under `resources/views/pages/issues` and regenerates the clearly
 marked route and compiled-view registries. Human-owned files are preflighted and
 never overwritten.
 
-Fresh format-13 and format-14 resources also contain `authorization.go`. Its
+Fresh format-13 through format-15 resources also contain `authorization.go`. Its
 typed `AuthorizeFunc` handles list, create, view, update, and delete decisions
 for both controllers. The generated function grants owner access for every known action;
 return `AccessAll` for a deliberate privileged action or `AccessDenied` to stop
@@ -63,7 +63,7 @@ forge dev
 ```
 
 `forge migrate` delegates to the application-owned console. Format-11 through
-format-14
+format-15
 `forge dev` starts the watched HTTP server, durable queue worker, and recurring
 scheduler together. It labels each service's output and reports the stack ready
 only after all three existing startup signals succeed. Any unexpected service
@@ -107,7 +107,7 @@ resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 
 ## Authenticate a machine client
 
-Fresh format-14 applications let a signed-in user create a named, expiring
+Fresh format-14 and format-15 applications let a signed-in user create a named, expiring
 personal API token at `/settings/security` or with `POST /auth/tokens`. Creation
 requires the current password and returns the complete
 `goforge_pat_<selector>.<secret>` value once. Send that value as one exact
@@ -122,7 +122,7 @@ public selector and SHA-256 digest. Read the
 [personal API token guide](api-tokens.md) for lifecycle, revocation, and
 replacement seams.
 
-Fresh format-10 through format-14 JSON resource indexes are bounded and paginated. `GET /issues`
+Fresh format-10 through format-15 JSON resource indexes are bounded and paginated. `GET /issues`
 defaults to `page=1&per_page=20`; each parameter must appear at most once and be
 a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
 The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,
@@ -142,6 +142,14 @@ functions live in `resources/views/viewfuncs/functions.go`; the project compiler
 and production renderer use that same editable `template.FuncMap`. See the
 [view language reference](view-language.md) for the complete bounded grammar and
 standard-library escape hatches.
+
+Format-15 applications also own `components/input`, `components/textarea`, and
+`components/select`. Each accepts an explicit `view.Form`, emits ordinary static
+HTML attributes, associates labels and help/error text with a page-unique ID,
+and groups every field message in one stable alert container. Resource forms
+use these components without runtime field discovery. Input callers must choose
+`recover=true` or `recover=false`; password inputs remain blank even if a
+controller accidentally supplies a password old value.
 
 ## Ship frontend assets
 

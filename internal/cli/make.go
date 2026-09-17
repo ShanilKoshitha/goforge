@@ -95,13 +95,20 @@ func makeComponent(ctx context.Context, name string, stdin io.Reader, stdout, st
 	if err := requireProjectFormatRange(5, currentProjectFormat); err != nil {
 		return err
 	}
+	format, err := projectFormat()
+	if err != nil {
+		return err
+	}
 	componentName, err := snake(name)
 	if err != nil {
 		return err
 	}
 	componentName = strings.ReplaceAll(componentName, "_", "-")
 	path := filepath.Join("resources", "views", "components", componentName+".forge.html")
-	content, err := renderTemplate("templates/component/component.forge.html.tmpl", path, struct{ Name string }{Name: componentName})
+	content, err := renderTemplate("templates/component/component.forge.html.tmpl", path, struct {
+		Name       string
+		Attributes bool
+	}{Name: componentName, Attributes: format >= 15})
 	if err != nil {
 		return err
 	}

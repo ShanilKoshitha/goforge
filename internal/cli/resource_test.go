@@ -132,7 +132,7 @@ func TestMakeResourceGeneratesCompleteSafeVerticalSlices(t *testing.T) {
 	assertGeneratedFileContains(t, legacyMigrations[0], `"name" TEXT NOT NULL`)
 	assertGeneratedFileContains(t, "internal/resources/issue/request.go",
 		"request.validate(false)", "validation.StringLength(2, 200)", "decodeExactJSONObject")
-	assertGeneratedFileContains(t, "resources/views/pages/issues/form.forge.html", `minlength="2" maxlength="200"`)
+	assertGeneratedFileContains(t, "resources/views/pages/issues/form.forge.html", `minlength="2", maxlength="200"`)
 	assertGeneratedFileContains(t, "resources/views/pages/issues/index.forge.html", `>{{.Name}}</a>`)
 	assertGeneratedFileContains(t, "resources/views/pages/issues/show.forge.html", `title=.Item.Name`)
 	registryBefore, _ := os.ReadFile(filepath.Join("routes", "resources_gen.go"))
@@ -243,7 +243,7 @@ func TestMakeResourceGeneratesOneTypedFieldContractAcrossEveryLayer(t *testing.T
 		"IssueColumns.UserID.Set(userID)")
 	assertGeneratedFileContains(t, "resources/views/pages/issues/form.forge.html",
 		`name="title"`, `name="notes"`, `name="priority"`, `name="active"`,
-		`type="text"`, "<textarea", `type="number"`, "<select")
+		`components/input`, `components/textarea`, `type="number"`, `components/select`)
 
 	state, err := os.ReadFile(filepath.Join(".forge", "resources.json"))
 	if err != nil {
@@ -898,7 +898,7 @@ func TestMakeResourceRefusesOlderProjectFormatBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestFormatsEightThroughTwelveRetainLegacyResourceGeneration(t *testing.T) {
+func TestFormatsEightThroughFourteenRetainLegacyResourceGeneration(t *testing.T) {
 	definition := resourceDefinition{
 		resourceSpec: resourceSpec{
 			Name: "Issue", Package: "issue", Plural: "issues",
@@ -907,8 +907,8 @@ func TestFormatsEightThroughTwelveRetainLegacyResourceGeneration(t *testing.T) {
 		Fields: defaultResourceFields(),
 	}
 	state := resourceState{Resources: []resourceSpec{definition.resourceSpec}}
-	var formatEight, formatTen map[string]string
-	for _, version := range []int{8, 9, 10, 11, 12} {
+	var formatEight, formatTen, formatThirteen map[string]string
+	for _, version := range []int{8, 9, 10, 11, 12, 13, 14} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			files, err := resourceFilesForFormat("example.com/legacy", definition, version)
 			if err != nil {
@@ -928,39 +928,51 @@ func TestFormatsEightThroughTwelveRetainLegacyResourceGeneration(t *testing.T) {
 				"internal/resources/issue/authorization.go",
 				"internal/resources/issue/authorization_test.go",
 			} {
-				if _, exists := generated[path]; exists {
+				if _, exists := generated[path]; exists && version < 13 {
 					t.Errorf("format %d unexpectedly generated %s", version, path)
+				} else if !exists && version >= 13 {
+					t.Errorf("format %d omitted %s", version, path)
 				}
 			}
-			for path, fragments := range map[string][]string{
-				"internal/resources/issue/controller.go": {
-					"func NewController(repository Repository) *Controller",
-				},
-				"internal/resources/issue/web_controller.go": {
-					"func NewWebController(repository Repository, views *view.Engine) *WebController",
-				},
-				"internal/resources/issue/repository.go": {
-					"List(ctx context.Context, userID int64)",
-					"Create(ctx context.Context, userID int64",
-					"Find(ctx context.Context, userID, id int64)",
-					"Update(ctx context.Context, userID, id int64",
-					"Delete(ctx context.Context, userID, id int64)",
-				},
-				"routes/resources_gen.go": {
-					"func registerResources(router *httpx.Router, renderer *view.Engine, db *sql.DB, manager *session.Manager, requireAuth, requireWebAuth httpx.Middleware) {",
-					"issueresource.NewController(issueRepository)",
-					"issueresource.NewWebController(issueRepository, renderer)",
-				},
-			} {
-				for _, fragment := range fragments {
-					if !strings.Contains(generated[path], fragment) {
-						t.Errorf("format %d legacy %s omits %q:\n%s", version, path, fragment, generated[path])
+			if strings.Contains(generated["resources/views/pages/issues/form.forge.html"], `components/input`) ||
+				strings.Contains(generated["internal/resources/issue/request.go"], "FormErrors") {
+				t.Errorf("format %d gained format-15 accessible-form source", version)
+			}
+			if version >= 13 {
+				if !strings.Contains(generated["internal/resources/issue/controller.go"], "AuthorizeFunc") {
+					t.Errorf("format %d lost authorization wiring", version)
+				}
+			} else {
+				for path, fragments := range map[string][]string{
+					"internal/resources/issue/controller.go": {
+						"func NewController(repository Repository) *Controller",
+					},
+					"internal/resources/issue/web_controller.go": {
+						"func NewWebController(repository Repository, views *view.Engine) *WebController",
+					},
+					"internal/resources/issue/repository.go": {
+						"List(ctx context.Context, userID int64)",
+						"Create(ctx context.Context, userID int64",
+						"Find(ctx context.Context, userID, id int64)",
+						"Update(ctx context.Context, userID, id int64",
+						"Delete(ctx context.Context, userID, id int64)",
+					},
+					"routes/resources_gen.go": {
+						"func registerResources(router *httpx.Router, renderer *view.Engine, db *sql.DB, manager *session.Manager, requireAuth, requireWebAuth httpx.Middleware) {",
+						"issueresource.NewController(issueRepository)",
+						"issueresource.NewWebController(issueRepository, renderer)",
+					},
+				} {
+					for _, fragment := range fragments {
+						if !strings.Contains(generated[path], fragment) {
+							t.Errorf("format %d legacy %s omits %q:\n%s", version, path, fragment, generated[path])
+						}
 					}
 				}
-			}
-			for path, content := range generated {
-				if strings.Contains(content, "AuthorizeFunc") {
-					t.Errorf("format %d legacy %s gained authorization wiring", version, path)
+				for path, content := range generated {
+					if strings.Contains(content, "AuthorizeFunc") {
+						t.Errorf("format %d legacy %s gained authorization wiring", version, path)
+					}
 				}
 			}
 
@@ -971,8 +983,12 @@ func TestFormatsEightThroughTwelveRetainLegacyResourceGeneration(t *testing.T) {
 				assertGeneratedResourceSetEqual(t, generated, formatEight)
 			case 10:
 				formatTen = generated
-			default:
+			case 11, 12:
 				assertGeneratedResourceSetEqual(t, generated, formatTen)
+			case 13:
+				formatThirteen = generated
+			case 14:
+				assertGeneratedResourceFilesEqualExceptRegistry(t, generated, formatThirteen)
 			}
 		})
 	}
@@ -1001,6 +1017,78 @@ func TestFormatThirteenRejectsResourceAuthorizationDeclarationCollisions(t *test
 				t.Fatalf("format 12 lost legacy resource name %s: %v", name, err)
 			}
 		})
+	}
+}
+
+func TestFormatFifteenGeneratesAccessibleRecoverableResourceForms(t *testing.T) {
+	fields, err := parseResourceFields([]string{
+		"title:string", "notes:text:nullable", "priority:integer", "estimate:integer:nullable",
+		"active:boolean", "featured:boolean:nullable",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	belongsTo, err := parseRequiredBelongsTo("category:Category")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := resourceDefinition{
+		resourceSpec: resourceSpec{Name: "Ticket", Package: "ticket", Plural: "tickets", MigrationVersion: "20260916000000"},
+		Fields:       fields,
+		Relationships: []resourceRelationship{{
+			resourceBelongsTo:   belongsTo,
+			TargetSpec:          resourceSpec{Name: "Category", Package: "category", Plural: "categories", MigrationVersion: "20260915000000"},
+			TargetQueryAccessor: "Categories", IndexName: "tickets_category_id_idx", ConstraintName: "tickets_category_owner_fkey",
+		}},
+		SchemaDriven: true,
+	}
+	files, err := resourceFilesForFormat("example.com/app", definition, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := make(map[string]string, len(files))
+	for _, file := range files {
+		generated[filepath.ToSlash(file.path)] = file.content
+	}
+	form := generated["resources/views/pages/tickets/form.forge.html"]
+	for _, fragment := range []string{
+		`@csrf(form=.Form)`, `@component("components/input", form=.Form, id="ticket-title"`,
+		`@component("components/textarea", form=.Form, id="ticket-notes"`,
+		`@component("components/select", form=.Form, id="ticket-active"`,
+		`@component("components/select", form=.Form, id="ticket-category_id"`,
+		`type="number"`, `attributes(step="1", required=true)`, `attributes(required=true)`,
+		`id="ticket-version-errors" role="alert"`,
+	} {
+		if !strings.Contains(form, fragment) {
+			t.Errorf("format-15 form omits %q:\n%s", fragment, form)
+		}
+	}
+	request := generated["internal/resources/ticket/request.go"]
+	for _, fragment := range []string{
+		"formErrors       validation.Errors", "func (request WriteRequest) FormErrors() validation.Errors",
+		`decodeAccessibleFormInt64(form, "priority")`, `decodeAccessibleFormBoolean(form, "active")`,
+		`decodeAccessibleFormInt64(form, "category_id")`, `"must be an integer"`, `"must be true or false"`,
+		"append([]string(nil), messages...)",
+	} {
+		if !strings.Contains(request, fragment) {
+			t.Errorf("format-15 request omits %q:\n%s", fragment, request)
+		}
+	}
+	controller := generated["internal/resources/ticket/web_controller.go"]
+	if got := strings.Count(controller, "if problems := request.FormErrors(); len(problems) > 0"); got != 2 {
+		t.Fatalf("format-15 browser controller has %d recoverable form-error boundaries, want 2:\n%s", got, controller)
+	}
+
+	legacy, err := resourceFilesForFormat("example.com/app", definition, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range legacy {
+		content := file.content
+		if strings.Contains(content, "FormErrors") || strings.Contains(content, "decodeAccessibleForm") ||
+			strings.Contains(content, `components/input`) || strings.Contains(content, `@csrf(form=.Form)`) {
+			t.Errorf("format-14 file %s gained format-15 source", filepath.ToSlash(file.path))
+		}
 	}
 }
 
@@ -1040,10 +1128,22 @@ func assertGeneratedResourceSetEqual(t *testing.T, got, want map[string]string) 
 	}
 }
 
+func assertGeneratedResourceFilesEqualExceptRegistry(t *testing.T, got, want map[string]string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("generated file count = %d, want %d", len(got), len(want))
+	}
+	for path, expected := range want {
+		if path != "routes/resources_gen.go" && got[path] != expected {
+			t.Errorf("legacy generated bytes changed for %s", path)
+		}
+	}
+}
+
 func TestMakeResourceRefusesNewerProjectFormatBeforeWriting(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 15\n"), 0o644); err != nil {
+	if err := os.WriteFile("forge.yaml", []byte("version: 16\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := makeResource("Issue", &bytes.Buffer{})
