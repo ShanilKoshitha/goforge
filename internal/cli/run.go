@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.22.1"
+const Version = "0.23.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -38,6 +38,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return nil
 	case "new":
 		return runNew(args[1:], stdout)
+	case "doctor":
+		if len(args) != 1 {
+			return errors.New("usage: forge doctor")
+		}
+		return runProjectDoctor(ctx, stdout, processes)
+	case "routes:list":
+		if len(args) != 1 {
+			return errors.New("usage: forge routes:list")
+		}
+		return runProjectRouteList(ctx, stdout, processes)
 	case "make", "make:controller", "make:request", "make:migration", "make:model", "make:resource", "make:component", "make:job", "make:mail":
 		return runMake(ctx, args, stdin, stdout, stderr, processes)
 	case "serve":

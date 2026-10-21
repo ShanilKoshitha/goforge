@@ -1,0 +1,51 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"[[.Module]]/internal/diagnostics"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run prints no raw application errors or panic payloads. A caller can invoke
+// these ordinary Go checks directly, without the framework CLI or a server.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) (exit int) {
+	defer func() {
+		if recover() != nil {
+			fmt.Fprintln(stderr, "Diagnostic command failed safely; review application-owned checks.")
+			exit = 1
+		}
+	}()
+	if len(args) != 1 || (args[0] != "doctor" && args[0] != "routes:list") {
+		fmt.Fprintln(stderr, "usage: go run -mod=readonly ./cmd/diagnostics <doctor|routes:list>")
+		return 1
+	}
+	inspector := diagnostics.New()
+	if args[0] == "routes:list" {
+		report, err := inspector.Routes()
+		if err != nil {
+			fmt.Fprintln(stderr, "Route inventory failed; review HTTP configuration and application construction.")
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(report); err != nil {
+			return 1
+		}
+		return 0
+	}
+	report := inspector.Doctor(ctx)
+	if err := json.NewEncoder(stdout).Encode(report); err != nil || !report.Healthy() {
+		return 1
+	}
+	return 0
+}

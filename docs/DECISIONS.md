@@ -1549,3 +1549,49 @@ public v0.21.1 no-replace CI gate proves immutable old-runtime compatibility.
 The new scale journey, current scaffold, and account/job/token workflows exercise
 format 16. This separation preserves released assertions rather than weakening
 them to accommodate new form intents.
+
+## D051 — Diagnostics inspect rather than repair
+
+**Status:** accepted design — 2026-10-21; implementation pending acceptance
+
+v0.23 introduces explicit application-owned diagnostic and route-inventory Go,
+not a runtime discovery system. Doctor aggregates independent safe checks;
+dependent checks can be skipped but not silently pass. It never migrates,
+rebaselines checksums, regenerates source, publishes a lock/build artifact,
+starts background services, or probes SMTP. Migration verification gains typed
+failure categories so application code need not parse operational error text.
+
+Report trusted keys/rules and fixed repair guidance rather than raw errors or
+configuration values. Configuration conversion errors must not retain supplied
+values in their error chains. Arbitrary custom errors and subprocess output
+remain private to the process; a failed check is reported with a stable safe
+category, not printed verbatim. Ordinary explicit commands remain available for
+developers who deliberately need low-level debugging.
+
+Route inventory constructs the actual application without connecting its SQL
+handle or starting it, then reads `Router.Routes()`. Application constructors
+and custom diagnostic checks are trusted ordinary Go and must remain free of
+side effects; diagnostics are not a sandbox. Go build/module caches outside
+the app are allowed, but module manifests are readonly and workspace overlays
+are disabled for diagnostic subprocesses.
+
+Fresh adoption requires format 17 and a publicly verified runtime first. Until
+then, candidate fixtures prove the new scaffold while normal generation stays
+format 16 on its public pin. Existing application source is never silently
+upgraded. MILESTONE_0.23.md defines measurable gates and deferred scope.
+
+Diagnostic subprocesses reuse conventional shared user Go build/module cache
+locations and an external temporary build location, overriding process and
+persisted Go cache settings only for the child. Resolve existing symlink
+ancestors and refuse application-contained cache targets. This prevents a
+read-only command from populating an application's local caches while avoiding
+new per-review cache copies or persistent environment changes.
+
+Use a dedicated shared `goforge/tmp` child below the user cache for Go work
+directories, not the broad user-cache root. A controlled native Windows probe
+with distinct source per execution failed cleanup in all 20 managed and 20
+direct runs at the broad root, while both ordinary Temp and the dedicated child
+passed all 40 runs each. Cached compilation had hidden the error in earlier
+direct diagnostics. The selected child preserves complete assertions and the
+existing process-tree boundary; no retries or suppressed cleanup failures are
+used to qualify the workflow.

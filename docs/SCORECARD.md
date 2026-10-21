@@ -1,3 +1,39 @@
+# v0.23 read-only diagnosis and inventory scorecard
+
+Status: **baseline established; implementation in progress** — 2026-10-21.
+
+Acceptance is defined in [MILESTONE_0.23.md](MILESTONE_0.23.md). No v0.23
+capability is accepted or publicly released yet.
+
+| Gate | Current evidence |
+| --- | --- |
+| Framework baseline | Configuration, migration, and router tests passed (0.484s, 0.529s, 0.771s); fresh-scaffold/workflow group passed (31.539s) |
+| Public application baseline | Retained public no-replace format-16 app passed configuration/application/routes tests (0.581s, 2.018s, 1.027s), view freshness, and asset validity with readonly module mode |
+| Scope and architecture | Reuse `Verify`, actual `Router.Routes()`, and existing artifact checks; never operational `Status`. Diagnostic summaries must not echo raw configuration, driver, or compiler errors |
+| Runtime preparation | Safe typed `config.FieldError` drops supplied conversion values and causes; migration verification exposes pending, drift, ledger-upgrade, and invalid-source categories without writes |
+| Runtime race verification | Lead config/migration race suites passed twice (1.544s / 1.602s); subsequent whitespace-source correction passed the migration race suite twice (1.721s), with vet/diff checks |
+| Broad runtime regression | All 25 packages outside internal/cli passed native race tests with PostgreSQL configured, followed by whole-framework vet; this does not substitute for the complete CLI regression |
+| Candidate application | Explicit future-format fixture passed generated tests and real offline doctor/inventory (14.161s lead, 14.452s independent). Strengthened resource/all-app-race/edited-route/artifact-failure group passed in 69.157s before final cache-isolation changes; not final acceptance |
+| Real PostgreSQL nonmutation | Strengthened race journey passed all 11 states in 45.796s, zero skips. Both direct JSON checks and CLI orchestration preserve app files/directories, schema, ledger, all table rows, and sequences; persisted user/session and claimable-job sentinels prevent vacuous checks |
+| Independent review | Caught incomplete/whitespace-only migration pairs, application-local caches, and first-use external temp-parent handling. Runtime source findings fixed; CLI cache-boundary changes remain under verification |
+| Windows temporary-build correction | Controlled distinct-source probe failed all 20 managed and 20 direct runs at the broad user-cache root; ordinary Temp and dedicated `goforge/tmp` each passed 40 cold executions. Selected the dedicated external child; corrected candidate requalification passed, with no retry, assertion change, or process-tree weakening |
+| Corrected repeated candidate qualification | Native race group passed in 288.661s with two fresh-scaffold, explicit candidate, 11-state PostgreSQL, and frozen-snapshot passes. Candidate all-app-race/offline/inventory/secret/artifact workflows took 51.65s and 59.30s; PostgreSQL journeys took 47.61s and 49.92s, no skips. Each journey preserves complete file/DB snapshots |
+| Diagnostic unit boundaries | All diagnostic/privacy/protocol/cache/environment/cancellation unit tests passed twice under race (23.427s); explicit full-name regex coverage includes first-use external temp creation and the io.Copy output-cap regression |
+| Compatibility and CI | Normal scaffold stays format 16 on public v0.22.0; candidate CLI reports 0.23.0. Added public v0.22.1 format-16 compatibility/nonmutation gate and repeated diagnostic PostgreSQL journey without removing prior groups |
+| Complete framework/two CI passes, public runtime, adoption/distribution | Pending; the repeated candidate group is not complete milestone acceptance |
+
+The first restricted-runner diagnostic tests failed same-parent temporary
+scaffold publication with Windows Access denied; equivalent native tests passed
+(11.112s). A later strengthened inventory assertion initially expected kebab
+paths, while actual generated routes use underscores; the assertion was corrected
+to the existing source contract, not by changing generated routes. The separate
+native Go temporary-cleanup failure after cache isolation was reproduced in
+ordinary direct executions too; cached compilation had hidden it. Dedicated
+temporary-parent selection is the correction, not a passing retry.
+The temporary probe source was removed. Cleanup removed only 41 validated
+probe-owned compiler directories (44,275,155 bytes); these outputs are
+regenerable, and unrelated work directories were untouched.
+
 # v0.22 resource browsing and relationship selection scorecard
 
 Status: **accepted** — v0.22.0 runtime and v0.22.1 format-16 adoption published; public distribution verified — 2026-10-21.

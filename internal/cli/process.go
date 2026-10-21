@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
+	"strings"
 	"time"
 )
 
@@ -18,6 +20,10 @@ type processRunner interface {
 
 type directoryProcessRunner interface {
 	RunInDirectory(context.Context, io.Reader, io.Writer, io.Writer, string, string, ...string) error
+}
+
+type environmentProcessRunner interface {
+	RunWithEnvironment(context.Context, io.Reader, io.Writer, io.Writer, []string, string, ...string) error
 }
 
 type execProcessRunner struct {
@@ -51,6 +57,10 @@ func (runner execProcessRunner) Run(ctx context.Context, stdin io.Reader, stdout
 	return runExecProcess(ctx, stdin, stdout, stderr, "", runner.processTreeGrace, name, args...)
 }
 
+func (runner execProcessRunner) RunWithEnvironment(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, environment []string, name string, args ...string) error {
+	return runExecProcessWithEnvironment(ctx, stdin, stdout, stderr, "", runner.processTreeGrace, environment, name, args...)
+}
+
 func (runner execProcessRunner) RunInDirectory(
 	ctx context.Context,
 	stdin io.Reader,
@@ -70,11 +80,27 @@ func runExecProcess(
 	name string,
 	args ...string,
 ) error {
+	return runExecProcessWithEnvironment(ctx, stdin, stdout, stderr, directory, processTreeGrace, nil, name, args...)
+}
+
+func runExecProcessWithEnvironment(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	directory string,
+	processTreeGrace time.Duration,
+	environment []string,
+	name string,
+	args ...string,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	command := exec.Command(name, args...)
 	command.Dir = directory
+	if len(environment) > 0 {
+		command.Env = overrideProcessEnvironment(os.Environ(), environment)
+	}
 	if err := configureChildProcess(command); err != nil {
 		return err
 	}
@@ -102,6 +128,26 @@ func runExecProcess(
 		}
 		return ctx.Err()
 	}
+}
+
+func overrideProcessEnvironment(base, overrides []string) []string {
+	result := append([]string(nil), base...)
+	for _, override := range overrides {
+		key, _, valid := strings.Cut(override, "=")
+		if !valid || key == "" {
+			continue
+		}
+		filtered := result[:0]
+		for _, entry := range result {
+			existing, _, _ := strings.Cut(entry, "=")
+			matches := existing == key || runtime.GOOS == "windows" && strings.EqualFold(existing, key)
+			if !matches {
+				filtered = append(filtered, entry)
+			}
+		}
+		result = append(filtered, override)
+	}
+	return result
 }
 
 func runProjectCommand(

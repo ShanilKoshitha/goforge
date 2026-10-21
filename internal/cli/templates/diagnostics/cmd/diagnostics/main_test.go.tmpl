@@ -1,0 +1,18 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestCommandUsageDoesNotEchoArguments(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if exit := run(context.Background(), []string{"secret-argument"}, &stdout, &stderr); exit != 1 {
+		t.Fatalf("invalid usage exit = %d", exit)
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "usage:") || strings.Contains(stderr.String(), "secret-argument") {
+		t.Fatalf("unsafe usage output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
