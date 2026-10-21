@@ -15,6 +15,7 @@ const (
 	predicateAnd
 	predicateOr
 	predicateNot
+	predicateContainsFold
 )
 
 // Predicate is tied at compile time to one model type.
@@ -72,6 +73,31 @@ func Like[M any](column Column[M, string], pattern string) Predicate[M] {
 	}
 }
 
+var containsFoldEscaper = strings.NewReplacer("!", "!!", "%", "!%", "_", "!_")
+
+// ContainsFold matches a literal substring using PostgreSQL ILIKE and the
+// database's case/collation rules. Percent, underscore, and backslash are data,
+// not user-controlled pattern syntax. An empty literal matches every non-NULL
+// string. Named string types are supported.
+func ContainsFold[M any, S ~string](column Column[M, S], literal string) Predicate[M] {
+	return containsFold(column, literal)
+}
+
+// ContainsFoldNullable is ContainsFold for nullable string columns, including
+// pointers to named string types. SQL NULL does not match, and no Go pointer is
+// dereferenced. Use IsNull when NULL itself should match.
+func ContainsFoldNullable[M any, S ~string](column Column[M, *S], literal string) Predicate[M] {
+	return containsFold(column, literal)
+}
+
+func containsFold[M, V any](column Column[M, V], literal string) Predicate[M] {
+	return Predicate[M]{
+		table: column.table, identity: column.identity, column: column.name,
+		kind: predicateContainsFold,
+		args: []any{"%" + containsFoldEscaper.Replace(literal) + "%"},
+	}
+}
+
 // And groups predicates with explicit parentheses. An empty group is invalid.
 func And[M any](predicates ...Predicate[M]) Predicate[M] {
 	return groupedPredicate(predicateAnd, predicates)
@@ -118,6 +144,15 @@ func (predicate Predicate[M]) compile(compiler *sqlCompiler, table identifier, i
 	}
 	qualified := predicate.table.quoted() + "." + predicate.column.quoted()
 	switch predicate.kind {
+	case predicateContainsFold:
+		if len(predicate.args) != 1 {
+			return "", fmt.Errorf("orm: invalid literal contains predicate")
+		}
+		pattern, ok := predicate.args[0].(string)
+		if !ok {
+			return "", fmt.Errorf("orm: invalid literal contains predicate")
+		}
+		return qualified + " ILIKE " + compiler.bind(pattern) + " ESCAPE '!'", nil
 	case predicateCompare:
 		if len(predicate.args) != 1 {
 			return "", fmt.Errorf("orm: invalid comparison predicate")

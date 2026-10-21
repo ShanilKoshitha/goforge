@@ -14,8 +14,18 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.21.1\n" {
+	if output.String() != "forge 0.22.0\n" {
 		t.Fatalf("version output = %q", output.String())
+	}
+}
+
+func TestCIExpectedCLIVersionMatchesSource(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join(projectRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workflow), "= 'forge "+Version+"'") {
+		t.Fatalf("current-checkout CI version assertion does not match CLI version %s", Version)
 	}
 }
 

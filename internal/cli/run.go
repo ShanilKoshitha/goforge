@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.21.1"
+const Version = "0.22.0"
 
 var errUsage = errors.New("invalid command; run forge help")
 
