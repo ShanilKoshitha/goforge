@@ -175,6 +175,12 @@ Each journey asserts the actual fresh manifest is format 16; these were not
 restored historical fixtures. This closes native fresh integration coverage,
 not the complete adoption two-pass gate.
 
+Release-readiness documentation now describes the versioned v0.22.1 contract
+and install commands, with explicit links to published-tag availability and this
+qualification status. No runtime or generated-source contract changed. Two
+complete CI passes remain required for this final release-content head; the
+versioned instructions do not claim the adoption release is already published.
+
 # v0.21 component attributes and accessible forms scorecard
 
 Status: **accepted** — v0.21.0 runtime and v0.21.1 format-15 adoption published; public distribution verified — 2026-10-21

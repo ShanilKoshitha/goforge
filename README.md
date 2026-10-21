@@ -19,10 +19,10 @@ Its contract is simple:
 
 ## Status
 
-The public v0.22.0 runtime-first release generates format-15 applications. Fresh
-applications pin the published v0.21.0 runtime without a local replace so their
-component attributes and explicit multi-form helpers are compiled by the same
-immutable release verified through the public Go proxy. GoForge includes explicit database wiring,
+GoForge v0.22.1 generates format-16 applications pinned to the published
+v0.22.0 runtime without a local replacement. Literal-search queries and compiled
+views use the same immutable runtime verified through the public Go proxy.
+GoForge includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
 owner-scoped JSON and HTML CRUD generation, a reflection-free typed ORM, a
@@ -41,11 +41,12 @@ bounded HTTP timeouts and headers, correlated completion logs, validated CORS
 and security policy, trusted-proxy parsing, and PostgreSQL authentication
 throttles shared across processes and restarts.
 
-This checkout prepares **v0.22.1 / format 16**, not yet an accepted release. It
-pins verified public v0.22.0 and adds typed list filtering/sorting plus bounded,
+Format 16 adds typed list filtering/sorting plus bounded,
 no-JavaScript relationship search/paging with explicit choice-safe labels. See
-the [candidate workflow](docs/building-an-app.md#candidate-browse-resources-and-select-relationships-at-scale)
-and [acceptance gates](docs/MILESTONE_0.22.md). Existing applications are not
+the [browsing workflow](docs/building-an-app.md#browse-resources-and-select-relationships-at-scale)
+and [acceptance gates](docs/MILESTONE_0.22.md). Current release qualification and
+public distribution evidence are recorded in the [scorecard](docs/SCORECARD.md).
+Existing applications are not
 rewritten automatically.
 Newly generated format-13 through format-16 resources own a typed action/access
 function shared by their JSON and browser
@@ -130,6 +131,10 @@ apply to format 15.
 
 ## Install and try it
 
+The commands below target v0.22.1. Check the [published releases](https://github.com/ShanilKoshitha/goforge/releases)
+for tag availability; development checkouts may describe a version still in
+qualification, whose status is explicit in the [scorecard](docs/SCORECARD.md).
+
 On Windows, use the PowerShell installer. It shows each installation step,
 installs the latest released CLI, adds Go's binary directory to both the current
 PowerShell session and your persistent user `PATH`, and verifies the exact Go
@@ -144,7 +149,7 @@ Get-Content $installer
 After reviewing it, run:
 
 ```powershell
-& $installer -Version v0.22.0
+& $installer -Version v0.22.1
 forge version
 forge new myapp --module example.com/myapp
 ```
@@ -159,7 +164,7 @@ On macOS and Linux, install the released CLI and verify it before generating an
 application:
 
 ```sh
-go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.22.0
+go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.22.1
 gobin="$(go env GOBIN)"
 if [ -z "$gobin" ]; then gopath="$(go env GOPATH)"; gobin="${gopath%%:*}/bin"; fi
 export PATH="$gobin:$PATH"
@@ -226,12 +231,12 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (v0.22.1 candidate)
+## CLI (v0.22.1)
 
 The command surface below describes this checkout. Fresh applications use
-format 16 while pinning the verified public v0.22.0 runtime. Install `v0.22.0`
-for the accepted runtime-first release (format 15), or `go install ./cmd/forge`
-to evaluate this unreleased adoption candidate.
+format 16 while pinning the verified public v0.22.0 runtime. Install `v0.22.1`
+for this contract, or `go install ./cmd/forge` when working on framework source.
+The earlier v0.22.0 runtime-first CLI retains format 15.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
