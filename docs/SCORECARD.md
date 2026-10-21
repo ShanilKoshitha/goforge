@@ -1,12 +1,54 @@
 # v0.23 read-only diagnosis and inventory scorecard
 
-Status: **public runtime verified; format-17 adoption in progress** — 2026-10-21.
+Status: **accepted** — v0.23.0 runtime and v0.23.1 format-17 adoption published; public distribution verified — 2026-10-21.
 
-Acceptance is defined in [MILESTONE_0.23.md](MILESTONE_0.23.md). Runtime v0.23.0
-is public and verified. The complete diagnostic workflow is not accepted yet;
-format-17/CLI v0.23.1 adoption and distribution remain in qualification.
+Acceptance is defined in [MILESTONE_0.23.md](MILESTONE_0.23.md). Both complete
+final-source Windows/Linux matrices passed and were independently audited.
+The subsequent immutable public CLI installation/no-replace application proof
+also passed; the two matrix passes are not a claim of two public installer runs.
 
-| Gate | Current evidence |
+## Final acceptance evidence
+
+| Gate | Accepted evidence |
+| --- | --- |
+| Exact source and publication | Reviewed head `56a1bf86b360af23a6236200e03dffcd26166542`, tree `e10a3306b2f5f76f4b51d89d0df6a17f5f743ad8`; PR45 merged as `f2e8b5a42d84250d2ee22a6bd303b340897d5fcf` with the identical tree. Immutable lightweight [v0.23.1](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.23.1) points to that merge; runtime v0.23.0 remains fixed at `8f92f31557d05920bcdef25376dcbd3b181c5b96` |
+| Two complete final-content passes | [Push 39658525832](https://github.com/ShanilKoshitha/goforge/actions/runs/39658525832) and [PR 39658530319](https://github.com/ShanilKoshitha/goforge/actions/runs/39658530319) passed. Actual checkouts `56a1bf8` / synthetic merge `81fb8c0` have the exact qualified tree. All sixteen Linux product stages executed, including public formats 7–16 and normal no-replace format 17; Windows installer, CLI tests, vet, and build executed successfully |
+| Actual execution and cache scope | Linux framework CLI race tests executed in 1160.965s / 962.324s; cmd/config/migrate/ORM packages also executed, while twenty other package results reused Go's cache. Windows CLI tests executed in 538.693s / 483.576s; the Windows asset package reused its cache. Cached results are not represented as fresh executions |
+| Repeated real PostgreSQL applications | Each final Linux PostgreSQL stage explicitly ran count=2: all eleven journeys passed twice (22 top-level passes), all eleven diagnostic states passed twice, and all six scale selections passed twice. Stages took 640.751s / 545.593s, with no stage failures, skips, panics, or timeouts |
+| Fresh native full-framework pass | `go test -race -count=1 -timeout 30m -json ./...` passed with PostgreSQL configured, followed by whole-framework vet and diff checks (session 1258 exit 0). All 26 packages and 648 top-level tests passed; CLI 1505.539s. Exactly two Windows file-mode tests skipped: `TestMakeResourceRollbackRestoresManagedModes` and `TestCreatedProjectProtectsEnvironmentSecrets` |
+| Public installation and provenance | Fresh proxy/SumDB downloads require exact repository URL, tag ref, and commit. Downloaded public installer produced CLI v0.23.1 with module sum `h1:QT1h4MJZrWp4+nDyLCUtFlq10C9XqjiBbO8YhhEKsdo=` and go.mod sum `h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`; actual binary metadata matches, persistent user PATH unchanged |
+| Public no-replace application | Normal format-17 Category/Ticket/LegacyIssue app pins public v0.23.0 with exact accepted sums and no replacement. Normal tests, fresh race tests, vet, module verify/tidy, ORM/views/assets checks, and server/worker/scheduler/console/diagnostics builds passed. Every binary's dependency metadata confirms the accepted runtime checksum |
+| Public diagnostic and nonmutation proof | Offline doctor exits exactly 1 with failed DB/dependent migration skip and all independent checks passing; private malformed configuration remains safe; actual route inventory works offline. After explicit fixture migrations, CLI doctor exits 0 with ten passes and direct application JSON has seven passes. Full application and database catalog/ledger/domain/sequence snapshots match. Session 45982 exits 0 only after its exact owned schema is dropped and process environment restored |
+| Independent closure review | Final source, CI checkout/step/count/cache audits, and public artifact/log/schema-absence review found no remaining acceptance gap. Retained evidence: `.tmp/v023-adoption-native-final.jsonl`, `.tmp/v023-final-{push,pr}-linux.log`, `.tmp/v023-public-adoption-qualified-verification.log`, and the qualified application/binaries |
+| Documentation closure checks | Exact CLI-version/CI-version/fresh-template/scheduler-scaffold group passed twice under race (13.137s), followed by whole-framework vet and diff checks. Independent review confirmed unchanged eight acceptance criteria, current public installation pins, correct release identities, and transparent failure/cache/skip disclosures |
+
+Public verification also retained two failed attempts rather than counting them
+as passes. The first completed installation/application builds but incorrectly
+required optional URL/ref fields in older shared-cache metadata. The corrected
+verifier keeps full fresh-download provenance mandatory, permits only absent
+shared-cache URL/ref fields, rejects any present mismatch, and still requires
+exact runtime sums and content verification (56 assertion and two forwarding
+cases passed). The second stopped at a Windows directory-rename Access denied
+before application publication or database work.
+
+Bounded diagnosis used no retries: an initial five CLI generations passed four
+times, while five small ordinary-Go controls passed. A stronger interleaved
+comparison passed ten CLI generations and nine of ten complete ordinary-Go
+controls. The failing standalone control reproduces Windows errno 5 without
+GoForge code; all 111 files, 43 directories, 881,331 bytes and modes match the
+baseline, including the retained failed stage. This does not identify a specific
+host filter or establish general filesystem reliability. No ACL/product changes
+or automatic success-until-green retry were used. One predeclared fresh full
+public proof then completed all unchanged assertions and cleanup successfully.
+
+## Qualification history
+
+The rows below preserve intermediate observations, including failures and
+pending gates at the time recorded. Final acceptance above supersedes those
+historical pending statuses; earlier preparation passes never substituted for
+final adoption or public distribution.
+
+| Gate | Historical evidence |
 | --- | --- |
 | Framework baseline | Configuration, migration, and router tests passed (0.484s, 0.529s, 0.771s); fresh-scaffold/workflow group passed (31.539s) |
 | Public application baseline | Retained public no-replace format-16 app passed configuration/application/routes tests (0.581s, 2.018s, 1.027s), view freshness, and asset validity with readonly module mode |
@@ -31,7 +73,7 @@ format-17/CLI v0.23.1 adoption and distribution remain in qualification.
 | Full-run format-boundary correction | Complete native qualification of 8921bfa caught an old future-format-17 refusal fixture in dev tests. Repository-wide and independent audits found eight such cases across six test files (dev/jobs/models/ORM/process/workflow). All now test next format 18 with their original no-process/no-write/error assertions intact; no production behavior changed. All eight negative tests plus supported queue-format delegation passed twice under race (2.935s), followed by CLI vet/diff checks. Superseded CI runs 39654552631/39654562923 were cancelled because this revision is known invalid, not because observation timed out. Complete corrected-content qualification remains required |
 | Complete initial adoption failure evidence | Native session 18289 terminated exit 1, CLI 1245.044s: all eight stale-format refusal tests failed as predicted; all 25 non-CLI packages passed and no other top-level test failure was recorded. Windows mode/permission tests skipped explicitly. JSON retained at `.tmp/v023-adoption-native.jsonl`; vet was not run after that failed test command. This is failure evidence, never a complete qualification pass |
 | Ambient Go build-flag nonmutation correction | A fresh normal-app probe reproduced application-local linker profiles during routes/list success (5,532 bytes), offline doctor failure (2,628 bytes), and persisted GOENV flags (5,936 bytes), without custom app code. Alternate-module missing-sum cases did not mutate under readonly modules. Guarded CLI now supplies nonempty whitespace GOFLAGS, suppressing both sources without disabling private proxy/module settings or editing user configuration. Unit/privacy/protocol/cache bounds passed twice under race (18.941s). Four real-Go profiling cases (doctor/routes × process/persisted flags) passed twice under race (62.945s), zero skips: direct linker controls produce nonempty profiles, distinct guarded paths remain absent, full app snapshots match, actual child configuration retains persisted GOPRIVATE and exactly one blank GOFLAGS, and GOENV bytes remain unchanged. CLI vet/diff and independent review pass. Initial new-test nested-quoting failure (12.671s) was corrected with a valid explicit package pattern, retaining paths with spaces. bd41d1c CI was cancelled for this concrete contract failure, not treated as passing despite its green Windows jobs; complete final-content qualification remains pending |
-| Complete adoption/two final passes/public CLI distribution | Pending; runtime and candidate preparation passes do not substitute for these gates |
+| Complete adoption/two final passes/public CLI distribution | Closed by the final acceptance evidence above; runtime and candidate preparation passes were not substitutes |
 
 The first restricted-runner diagnostic tests failed same-parent temporary
 scaffold publication with Windows Access denied; equivalent native tests passed
