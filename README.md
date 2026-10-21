@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-GoForge v0.22.1 generates format-16 applications pinned to the published
+The accepted GoForge v0.22.1 release generates format-16 applications pinned to the published
 v0.22.0 runtime without a local replacement. Literal-search queries and compiled
 views use the same immutable runtime verified through the public Go proxy.
 GoForge includes explicit database wiring,
@@ -44,7 +44,7 @@ throttles shared across processes and restarts.
 Format 16 adds typed list filtering/sorting plus bounded,
 no-JavaScript relationship search/paging with explicit choice-safe labels. See
 the [browsing workflow](docs/building-an-app.md#browse-resources-and-select-relationships-at-scale)
-and [acceptance gates](docs/MILESTONE_0.22.md). Current release qualification and
+and [acceptance gates](docs/MILESTONE_0.22.md). Acceptance and
 public distribution evidence are recorded in the [scorecard](docs/SCORECARD.md).
 Existing applications are not
 rewritten automatically.
@@ -131,9 +131,8 @@ apply to format 15.
 
 ## Install and try it
 
-The commands below target v0.22.1. Check the [published releases](https://github.com/ShanilKoshitha/goforge/releases)
-for tag availability; development checkouts may describe a version still in
-qualification, whose status is explicit in the [scorecard](docs/SCORECARD.md).
+The commands below install the published [v0.22.1 release](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.22.1).
+Acceptance and public distribution evidence are recorded in the [scorecard](docs/SCORECARD.md).
 
 On Windows, use the PowerShell installer. It shows each installation step,
 installs the latest released CLI, adds Go's binary directory to both the current
@@ -342,7 +341,7 @@ go run ./cmd/scheduler --once
 ```
 
 Use direct Go commands for custom packages, flags, tags, targets, output paths,
-or worker and console builds. `forge dev` is the complete format-11-through-15 development
+or worker and console builds. `forge dev` is the complete format-11-through-16 development
 default: it labels and supervises `forge serve`, the application-owned worker,
 and the scheduler under one cancellation boundary, and reports ready only after
 all three startup contracts succeed. Any service exit stops its peers. It does
