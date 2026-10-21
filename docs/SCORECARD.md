@@ -10,7 +10,7 @@ capability or public release is accepted yet.
 | Runnable generator baseline | Native `go test ./internal/cli -run '^(TestFormatFifteenGeneratesAccessibleRecoverableResourceForms\|TestFormatsEightThroughFourteenRetainLegacyResourceGeneration)$' -count=1` passed in 4.709s |
 | Runnable public application baseline | The public v0.21.1 CLI's no-replace format-15 `example.com/releasedv0211` application passed `go test ./... -count=1`; Category, Ticket, and legacy resource tests passed |
 | Scale gap confirmed | Generated repository tests explicitly expect `ErrAssociationChoicesOverflow` above 100 related rows; browser rendering maps that state to 409 |
-| Runtime helper | `ContainsFold`/`ContainsFoldNullable` implemented; `go test ./orm/...` and independent `go test -race ./orm/... -count=1` plus vet passed; actual PostgreSQL execution is pending because the local database URL is unset |
+| Runtime helper | `ContainsFold`/`ContainsFoldNullable` implemented; local unit/race/vet and hosted framework race tests with PostgreSQL passed; complete hosted qualification remains pending correction of the stale CLI-version assertion below |
 | Fresh candidate application | Native candidate CLI generated format 15 with Category, related Ticket, and legacy resource against a local runtime replacement; artifact checks, `forge test`, vet, and `forge build` passed; inspected module pin, scoped forms, and ordinary compiled views |
 | Implementation boundary | Generator/browser contracts remain unchanged; format-16 generation has not started |
 | Independent review and two complete passes | Pending; baseline tests are not v0.22 acceptance |
@@ -25,6 +25,17 @@ disclosure, implicit-save intents, exact filter/transport behavior, presentation
 state, hostile input, and label-size limits. Independent runtime review found
 no P0–P2 issue. These reviews do not substitute for the pending real database
 and complete two-pass qualification gates.
+
+Runtime qualification correction: initial hosted runs
+[39614399558](https://github.com/ShanilKoshitha/goforge/actions/runs/39614399558)
+and [39614467640](https://github.com/ShanilKoshitha/goforge/actions/runs/39614467640)
+passed framework race tests with PostgreSQL, vet/build, Windows, and historical
+compatibility, but stopped at the current-scaffold step's stale `forge 0.21.1`
+assertion against the v0.22.0 candidate. The workflow assertion is corrected;
+a native unit test now checks it against the source version. These failed runs
+are not counted as complete acceptance passes. Native full framework regression
+on the candidate also passed (`internal/cli` 323.324s). Public runtime publication
+remains pending two complete corrected CI passes.
 
 # v0.21 component attributes and accessible forms scorecard
 

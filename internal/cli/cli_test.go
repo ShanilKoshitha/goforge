@@ -19,6 +19,16 @@ func TestVersionMatchesRelease(t *testing.T) {
 	}
 }
 
+func TestCIExpectedCLIVersionMatchesSource(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join(projectRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workflow), "= 'forge "+Version+"'") {
+		t.Fatalf("current-checkout CI version assertion does not match CLI version %s", Version)
+	}
+}
+
 func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "orders")
 	root := projectRoot(t)
