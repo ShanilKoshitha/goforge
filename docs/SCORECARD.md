@@ -42,6 +42,17 @@ The local database URL remains unset, so real-PostgreSQL workflow tests skip;
 the embedded repository proof is separately compiled by the explicit-format
 fixture. These checks do not claim whole-milestone acceptance or public adoption.
 
+Runtime qualification correction: initial hosted runs
+[39614399558](https://github.com/ShanilKoshitha/goforge/actions/runs/39614399558)
+and [39614467640](https://github.com/ShanilKoshitha/goforge/actions/runs/39614467640)
+passed framework race tests with PostgreSQL, vet/build, Windows, and historical
+compatibility, but stopped at the current-scaffold step's stale `forge 0.21.1`
+assertion against the v0.22.0 candidate. The workflow assertion is corrected;
+a native unit test now checks it against the source version. These failed runs
+are not counted as complete acceptance passes. Native full framework regression
+on the candidate also passed (`internal/cli` 323.324s). Public runtime publication
+remains pending two complete corrected CI passes.
+
 # v0.21 component attributes and accessible forms scorecard
 
 Status: **accepted** — v0.21.0 runtime and v0.21.1 format-15 adoption published; public distribution verified — 2026-10-21
