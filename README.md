@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-The current checkout is the v0.21.1 format-15 adoption candidate. Fresh
+The v0.21.1 release generates format-15 applications. Fresh
 applications pin the published v0.21.0 runtime without a local replace so their
 component attributes and explicit multi-form helpers are compiled by the same
 immutable release verified through the public Go proxy. GoForge includes explicit database wiring,
@@ -115,10 +115,11 @@ scope without adding token permissions or JWT claims. See the
 
 The v0.21.0 release publishes compile-time component attributes, deterministic
 class composition and forwarding, and explicit form selection for nested or
-multi-form views. The v0.21.1 candidate adopts that public compiler in fresh
+multi-form views. The v0.21.1 release adopts that public compiler in fresh
 format-15 scaffolds and adds inspectable input, textarea, and select components,
-isolated authentication form state, and accessible typed resource forms. Formats
-4 through 14 keep their released generator behavior.
+isolated authentication form state, and accessible typed resource forms. Older
+project formats remain compatible; the new form components and recovery behavior
+apply to format 15.
 
 ## Install and try it
 
@@ -136,7 +137,7 @@ Get-Content $installer
 After reviewing it, run:
 
 ```powershell
-& $installer -Version v0.21.0
+& $installer -Version v0.21.1
 forge version
 forge new myapp --module example.com/myapp
 ```
@@ -151,7 +152,7 @@ On macOS and Linux, install the released CLI and verify it before generating an
 application:
 
 ```sh
-go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.21.0
+go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.21.1
 gobin="$(go env GOBIN)"
 if [ -z "$gobin" ]; then gopath="$(go env GOPATH)"; gobin="${gopath%%:*}/bin"; fi
 export PATH="$gobin:$PATH"
@@ -218,11 +219,11 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (v0.21.1 candidate)
+## CLI (v0.21.1)
 
 The command surface below describes this checkout. Fresh applications use
-format 15 while pinning the public v0.21.0 runtime. Install `v0.21.0` for the
-accepted release, or `go install ./cmd/forge` when evaluating current source.
+format 15 while pinning the public v0.21.0 runtime. Install `v0.21.1` for the
+accepted release, or `go install ./cmd/forge` when working on framework source.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
