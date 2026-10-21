@@ -136,17 +136,17 @@ func (controller *WebController) Create(ctx *httpx.Context) error {
 	if err := request.DecodeForm(ctx); err != nil {
 		return err
 	}
-[[if .AccessibleForms]]	if problems := request.FormErrors(); len(problems) > 0 {
+[[if .AccessibleForms]]	if problems := request.FormErrors(request.ValidateCreate()); len(problems) > 0 {
 		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
 			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(), Errors: problems,
 		})
 	}
-[[end]]	if problems := request.ValidateCreate(); !problems.Empty() {
+[[else]]	if problems := request.ValidateCreate(); !problems.Empty() {
 		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
 			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(), Errors: problems.Messages(),
 		})
 	}
-	item, err := controller.repository.Create(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], request.Attributes[[if .Relationships]], request.Associations[[end]])
+[[end]]	item, err := controller.repository.Create(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], request.Attributes[[if .Relationships]], request.Associations[[end]])
 [[if .Relationships]]	if field, invalid := invalidAssociationField(err); invalid {
 		return controller.renderForm(ctx, user.ID, http.StatusUnprocessableEntity, "pages/[[.Plural]]/new", FormPage{
 			Title: "New [[.Name]]", Action: webBasePath, Submit: "Create [[.Name]]", Values: request.FormValues(),
@@ -234,17 +234,28 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 	if err := request.DecodeForm(ctx); err != nil {
 		return err
 	}
-[[if .AccessibleForms]]	if problems := request.FormErrors(); len(problems) > 0 {
-[[if and .AuthorizationPolicies .Relationships]]		formOwnerID, err := controller.formOwnerForItem(ctx, scope, id)
+[[if .AccessibleForms]]	problems := request.FormErrors(request.ValidateUpdate())
+	if request.Version == nil && len(problems["version"]) == 0 {
+		problems["version"] = []string{"is required"}
+	}
+	if len(problems) > 0 {
+		current, err := controller.repository.Find(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id)
+		if errors.Is(err, ErrNotFound) {
+			return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
+		}
 		if err != nil {
 			return err
 		}
-[[end]]		return controller.renderForm(ctx, [[if and .AuthorizationPolicies .Relationships]]formOwnerID[[else]]user.ID[[end]], http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
+		version := request.Version
+		if version == nil || *version < 1 {
+			version = &current.Version
+		}
+		return controller.renderForm(ctx, [[if .AuthorizationPolicies]]current.UserID[[else]]user.ID[[end]], http.StatusUnprocessableEntity, "pages/[[.Plural]]/edit", FormPage{
 			Title: "Edit [[.Name]]", Action: webItemPath(id), Method: http.MethodPut,
-			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: request.Version, Errors: problems,
+			Submit: "Save [[.Name]]", Values: request.FormValues(), Version: version, Errors: problems,
 		})
 	}
-[[end]]	if problems := request.ValidateUpdate(); !problems.Empty() {
+[[else]]	if problems := request.ValidateUpdate(); !problems.Empty() {
 [[if and .AuthorizationPolicies .Relationships]]		formOwnerID, err := controller.formOwnerForItem(ctx, scope, id)
 		if err != nil {
 			return err
@@ -257,7 +268,7 @@ func (controller *WebController) Update(ctx *httpx.Context) error {
 	if request.Version == nil {
 		return httpx.NewHTTPError(http.StatusBadRequest, "version is required for browser updates")
 	}
-	item, err := controller.repository.Update(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id, request.Attributes[[if .Relationships]], request.Associations[[end]], request.Version)
+[[end]]	item, err := controller.repository.Update(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], id, request.Attributes[[if .Relationships]], request.Associations[[end]], request.Version)
 	if errors.Is(err, ErrNotFound) {
 		return httpx.NewHTTPError(http.StatusNotFound, "[[.Package]] not found")
 	}

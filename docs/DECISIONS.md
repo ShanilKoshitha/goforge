@@ -1455,3 +1455,26 @@ cross-owner update disclose information through a 422 response instead of the
 required indistinguishable 404. Letting PostgreSQL enforce the update closes
 the validation/write race, removes one successful-update query, and preserves
 the existing useful validation response for visible rows.
+
+## D048 — Browser validation errors must leave a correctable form
+
+**Status:** accepted design — 2026-10-21
+
+Format-15 resource forms combine semantic validation with recoverable scalar
+decoding errors before rendering a 422. A scalar decoding error takes precedence
+for its own field because no parsed value exists; unrelated field errors remain
+visible in the same response. JSON decoding and released formats retain their
+existing contracts.
+
+An invalid browser update loads the member through its authorized repository
+scope before rendering validation errors. This establishes visibility, supplies
+the member owner's relationship choices, and permits an absent or invalid
+optimistic version to be replaced with the current version in the correction
+form. A valid submitted version is retained, including a stale one, so correcting
+another field cannot bypass the existing conflict check. Failed validation never
+mutates the resource. The next submission still compares its displayed version
+atomically when updating.
+
+Reason: rejecting invalid input is only half of a browser workflow. The response
+must expose all actionable errors and permit correction without losing values,
+disclosing inaccessible rows, or silently overwriting concurrent changes.

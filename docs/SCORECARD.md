@@ -1,6 +1,6 @@
 # v0.21 component attributes and accessible forms scorecard
 
-Status: **in progress** — v0.21.0 runtime accepted; v0.21.1 format-15 adoption underway — 2026-09-16
+Status: **in progress** — v0.21.0 runtime accepted; v0.21.1 form-recovery corrections under review — 2026-10-21
 
 Release boundary: v0.21.0 publishes and verifies the backward-compatible view
 compiler while retaining the format-14 scaffold and its public v0.19.0 pin.
@@ -27,8 +27,8 @@ Target:
 | Attribute failures are strict and source-mapped | passing at compiler boundary | Dynamic, malformed, unsafe, duplicate non-class, repeated-spread, conditional/multiple-sink, and no-sink cases fail at their original source locations; the established atomic compiler publication tests retain the last-good artifact |
 | Contextual escaping remains authoritative | passing | Hostile text, markup, quotes, and URL values pass through `html/template`; URL-bearing attributes reject unsafe schemes and no bag can smuggle attribute names or trusted HTML |
 | Explicit form selection is additive | passing | `form=` helpers work inside range, with, and components with evaluate-once semantics; every released legacy spelling retains its exact `.Form` expansion and behavior |
-| Fresh authentication forms are accessible and isolated | planned | Login, registration, recovery, token, password, revoke, and logout forms have unique controls and associated labels/help/errors; non-secret old input survives 422, passwords never do, and token/password errors cannot bleed across forms |
-| A typed resource form works end to end | planned | A fresh application generates string, text, integer, boolean, nullable, and belongs-to fields; an invalid browser submit preserves every valid value with exact per-field accessibility state and no write, while a corrected submit redirects and persists |
+| Fresh authentication forms are accessible and isolated | passing | Generated controller/component tests and both candidate CI runs cover login, registration, recovery, token/password/action isolation, associated controls, non-secret recovery, and mixed-case password non-recovery |
+| A typed resource form works end to end | recovery fixes locally passing; PostgreSQL revalidation pending | Existing typed correction journeys passed both candidate runs; new generated tests exercise combined errors and invalid-version correction, while expanded PostgreSQL regressions still require execution |
 | Compatibility and escape hatches remain explicit | passing for v0.21.0 runtime stage | Formats 4–14 retain old generated output and commands, public format-14 compatibility passes, ordinary Go-template actions/functions/raw HTML and renderer replacement remain available, and no format-15 app pins an unpublished runtime |
 | The milestone passes twice without regression | passing for v0.21.0 runtime stage; format-15 adoption pending | Framework race/vet/build, released-format compatibility, generated PostgreSQL journeys, native Windows, and independent adversarial review pass twice on the runtime candidate; fresh format-15 inspection and auth/resource journeys remain the v0.21.1 gate |
 
@@ -111,6 +111,49 @@ Target:
   cold build, fails immediately if serve exits, and drains cancellation on
   timeout. Five consecutive focused runs and the full native Windows package
   set pass; no test was removed, skipped, or weakened.
+
+## v0.21.1 acceptance revalidation — 2026-10-21
+
+- PR [#37](https://github.com/ShanilKoshitha/goforge/pull/37) merged as
+  `b7a8a23`. Candidate `ed05095` passed both complete workflows:
+  [push 35236163509](https://github.com/ShanilKoshitha/goforge/actions/runs/35236163509)
+  and [PR 35281268567](https://github.com/ShanilKoshitha/goforge/actions/runs/35281268567).
+  Merge workflow
+  [35283183823](https://github.com/ShanilKoshitha/goforge/actions/runs/35283183823)
+  also passed Linux/PostgreSQL and native Windows. The Linux jobs executed
+  every public compatibility gate, the no-replace format-15 application, and
+  each database-backed generated workflow twice.
+- Independent code and coverage reviews nevertheless reproduced two P2 gaps:
+  scalar decoding errors hide unrelated semantic field errors, and malformed,
+  empty, or missing optimistic versions can leave a re-rendered browser edit
+  form without a usable hidden version. Existing tests checked rejection but
+  did not complete correction from these states. Prior green runs therefore do
+  not establish acceptance of these missing recovery cases.
+- Branch `codex/v0.21.1-form-recovery` starts from merged `b7a8a23`. The release
+  remains unpublished pending focused fixes, generated correction/no-write and
+  stale-version regressions, independent review, and two clean candidate gates.
+- The correction merges semantic and scalar errors, loads invalid update forms
+  through the authorized member scope, recovers missing/invalid/nonpositive
+  versions, and preserves valid stale versions. Generated tests cover correction
+  followed by successful persistence, unchanged data on rejection, cross-owner
+  404 responses, and privileged record-owner relationship choices. Focused
+  generation/compatibility suites passed in 17.171s and 49.448s. Independent
+  adversarial review reports no remaining P0–P2 finding after correcting two
+  test assertions to match the actual field-error markup.
+- A fresh no-replace `example.com/recoverygate` application is format 15 pinned
+  to public v0.21.0. It generated Category, a Ticket containing every scalar type
+  plus belongs-to, and a legacy-style resource; then passed view/ORM/asset
+  freshness, module verification, zero tidy diff, all generated tests, vet, and
+  server/worker/scheduler/console builds. Source inspection confirms scoped
+  correction logic and ordinary compiled templates without attribute runtime
+  machinery. Local Docker has no running daemon, so PostgreSQL evidence remains
+  assigned to hosted CI.
+- Native framework revalidation passed `go test ./... -count=1`
+  (`internal/cli` 313.567s), and final formatting, vet, and diff checks pass.
+  The initial sandboxed attempt was invalidated by Windows file-replacement,
+  TCP-owner-table, and loopback restrictions; the native run resolves those
+  environment failures. Expanded database acceptance and two clean runs after
+  the completed correction remain required before publication.
 
 ## v0.21.0 runtime-stage evidence — 2026-09-14
 

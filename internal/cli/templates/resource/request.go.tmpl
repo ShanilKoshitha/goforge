@@ -196,11 +196,12 @@ func (request *WriteRequest) DecodeForm(ctx *httpx.Context) error {
 	return nil
 }
 
-[[if .AccessibleForms]]// FormErrors returns a defensive copy of recoverable browser scalar errors.
+[[if .AccessibleForms]]// FormErrors combines semantic validation with recoverable browser scalar errors.
 // Structural form errors are still returned directly from DecodeForm.
-func (request WriteRequest) FormErrors() validation.Errors {
-	errors := make(validation.Errors, len(request.formErrors))
+func (request WriteRequest) FormErrors(report validation.Report) validation.Errors {
+	errors := report.Messages()
 	for field, messages := range request.formErrors {
+		// A malformed scalar has no parsed value for semantic validation.
 		errors[field] = append([]string(nil), messages...)
 	}
 	return errors
