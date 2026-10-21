@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -32,6 +34,10 @@ type migrationDriverState struct {
 	migrationErr     error
 	executedSQL      []string
 	checksumAddErr   error
+	queryErr         error
+	queryCalls       []string
+	execCalls        int
+	beginCalls       int
 }
 
 type migrationRecord struct {
@@ -56,11 +62,13 @@ func (connection *migrationConn) Begin() (driver.Tx, error) {
 func (connection *migrationConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
 	connection.state.mu.Lock()
 	defer connection.state.mu.Unlock()
+	connection.state.beginCalls++
 	return &migrationTx{state: connection.state, snapshot: snapshotMigrationState(connection.state)}, nil
 }
 func (connection *migrationConn) ExecContext(_ context.Context, query string, arguments []driver.NamedValue) (driver.Result, error) {
 	connection.state.mu.Lock()
 	defer connection.state.mu.Unlock()
+	connection.state.execCalls++
 	if connection.state.records == nil {
 		connection.state.records = make(map[string]migrationRecord)
 	}
@@ -121,6 +129,13 @@ func (connection *migrationConn) ExecContext(_ context.Context, query string, ar
 	return driver.RowsAffected(1), nil
 }
 func (connection *migrationConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	connection.state.mu.Lock()
+	connection.state.queryCalls = append(connection.state.queryCalls, query)
+	queryErr := connection.state.queryErr
+	connection.state.mu.Unlock()
+	if queryErr != nil {
+		return nil, queryErr
+	}
 	switch query {
 	case "SELECT pg_advisory_lock($1)":
 		<-connection.state.lock
@@ -538,6 +553,315 @@ func TestVerifyAcceptsCompleteIntegrityCheckedLedger(t *testing.T) {
 	migrator := &Migrator{DB: openMigrationDB(t, state), Files: migrationFiles(migration), Dialect: Postgres}
 	if err := migrator.Verify(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVerifyClassifiesIntegrityFailuresWithoutMutation(t *testing.T) {
+	first := Migration{Version: "000001", Name: "users", Up: "UP users", Down: "DOWN users"}
+	second := Migration{Version: "000002", Name: "widgets", Up: "UP widgets", Down: "DOWN widgets"}
+	for _, test := range []struct {
+		name    string
+		prepare func(*migrationDriverState, fstest.MapFS)
+		want    error
+		message string
+	}{
+		{name: "healthy"},
+		{
+			name: "uninitialized ledger",
+			prepare: func(state *migrationDriverState, _ fstest.MapFS) {
+				state.tableExists = false
+				state.checksumColumn = false
+				state.records = nil
+			},
+			want: ErrLedgerUpgradeRequired, message: "operational upgrade",
+		},
+		{
+			name: "legacy ledger without checksum column",
+			prepare: func(state *migrationDriverState, _ fstest.MapFS) {
+				state.checksumColumn = false
+				record := state.records[first.Version]
+				record.checksum = nil
+				state.records[first.Version] = record
+			},
+			want: ErrLedgerUpgradeRequired, message: "operational upgrade",
+		},
+		{
+			name: "nullable checksum column",
+			prepare: func(state *migrationDriverState, _ fstest.MapFS) {
+				state.checksumNullable = true
+			},
+			want: ErrLedgerUpgradeRequired, message: "operational upgrade",
+		},
+		{
+			name: "pending migration",
+			prepare: func(_ *migrationDriverState, files fstest.MapFS) {
+				for name, file := range migrationFiles(second) {
+					files[name] = file
+				}
+			},
+			want: ErrPendingMigration, message: "000002 is pending",
+		},
+		{
+			name: "missing applied migration",
+			prepare: func(_ *migrationDriverState, files fstest.MapFS) {
+				delete(files, "000001_users.up.sql")
+				delete(files, "000001_users.down.sql")
+				// Retain a real directory entry for the migration filesystem.
+				files["embed.go"] = &fstest.MapFile{Data: []byte("package migrations")}
+			},
+			want: ErrMigrationDrift, message: "missing from the migration filesystem",
+		},
+		{
+			name: "renamed applied migration",
+			prepare: func(state *migrationDriverState, _ fstest.MapFS) {
+				record := state.records[first.Version]
+				record.name = "previous_users"
+				state.records[first.Version] = record
+			},
+			want: ErrMigrationDrift, message: "name mismatch",
+		},
+		{
+			name: "changed applied script",
+			prepare: func(_ *migrationDriverState, files fstest.MapFS) {
+				files["000001_users.up.sql"] = &fstest.MapFile{Data: []byte("UP changed_users")}
+			},
+			want: ErrMigrationDrift, message: "checksum mismatch",
+		},
+		{
+			name: "missing checksum in integrity enabled ledger",
+			prepare: func(state *migrationDriverState, _ fstest.MapFS) {
+				record := state.records[first.Version]
+				record.checksum = nil
+				state.records[first.Version] = record
+			},
+			want: ErrMigrationDrift, message: "has no checksum; refusing to rebaseline",
+		},
+		{
+			name: "drift takes precedence over pending",
+			prepare: func(_ *migrationDriverState, files fstest.MapFS) {
+				files["000001_users.up.sql"] = &fstest.MapFile{Data: []byte("UP changed_users")}
+				for name, file := range migrationFiles(second) {
+					files[name] = file
+				}
+			},
+			want: ErrMigrationDrift, message: "checksum mismatch",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := migrationStateWithApplied(first)
+			files := migrationFiles(first)
+			if test.prepare != nil {
+				test.prepare(state, files)
+			}
+			before := snapshotMigrationState(state)
+			migrator := &Migrator{DB: openMigrationDB(t, state), Files: files, Dialect: Postgres}
+			err := migrator.Verify(context.Background())
+			if test.want == nil {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if !errors.Is(err, test.want) || !strings.Contains(err.Error(), test.message) {
+					t.Fatalf("Verify = %v; want category %v and detail %q", err, test.want, test.message)
+				}
+				if !errors.Is(fmt.Errorf("diagnostic boundary: %w", err), test.want) {
+					t.Fatal("integrity category did not survive wrapping")
+				}
+			}
+			assertVerifyCategories(t, err, test.want)
+			assertVerifyDidNotMutate(t, state, before)
+		})
+	}
+}
+
+func TestVerifyRetainsUnderlyingFailuresWithoutIntegrityCategory(t *testing.T) {
+	migration := Migration{Version: "000001", Name: "users", Up: "UP users", Down: "DOWN users"}
+	for _, cause := range []error{errors.New("driver inspection failure"), context.DeadlineExceeded} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			state := migrationStateWithApplied(migration)
+			state.queryErr = cause
+			before := snapshotMigrationState(state)
+			migrator := &Migrator{DB: openMigrationDB(t, state), Files: migrationFiles(migration), Dialect: Postgres}
+			err := migrator.Verify(context.Background())
+			if !errors.Is(err, cause) {
+				t.Fatalf("Verify = %v; lost underlying %v", err, cause)
+			}
+			assertVerifyCategories(t, err, nil)
+			assertVerifyDidNotMutate(t, state, before)
+		})
+	}
+	t.Run("filesystem error", func(t *testing.T) {
+		state := migrationStateWithApplied(migration)
+		before := snapshotMigrationState(state)
+		migrator := &Migrator{DB: openMigrationDB(t, state), Files: migrationFiles(migration), Dir: "absent", Dialect: Postgres}
+		err := migrator.Verify(context.Background())
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("Verify = %v; lost underlying filesystem error", err)
+		}
+		assertVerifyCategories(t, err, nil)
+		assertVerifyDidNotMutate(t, state, before)
+		if len(state.queryCalls) != 0 {
+			t.Fatal("invalid migration filesystem should fail before querying the database")
+		}
+	})
+	t.Run("file read error", func(t *testing.T) {
+		state := migrationStateWithApplied(migration)
+		before := snapshotMigrationState(state)
+		files := migrationReadFailure{FS: migrationFiles(migration), err: fs.ErrPermission}
+		migrator := &Migrator{DB: openMigrationDB(t, state), Files: files, Dialect: Postgres}
+		err := migrator.Verify(context.Background())
+		if !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("Verify = %v; lost underlying file read error", err)
+		}
+		assertVerifyCategories(t, err, nil)
+		assertVerifyDidNotMutate(t, state, before)
+		if len(state.queryCalls) != 0 {
+			t.Fatal("unreadable migration source should fail before querying the database")
+		}
+	})
+}
+
+type migrationReadFailure struct {
+	fs.FS
+	err error
+}
+
+func (files migrationReadFailure) ReadFile(string) ([]byte, error) { return nil, files.err }
+
+func TestVerifyClassifiesInvalidMigrationSourceBeforeDatabaseInspection(t *testing.T) {
+	first := Migration{Version: "000001", Name: "users", Up: "UP users", Down: "DOWN users"}
+	for _, test := range []struct {
+		name    string
+		prepare func(fstest.MapFS)
+		message string
+	}{
+		{
+			name: "applied pair missing up",
+			prepare: func(files fstest.MapFS) {
+				delete(files, "000001_users.up.sql")
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+		{
+			name: "applied pair missing down",
+			prepare: func(files fstest.MapFS) {
+				delete(files, "000001_users.down.sql")
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+		{
+			name: "applied pair has one half renamed",
+			prepare: func(files fstest.MapFS) {
+				files["000001_accounts.up.sql"] = files["000001_users.up.sql"]
+				delete(files, "000001_users.up.sql")
+			},
+			message: "has inconsistent names",
+		},
+		{
+			name: "unapplied pair missing down",
+			prepare: func(files fstest.MapFS) {
+				files["000002_widgets.up.sql"] = &fstest.MapFile{Data: []byte("UP widgets")}
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+		{
+			name: "unapplied pair missing up",
+			prepare: func(files fstest.MapFS) {
+				files["000002_widgets.down.sql"] = &fstest.MapFile{Data: []byte("DOWN widgets")}
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+		{
+			name: "unapplied pair has inconsistent names",
+			prepare: func(files fstest.MapFS) {
+				files["000002_widgets.up.sql"] = &fstest.MapFile{Data: []byte("UP widgets")}
+				files["000002_other.down.sql"] = &fstest.MapFile{Data: []byte("DOWN other")}
+			},
+			message: "has inconsistent names",
+		},
+		{
+			name: "unapplied pair has empty script",
+			prepare: func(files fstest.MapFS) {
+				files["000002_widgets.up.sql"] = &fstest.MapFile{}
+				files["000002_widgets.down.sql"] = &fstest.MapFile{Data: []byte("DOWN widgets")}
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+		{
+			name: "applied pair has whitespace only up script",
+			prepare: func(files fstest.MapFS) {
+				files["000001_users.up.sql"] = &fstest.MapFile{Data: []byte(" \r\n\t ")}
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+		{
+			name: "applied pair has whitespace only down script",
+			prepare: func(files fstest.MapFS) {
+				files["000001_users.down.sql"] = &fstest.MapFile{Data: []byte(" \r\n\t ")}
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+		{
+			name: "unapplied pair has whitespace only up script",
+			prepare: func(files fstest.MapFS) {
+				files["000002_widgets.up.sql"] = &fstest.MapFile{Data: []byte(" \r\n\t ")}
+				files["000002_widgets.down.sql"] = &fstest.MapFile{Data: []byte("DOWN widgets")}
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+		{
+			name: "unapplied pair has whitespace only down script",
+			prepare: func(files fstest.MapFS) {
+				files["000002_widgets.up.sql"] = &fstest.MapFile{Data: []byte("UP widgets")}
+				files["000002_widgets.down.sql"] = &fstest.MapFile{Data: []byte(" \r\n\t ")}
+			},
+			message: "must have both .up.sql and .down.sql files",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := migrationStateWithApplied(first)
+			files := migrationFiles(first)
+			test.prepare(files)
+			before := snapshotMigrationState(state)
+			migrator := &Migrator{DB: openMigrationDB(t, state), Files: files, Dialect: Postgres}
+			err := migrator.Verify(context.Background())
+			if !errors.Is(err, ErrInvalidMigrationSource) || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("Verify = %v; want invalid source with %q", err, test.message)
+			}
+			if !errors.Is(fmt.Errorf("diagnostic boundary: %w", err), ErrInvalidMigrationSource) {
+				t.Fatal("source category did not survive wrapping")
+			}
+			assertVerifyCategories(t, err, ErrInvalidMigrationSource)
+			assertVerifyDidNotMutate(t, state, before)
+			if len(state.queryCalls) != 0 {
+				t.Fatal("invalid source must not be described as applied drift without inspecting the ledger")
+			}
+		})
+	}
+}
+
+func assertVerifyCategories(t *testing.T, err, want error) {
+	t.Helper()
+	for _, category := range []error{ErrPendingMigration, ErrMigrationDrift, ErrLedgerUpgradeRequired, ErrInvalidMigrationSource} {
+		if errors.Is(err, category) != (category == want) {
+			t.Fatalf("Verify = %v; unexpected category %v (want %v)", err, category, want)
+		}
+	}
+}
+
+func assertVerifyDidNotMutate(t *testing.T, state *migrationDriverState, before migrationStateSnapshot) {
+	t.Helper()
+	if after := snapshotMigrationState(state); !reflect.DeepEqual(before, after) {
+		t.Fatalf("Verify mutated database state: before=%+v after=%+v", before, after)
+	}
+	if state.execCalls != 0 || state.beginCalls != 0 {
+		t.Fatalf("Verify performed operational work: exec=%d begin=%d", state.execCalls, state.beginCalls)
+	}
+	for _, query := range state.queryCalls {
+		if !strings.HasPrefix(query, "SELECT is_nullable FROM information_schema.columns ") &&
+			query != "SELECT version, name, checksum, applied_at FROM schema_migrations" {
+			t.Fatalf("Verify performed unexpected read/lock: %q", query)
+		}
 	}
 }
 

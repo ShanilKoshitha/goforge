@@ -254,6 +254,11 @@ func (migrator *Migrator) Status(ctx context.Context) ([]Status, error) {
 // Verify checks migration integrity without creating or altering database
 // objects. It is suitable for request-path readiness checks; use Status for
 // operational inspection that may upgrade a legacy migration ledger.
+// Integrity failures wrap ErrLedgerUpgradeRequired, ErrMigrationDrift, or
+// ErrPendingMigration for errors.Is classification. Invalid source pairs wrap
+// ErrInvalidMigrationSource before the ledger is inspected. Other failures
+// retain their underlying database or filesystem error; error details are not
+// safe to expose to untrusted users.
 func (migrator *Migrator) Verify(ctx context.Context) error {
 	if err := migrator.validate(); err != nil {
 		return err
@@ -271,7 +276,7 @@ func (migrator *Migrator) Verify(ctx context.Context) error {
 		return fmt.Errorf("inspect migrations table: %w", err)
 	}
 	if !hasChecksum || checksumNullable {
-		return fmt.Errorf("migration ledger requires an operational upgrade")
+		return fmt.Errorf("%w: migration ledger requires an operational upgrade", ErrLedgerUpgradeRequired)
 	}
 	applied, err := migrator.applied(ctx, migrator.DB)
 	if err != nil {
@@ -282,7 +287,7 @@ func (migrator *Migrator) Verify(ctx context.Context) error {
 	}
 	for _, migration := range migrations {
 		if _, exists := applied[migration.Version]; !exists {
-			return fmt.Errorf("migration %s is pending", migration.Version)
+			return fmt.Errorf("%w: migration %s is pending", ErrPendingMigration, migration.Version)
 		}
 	}
 	return nil
@@ -347,7 +352,7 @@ func (migrator *Migrator) load() ([]Migration, error) {
 			migration = &Migration{Version: version, Name: name}
 			byVersion[version] = migration
 		} else if migration.Name != name {
-			return nil, fmt.Errorf("migration version %s has inconsistent names", version)
+			return nil, fmt.Errorf("%w: migration version %s has inconsistent names", ErrInvalidMigrationSource, version)
 		}
 		contents, err := fs.ReadFile(migrator.Files, path.Join(directory, entry.Name()))
 		if err != nil {
@@ -361,8 +366,12 @@ func (migrator *Migrator) load() ([]Migration, error) {
 	}
 	result := make([]Migration, 0, len(byVersion))
 	for _, migration := range byVersion {
-		if migration.Up == "" || migration.Down == "" {
-			return nil, fmt.Errorf("migration %s must have both .up.sql and .down.sql files", migration.Version)
+		if strings.TrimSpace(migration.Up) == "" || strings.TrimSpace(migration.Down) == "" {
+			direction := "up"
+			if strings.TrimSpace(migration.Up) != "" {
+				direction = "down"
+			}
+			return nil, fmt.Errorf("%w: migration %s must have both .up.sql and .down.sql files (missing or empty %s script)", ErrInvalidMigrationSource, migration.Version, direction)
 		}
 		result = append(result, *migration)
 	}
@@ -417,20 +426,20 @@ func (migrator *Migrator) verifyApplied(ctx context.Context, database executor, 
 	for version, recorded := range applied {
 		migration, exists := byVersion[version]
 		if !exists {
-			return fmt.Errorf("applied migration %s is missing from the migration filesystem", version)
+			return fmt.Errorf("%w: applied migration %s is missing from the migration filesystem", ErrMigrationDrift, version)
 		}
 		if recorded.Name != migration.Name {
-			return fmt.Errorf("applied migration %s name mismatch: database has %q, filesystem has %q", version, recorded.Name, migration.Name)
+			return fmt.Errorf("%w: applied migration %s name mismatch: database has %q, filesystem has %q", ErrMigrationDrift, version, recorded.Name, migration.Name)
 		}
 		expected := checksum(migration)
 		if recorded.Checksum.Valid {
 			if recorded.Checksum.String != expected {
-				return fmt.Errorf("applied migration %s checksum mismatch", version)
+				return fmt.Errorf("%w: applied migration %s checksum mismatch", ErrMigrationDrift, version)
 			}
 			continue
 		}
 		if !allowChecksumBackfill {
-			return fmt.Errorf("applied migration %s has no checksum; refusing to rebaseline", version)
+			return fmt.Errorf("%w: applied migration %s has no checksum; refusing to rebaseline", ErrMigrationDrift, version)
 		}
 		query := fmt.Sprintf("UPDATE %s SET checksum = %s WHERE version = %s AND checksum IS NULL", table, migrator.bind(1), migrator.bind(2))
 		result, err := database.ExecContext(ctx, query, expected, version)
