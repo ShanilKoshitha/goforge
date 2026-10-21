@@ -1,11 +1,11 @@
 # v0.21 component attributes and accessible forms scorecard
 
-Status: **in progress** — v0.21.0 runtime accepted; v0.21.1 form-recovery corrections under review — 2026-10-21
+Status: **accepted** — v0.21.0 runtime and v0.21.1 format-15 adoption published; public distribution verified — 2026-10-21
 
 Release boundary: v0.21.0 publishes and verifies the backward-compatible view
 compiler while retaining the format-14 scaffold and its public v0.19.0 pin.
-The public proxy and checksum database now serve v0.21.0. The v0.21.1
-candidate therefore moves only fresh applications to format 15 and pins that
+The public proxy and checksum database serve both releases. The v0.21.1
+release moves only fresh applications to format 15 and pins that
 immutable runtime; formats 4 through 14 retain their released behavior.
 
 Target:
@@ -28,9 +28,9 @@ Target:
 | Contextual escaping remains authoritative | passing | Hostile text, markup, quotes, and URL values pass through `html/template`; URL-bearing attributes reject unsafe schemes and no bag can smuggle attribute names or trusted HTML |
 | Explicit form selection is additive | passing | `form=` helpers work inside range, with, and components with evaluate-once semantics; every released legacy spelling retains its exact `.Form` expansion and behavior |
 | Fresh authentication forms are accessible and isolated | passing | Generated controller/component tests and both candidate CI runs cover login, registration, recovery, token/password/action isolation, associated controls, non-secret recovery, and mixed-case password non-recovery |
-| A typed resource form works end to end | recovery fixes locally passing; PostgreSQL revalidation pending | Existing typed correction journeys passed both candidate runs; new generated tests exercise combined errors and invalid-version correction, while expanded PostgreSQL regressions still require execution |
-| Compatibility and escape hatches remain explicit | passing for v0.21.0 runtime stage | Formats 4–14 retain old generated output and commands, public format-14 compatibility passes, ordinary Go-template actions/functions/raw HTML and renderer replacement remain available, and no format-15 app pins an unpublished runtime |
-| The milestone passes twice without regression | passing for v0.21.0 runtime stage; format-15 adoption pending | Framework race/vet/build, released-format compatibility, generated PostgreSQL journeys, native Windows, and independent adversarial review pass twice on the runtime candidate; fresh format-15 inspection and auth/resource journeys remain the v0.21.1 gate |
+| A typed resource form works end to end | passing | Correction commit dda1805 passed fresh generated tests and repeated PostgreSQL journeys, including combined errors, field accessibility, invalid-version correction, no-write rejection, and stale conflicts |
+| Compatibility and escape hatches remain explicit | passing | Formats 4–14 retain their released contracts, public formats 7–14 pass CI, and a no-replace format-15 application passes against public v0.21.0; ordinary Go-template actions/functions/raw HTML and renderer replacement remain available |
+| The milestone passes twice without regression | passing | PR workflow 39600373426 and push workflow 39600306047 both pass the complete Linux/PostgreSQL and Windows matrix at correction commit dda1805; independent code and evidence reviews report no remaining blocker |
 
 ## Runnable baseline — 2026-09-16
 
@@ -129,9 +129,10 @@ Target:
   form without a usable hidden version. Existing tests checked rejection but
   did not complete correction from these states. Prior green runs therefore do
   not establish acceptance of these missing recovery cases.
-- Branch `codex/v0.21.1-form-recovery` starts from merged `b7a8a23`. The release
-  remains unpublished pending focused fixes, generated correction/no-write and
+- Branch `codex/v0.21.1-form-recovery` starts from merged `b7a8a23`. The
+  corrections now pass focused tests, generated correction/no-write and
   stale-version regressions, independent review, and two clean candidate gates.
+  Merged-main and public distribution verification subsequently passed below.
 - The correction merges semantic and scalar errors, loads invalid update forms
   through the authorized member scope, recovers missing/invalid/nonpositive
   versions, and preserves valid stale versions. Generated tests cover correction
@@ -146,14 +147,69 @@ Target:
   freshness, module verification, zero tidy diff, all generated tests, vet, and
   server/worker/scheduler/console builds. Source inspection confirms scoped
   correction logic and ordinary compiled templates without attribute runtime
-  machinery. Local Docker has no running daemon, so PostgreSQL evidence remains
-  assigned to hosted CI.
+  machinery. Local Docker has no running daemon; the successful hosted runs
+  below provide the PostgreSQL evidence.
 - Native framework revalidation passed `go test ./... -count=1`
   (`internal/cli` 313.567s), and final formatting, vet, and diff checks pass.
   The initial sandboxed attempt was invalidated by Windows file-replacement,
   TCP-owner-table, and loopback restrictions; the native run resolves those
-  environment failures. Expanded database acceptance and two clean runs after
-  the completed correction remain required before publication.
+  environment failures. The completed correction was then checked by the two
+  complete hosted acceptance workflows below.
+- A further full native `go test ./... -count=1` on frozen correction commit
+  `dda1805` passed (`internal/cli` 283.611s). Push workflow
+  [39600306047](https://github.com/ShanilKoshitha/goforge/actions/runs/39600306047)
+  and PR workflow
+  [39600373426](https://github.com/ShanilKoshitha/goforge/actions/runs/39600373426)
+  both passed the complete Linux/PostgreSQL and Windows acceptance gates.
+- PR workflow `39600373426` completed successfully: Linux/PostgreSQL 17m36s
+  and Windows 7m18s. Its full race suite passed (`internal/cli` 505.203s), as
+  did all public compatibility and fresh public-runtime application gates.
+  Logs show `TestGeneratedPostgresWorkflow` passing twice (53.85s and 58.49s),
+  along with repeated recovery, token, relationship, and authorization journeys.
+  An independent evidence audit traced the expanded typed-browser helper into
+  that executed workflow and found every functional criterion covered.
+- Push workflow `39600306047` independently passed Linux/PostgreSQL in 24m57s
+  and Windows in 7m40s at the same correction commit. Its logs show the expanded
+  `TestGeneratedPostgresWorkflow` passing twice (74.45s and 74.02s), together
+  with repeated recovery, token, relationship, and authorization journeys.
+  This establishes two complete correction passes. Further work is release
+  verification and evidence publication; no additional feature is in scope.
+- PR [#38](https://github.com/ShanilKoshitha/goforge/pull/38) merged as
+  `8be0d79fd99b2647909722ff48b948db58d29b74`. Its tracked tree is identical to
+  accepted correction commit `dda1805`. The local main branch is fast-forwarded
+  to that merge while unrelated cleanup notes remain unstaged. Exact-main
+  workflow [39603892753](https://github.com/ShanilKoshitha/goforge/actions/runs/39603892753)
+  passed Linux/PostgreSQL in 23m35s and native Windows in 7m15s, including the
+  complete compatibility, fresh-app, and repeated database acceptance gates.
+
+## v0.21.1 release verification — 2026-10-21
+
+- Lightweight unsigned tag `v0.21.1` points to accepted merge
+  `8be0d79fd99b2647909722ff48b948db58d29b74`. The local object type is `commit`,
+  and the remote tag advertises the same commit rather than an annotated tag
+  object. GitHub publishes
+  [GoForge v0.21.1](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.21.1)
+  as a non-draft, non-prerelease release.
+- The public Go proxy reports that exact origin hash for `refs/tags/v0.21.1`.
+  SumDB record `69661702` independently publishes module checksum
+  `h1:BgJ04QCfGgmAxD+r6WpeVB26qb96lFqXPPCYnUddBCA=` and go.mod checksum
+  `h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`.
+- The PowerShell installer fetched public v0.21.1 through the Go proxy and
+  checksum database into an isolated workspace binary directory, verified Go
+  module metadata and `forge 0.21.1`, and reported success. `-SkipPathUpdate`
+  kept the user's installed CLI and PATH unchanged; ordinary shared module and
+  build caches were reused.
+- That installed binary generated no-replace `example.com/releasedv0211` at
+  format 15 pinned to immutable public v0.21.0. It generated Category, a Ticket
+  with all scalar types and a required belongs-to, and a legacy-style resource.
+  View/ORM/asset freshness, module verification, zero tidy diff, `forge test`,
+  vet, `forge build`, and worker/scheduler/console builds all passed. Inspection
+  confirmed the scoped correction logic and compiled ordinary templates with
+  no attribute runtime machinery. Four executable artifacts were produced.
+- Tag workflow
+  [39607483308](https://github.com/ShanilKoshitha/goforge/actions/runs/39607483308)
+  is additional verification of the same accepted merge; its result is not yet
+  recorded here. No feature work followed the two accepted implementation passes.
 
 ## v0.21.0 runtime-stage evidence — 2026-09-14
 
