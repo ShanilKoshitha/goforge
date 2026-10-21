@@ -15,6 +15,12 @@ var format13ResourceDeclarations = map[string]struct{}{
 	"OwnerScope": {}, "Scope": {},
 }
 
+var format16ResourceDeclarations = map[string]struct{}{
+	"ListOptions": {}, "ParseListOptions": {}, "DefaultListOptions": {},
+	"ChoiceOptions": {}, "DefaultChoiceOptions": {}, "AssociationChoicePage": {},
+	"ChoiceFormState": {},
+}
+
 func generatedResourceRegistry(module string, state resourceState) (string, error) {
 	return generatedResourceRegistryForFormat(module, state, 8)
 }
@@ -46,6 +52,7 @@ type resourceTemplateData struct {
 	FirstTextualField     *resourceTemplateField
 	AuthorizationPolicies bool
 	AccessibleForms       bool
+	ScalableResources     bool
 }
 
 // resourceTemplateRelationship exposes only resolved, deterministic names to
@@ -60,6 +67,9 @@ type resourceTemplateRelationship struct {
 	TargetQueryAccessor string
 	IndexName           string
 	ConstraintName      string
+	ChoiceLabelName     string
+	ChoiceLabelGoName   string
+	ChoiceLabelNullable bool
 }
 
 type resourceTemplateField struct {
@@ -92,6 +102,16 @@ func resourceFiles(module string, definition resourceDefinition) ([]plannedFile,
 
 func resourceFilesForFormat(module string, definition resourceDefinition, format int) ([]plannedFile, error) {
 	spec := definition.resourceSpec
+	if format >= 16 {
+		if _, conflicts := format16ResourceDeclarations[spec.Name]; conflicts {
+			return nil, fmt.Errorf("resource %s conflicts with a format-16 browsing declaration", spec.Name)
+		}
+		for _, field := range definition.Fields {
+			if field.Name == "intent" || field.Name == "validation_attempted" {
+				return nil, fmt.Errorf("resource field %s conflicts with a format-16 form control", field.Name)
+			}
+		}
+	}
 	if format >= 13 {
 		if _, conflicts := format13ResourceDeclarations[spec.Name]; conflicts {
 			return nil, fmt.Errorf("resource %s conflicts with a format-13 authorization declaration", spec.Name)
@@ -110,6 +130,7 @@ func resourceFilesForFormat(module string, definition resourceDefinition, format
 		OwnerCandidateKey:     format >= 10,
 		AuthorizationPolicies: format >= 13,
 		AccessibleForms:       format >= 15,
+		ScalableResources:     format >= 16,
 	}
 	if data.OwnerCandidateKey {
 		data.OwnerKeyName = spec.Plural + "_owner_id_key"
@@ -129,6 +150,9 @@ func resourceFilesForFormat(module string, definition resourceDefinition, format
 		}
 	}
 	for _, relationship := range definition.Relationships {
+		if relationship.ChoiceLabelName != "" && !data.ScalableResources {
+			return nil, fmt.Errorf("choice-label declarations require project format 16 or newer")
+		}
 		data.Relationships = append(data.Relationships, resourceTemplateRelationship{
 			Name:                relationship.Name,
 			GoName:              relationship.GoName,
@@ -139,6 +163,9 @@ func resourceFilesForFormat(module string, definition resourceDefinition, format
 			TargetQueryAccessor: relationship.TargetQueryAccessor,
 			IndexName:           relationship.IndexName,
 			ConstraintName:      relationship.ConstraintName,
+			ChoiceLabelName:     relationship.ChoiceLabelName,
+			ChoiceLabelGoName:   relationship.ChoiceLabelGoName,
+			ChoiceLabelNullable: relationship.ChoiceLabelNullable,
 		})
 	}
 	var files []plannedFile
@@ -149,6 +176,9 @@ func resourceFilesForFormat(module string, definition resourceDefinition, format
 	}
 	files = append(files, plannedFile{path: modelDestination, content: modelSource})
 	names := []string{"model.go", "repository.go", "repository_test.go", "request.go", "controller.go", "controller_test.go", "web_controller.go", "web_controller_test.go"}
+	if data.ScalableResources {
+		names = append(names, "browse.go", "browse_test.go")
+	}
 	if data.AuthorizationPolicies {
 		names = append(names, "authorization.go", "authorization_test.go")
 	}

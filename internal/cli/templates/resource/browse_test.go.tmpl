@@ -1,0 +1,214 @@
+package [[.Package]]
+
+import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"net/http"
+	"net/url"
+	"reflect"
+	"strings"
+	"testing"
+[[if .Relationships]]	"unicode/utf8"
+[[end]]
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/orm"
+[[if .Relationships]]
+	"[[.Module]]/internal/models"
+[[end]]
+)
+
+func TestListOptionsStrictSharedTransportContract(t *testing.T) {
+	defaults, err := ParseListOptions("")
+	if err != nil || defaults != DefaultListOptions() { t.Fatalf("defaults = %#v, %v", defaults, err) }
+	query := url.Values{"id": {"41"}, "sort": {"id"}, "direction": {"asc"}, "page": {"2"}, "per_page": {"100"}[[range .Relationships]], "[[.ForeignKey]]": {"71"}[[end]]}
+[[if .HasTextualFields]]	query.Set("q", " literal %_!\\ text ")
+[[end]]	parsed, err := ParseListOptions(query.Encode())
+	if err != nil || parsed.ID != 41 || parsed.Direction != "asc" || parsed.Page != 2 || parsed.PerPage != 100 { t.Fatalf("parsed = %#v, %v", parsed, err) }
+[[if .HasTextualFields]]	if parsed.Search != " literal %_!\\ text " { t.Fatalf("literal search was changed: %q", parsed.Search) }
+[[end]][[range .Relationships]]	if parsed.[[.ForeignKeyGoName]] != 71 { t.Fatalf("lost [[.ForeignKey]] filter: %#v", parsed) }
+[[end]]	roundTrip, err := ParseListOptions(parsed.Values().Encode())
+	if err != nil || parsed != roundTrip { t.Fatalf("query state was not retained: %#v %#v %v", parsed, roundTrip, err) }
+	if _, err := ParseListOptions("id="[[range .Relationships]] + "&[[.ForeignKey]]="[[end]]); err != nil { t.Fatalf("empty optional controls must be absent: %v", err) }
+	invalid := []string{
+		"unknown=1", "q=a&q=b", "sort=id&sort=id", "page=0", "page=-1", "page=10001", "page=", "page=1.5", "per_page=0", "per_page=101", "per_page=", "id=0", "id=-1", "id=no", "id=9223372036854775808", "sort=", "sort=user_id", "sort=id%3BDROP", "direction=", "direction=ASC", "q=%", "q=%FF", "q=%00", "q=%09", "q=%C2%85", "q=a;b", "q="+url.QueryEscape(strings.Repeat("界", 201)), strings.Repeat("x", 16_385),
+[[range .Relationships]]		"[[.ForeignKey]]=0", "[[.ForeignKey]]=no", "[[.ForeignKey]]=1&[[.ForeignKey]]=2",
+[[end]]	}
+[[if not .HasTextualFields]]	invalid = append(invalid, "q=not-declared")
+[[end]]	for _, raw := range invalid {
+		if _, err := ParseListOptions(raw); err == nil { t.Errorf("invalid query accepted: %q", raw) } else {
+			var typed *httpx.HTTPError
+			if !errors.As(err, &typed) || typed.Status != http.StatusBadRequest { t.Errorf("invalid query error = %#v", err) }
+		}
+	}
+[[if .HasTextualFields]]	if _, err := ParseListOptions("q="+url.QueryEscape(strings.Repeat("界", 200))); err != nil { t.Fatalf("200-rune search rejected: %v", err) }
+[[end]]	for _, key := range []string{"id"[[range .Fields]], "[[.Name]]"[[end]][[range .Relationships]], "[[.ForeignKey]]"[[end]]} {
+		for _, direction := range []string{"asc", "desc"} {
+			if _, err := ParseListOptions("sort="+key+"&direction="+direction); err != nil { t.Fatalf("declared sort %s %s: %v", key, direction, err) }
+		}
+	}
+}
+
+func TestBrowseUsesScopedTypedFiltersOrderingAndBoundsInDBAndTx(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	check := func(t *testing.T, executor orm.Executor) {
+		t.Helper()
+		repository := NewPostgresRepository(executor)
+		connection := repositoryConnectionFrom(t, executor)
+		connection.resetStatements()
+		options := DefaultListOptions()
+		options.ID, options.Page, options.PerPage, options.Direction = 41, 2, 5, "asc"
+[[range .Relationships]]		options.[[.ForeignKeyGoName]] = 71
+[[end]][[if .HasTextualFields]]		options.Search = "%_!\\"
+[[end]]		page, err := repository.Browse(context.Background(), OwnerScope(9), options)
+		if err != nil || len(page.Items) != 1 || page.Number != 2 || page.PerPage != 5 || !page.HasPrevious || page.HasNext { t.Fatalf("browse page = %#v, %v", page, err) }
+		query, args := connection.queries[0], connection.queryArgs[0]
+		if !strings.Contains(query, `WHERE "[[.Plural]]"."user_id" = $1 AND "[[.Plural]]"."id" = $2`) || !strings.Contains(query, `ORDER BY "[[.Plural]]"."id" ASC`) { t.Fatalf("scope/order lost: %s", query) }
+		wantArgs := []any{int64(9), int64(41)[[range .Relationships]], int64(71)[[end]][[range .Fields]][[if or .String .Text]], "%!%!_!!\\%"[[end]][[end]], int64(6), int64(5)}
+		assertBrowseArguments(t, args, wantArgs)
+[[range .Fields]][[if or .String .Text]]		if !strings.Contains(query, `"[[$.Plural]]"."[[.Name]]" ILIKE`) { t.Fatalf("missing search field [[.Name]]: %s", query) }
+[[end]][[end]][[if .HasTextualFields]]		searchFields := []string{[[range .Fields]][[if or .String .Text]]"[[.Name]]",[[end]][[end]]}
+		if strings.Count(query, " OR ") != len(searchFields)-1 { t.Fatalf("search fields are not grouped with OR: %s", query) }
+[[end]]		connection.resetStatements()
+		if _, err := repository.Browse(context.Background(), AllRecordsScope(9), DefaultListOptions()); err != nil { t.Fatal(err) }
+		if strings.Contains(connection.queries[0], `."user_id" =`) { t.Fatalf("all-records browse retained owner predicate: %s", connection.queries[0]) }
+		connection.resetStatements()
+		if _, err := repository.Browse(context.Background(), Scope{}, options); err == nil || len(connection.queries) != 0 { t.Fatal("invalid scope reached database") }
+		options.Page = maximumPageNumber+1
+		if _, err := repository.Browse(context.Background(), OwnerScope(9), options); err == nil || len(connection.queries) != 0 { t.Fatal("invalid browse options reached database") }
+	}
+	t.Run("db", func(t *testing.T) { check(t, db) })
+	tx, err := db.Begin()
+	if err != nil { t.Fatal(err) }
+	defer tx.Rollback()
+	t.Run("tx", func(t *testing.T) { check(t, tx) })
+}
+
+func TestBrowseSentinelAndEveryScalarSort(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	repository := NewPostgresRepository(db)
+	connection := repositoryConnectionFrom(t, db)
+	connection.resourceRowCount = 3
+	options := DefaultListOptions()
+	options.PerPage = 2
+	page, err := repository.Browse(context.Background(), OwnerScope(9), options)
+	if err != nil || len(page.Items) != 2 || !page.HasNext { t.Fatalf("sentinel leaked or lost: %#v %v", page, err) }
+	connection.resourceRowCount = -1
+	options.Page = maximumPageNumber
+	page, err = repository.Browse(context.Background(), OwnerScope(9), options)
+	if err != nil || len(page.Items) != 0 || page.HasNext || !page.HasPrevious { t.Fatalf("empty late page = %#v %v", page, err) }
+	connection.resourceRowCount = maximumPageSize+1
+	options.Page, options.PerPage = 1, maximumPageSize
+	connection.resetStatements()
+	page, err = repository.Browse(context.Background(), OwnerScope(9), options)
+	if err != nil || len(page.Items) != maximumPageSize || !page.HasNext { t.Fatalf("maximum page was not bounded: %#v %v", page, err) }
+	assertBrowseArguments(t, connection.queryArgs[0], []any{int64(9), int64(101), int64(0)})
+	connection.resourceRowCount = -1
+	for _, key := range []string{"id"[[range .Fields]], "[[.Name]]"[[end]][[range .Relationships]], "[[.ForeignKey]]"[[end]]} {
+		for _, direction := range []string{"asc", "desc"} {
+			options.Sort, options.Direction = key, direction
+			connection.resetStatements()
+			if _, err := repository.Browse(context.Background(), OwnerScope(9), options); err != nil { t.Fatal(err) }
+			want := `ORDER BY "[[.Plural]]"."`+key+`" `+strings.ToUpper(direction)
+			if key != "id" { want += `, "[[.Plural]]"."id" `+strings.ToUpper(direction) }
+			if !strings.Contains(connection.queries[0], want) { t.Fatalf("unstable sort: %s", connection.queries[0]) }
+		}
+	}
+}
+
+func assertBrowseArguments(t *testing.T, values []driver.NamedValue, want []any) {
+	t.Helper()
+	got := make([]any, len(values))
+	for index, value := range values { got[index] = value.Value }
+	if !reflect.DeepEqual(got, want) { t.Fatalf("bound args = %#v; want %#v", got, want) }
+}
+[[if .Relationships]]
+func TestChoiceOptionsAndLabels(t *testing.T) {
+	for _, options := range []ChoiceOptions{{Search: "x", ID: 1}, {ID: -1}, {SelectedID: -1}, {Page: -1}, {Page: 10001}, {Search: string([]byte{0xff})}, {Search: "\x00"}, {Search: strings.Repeat("界", 201)}} {
+		if err := options.Validate(true); err == nil { t.Fatalf("invalid choice accepted: %#v", options) }
+	}
+	if err := (ChoiceOptions{Search: "private"}).Validate(false); err == nil { t.Fatal("undeclared choice text search accepted") }
+	if err := (ChoiceOptions{Search: strings.Repeat("界", 200)}).Validate(true); err != nil { t.Fatal(err) }
+	label := associationChoiceLabel("Target", 71, strings.Repeat("界", 121))
+	text := strings.TrimSuffix(label, " (Target #71)")
+	if utf8.RuneCountInString(text) != 120 || !utf8.ValidString(label) { t.Fatalf("label truncation = %q", label) }
+	if got := associationChoiceLabel("Target", 71, ""); got != "Target #71" { t.Fatalf("ID label = %q", got) }
+	if got := associationChoiceLabel("Target", 71, "<script>&"); got != "<script>& (Target #71)" { t.Fatalf("label was escaped before rendering: %q", got) }
+[[range .Relationships]]	{
+		item := models.[[.TargetSpec.Name]]{ID: 71}
+		if choice := [[.Name]]AssociationChoice(item); choice.Label != "[[.TargetSpec.Name]] #71" { t.Fatalf("[[.GoName]] empty/null label did not fall back to ID: %#v", choice) }
+[[if .ChoiceLabelGoName]]		text := strings.Repeat("界", 121)
+		item.[[.ChoiceLabelGoName]] = [[if .ChoiceLabelNullable]]&text[[else]]text[[end]]
+		if choice := [[.Name]]AssociationChoice(item); choice.Label != strings.Repeat("界", 120)+" ([[.TargetSpec.Name]] #71)" { t.Fatalf("[[.GoName]] label did not use only declared/truncated text: %#v", choice) }
+[[end]]	}
+[[end]]
+}
+
+func TestChoicePagesBoundedSelectedRetentionAndPrivacyInDBAndTx(t *testing.T) {
+	registerRepositoryDriver.Do(func() { sql.Register("goforge-generated-repository", repositoryDriver{}) })
+	db, err := sql.Open("goforge-generated-repository", "")
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	check := func(t *testing.T, executor orm.Executor) {
+		repository := NewPostgresRepository(executor)
+		connection := repositoryConnectionFrom(t, executor)
+[[range .Relationships]]		{
+			connection.targetQuery = func(query string, _ []driver.NamedValue) (driver.Rows, error) {
+				columns := repositorySelectedColumns(query)
+				values := repositoryTargetValues(columns)
+				count := associationChoicePageSize+1
+				if strings.Contains(query, `."id" =`) && !strings.Contains(query, " OFFSET ") { count = 1; for index, column := range columns { if column == "id" { values[index] = int64(99) } } }
+				return &repositoryRows{columns: columns, values: values, remaining: count}, nil
+			}
+			connection.resetStatements()
+			options := ChoiceOptions{Page: 2, SelectedID: 99}
+			page, err := repository.[[.GoName]]Choices(context.Background(), 9, options)
+			if err != nil || len(page.Items) != associationChoicePageSize || !page.HasNext || !page.HasPrevious || page.Number != 2 || page.Selected == nil || page.Selected.ID != 99 { t.Fatalf("[[.GoName]] retained page = %#v, %v", page, err) }
+			if page.Items[0].Label != "[[if .ChoiceLabelGoName]]1 ([[end]][[.TargetSpec.Name]] #71[[if .ChoiceLabelGoName]])[[end]]" { t.Fatalf("[[.GoName]] disclosed the wrong label: %q", page.Items[0].Label) }
+			if len(connection.queries) != 2 || !strings.Contains(connection.queries[0], `"[[.TargetSpec.Plural]]"."user_id" = $1`) || !strings.Contains(connection.queries[1], `"[[.TargetSpec.Plural]]"."user_id" = $1 AND "[[.TargetSpec.Plural]]"."id" = $2`) { t.Fatalf("[[.GoName]] selection lost owner scope: %#v", connection.queries) }
+			assertBrowseArguments(t, connection.queryArgs[0], []any{int64(9), int64(21), int64(20)})
+			assertBrowseArguments(t, connection.queryArgs[1], []any{int64(9), int64(99), int64(1)})
+			options.SelectedID = 71
+			connection.resetStatements()
+			page, err = repository.[[.GoName]]Choices(context.Background(), 9, options)
+			if err != nil || page.Selected == nil || page.Selected.ID != 71 || len(connection.queries) != 1 { t.Fatalf("[[.GoName]] in-page selection used extra queries: %#v %v %#v", page, err, connection.queries) }
+			options.SelectedID = 99
+			options.ID = 71
+			connection.resetStatements()
+			page, err = repository.[[.GoName]]Choices(context.Background(), 9, options)
+			if err != nil || page.Selected == nil || page.Selected.ID != 99 || len(connection.queries) != 2 { t.Fatalf("[[.GoName]] ID filter hid independent selection: %#v %v", page, err) }
+			assertBrowseArguments(t, connection.queryArgs[0], []any{int64(9), int64(71), int64(21), int64(20)})
+			assertBrowseArguments(t, connection.queryArgs[1], []any{int64(9), int64(99), int64(1)})
+			options.ID = 0
+			connection.targetQuery = func(query string, _ []driver.NamedValue) (driver.Rows, error) { return &repositoryRows{columns: repositorySelectedColumns(query)}, nil }
+			connection.resetStatements()
+			page, err = repository.[[.GoName]]Choices(context.Background(), 9, options)
+			if err != nil || page.Selected != nil || len(page.Items) != 0 || page.HasNext { t.Fatalf("[[.GoName]] missing/foreign selection disclosed: %#v %v", page, err) }
+			connection.resetStatements()
+			if _, err := repository.[[.GoName]]Choices(context.Background(), 0, options); err == nil || len(connection.queries) != 0 { t.Fatal("invalid choice owner reached DB") }
+[[if .ChoiceLabelGoName]]			connection.targetQuery = nil
+			connection.targetRowCount = 1
+			options = ChoiceOptions{Search: "%_!\\", Page: 1}
+			connection.resetStatements()
+			if _, err := repository.[[.GoName]]Choices(context.Background(), 9, options); err != nil { t.Fatal(err) }
+			if !strings.Contains(connection.queries[0], `"[[.TargetSpec.Plural]]"."[[.ChoiceLabelName]]" ILIKE $2 ESCAPE '!'`) { t.Fatalf("declared choice search missing: %s", connection.queries[0]) }
+			assertBrowseArguments(t, connection.queryArgs[0], []any{int64(9), "%!%!_!!\\%", int64(21), int64(0)})
+[[else]]			if _, err := repository.[[.GoName]]Choices(context.Background(), 9, ChoiceOptions{Search: "private"}); err == nil || len(connection.queries) != 0 { t.Fatal("undeclared choice text reached DB") }
+[[end]]			connection.targetQuery = nil
+		}
+[[end]]	}
+	t.Run("db", func(t *testing.T) { check(t, db) })
+	tx, err := db.Begin()
+	if err != nil { t.Fatal(err) }
+	defer tx.Rollback()
+	t.Run("tx", func(t *testing.T) { check(t, tx) })
+}
+[[end]]

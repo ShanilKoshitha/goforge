@@ -1,6 +1,6 @@
 # v0.22 — Resource browsing and relationship selection at scale
 
-Status: **acceptance defined; runtime implementation started** — 2026-10-21.
+Status: **runtime published and verified; format-16 adoption candidate in qualification** — 2026-10-21.
 
 This milestone extends the accepted v0.21.1 application workflow. It does not
 reopen the completed component/form milestone or claim the rest of ROADMAP.md.
@@ -41,6 +41,9 @@ JSON writes retain their strict decoding, authorization, and association rules.
   `--choice-label category:title` opts one relationship into disclosing that
   target string/text field to actors permitted to create/edit the source. It
   declares a choice-safe presentation capability, not full target list access.
+  Initial declarations accept editable plain string/*string fields stored as
+  PostgreSQL text or sized varchar/character varying; protected, generated,
+  UUID-backed, and custom wrapper fields require application-owned choice code.
   Never infer a private field merely because it is textual. Resolve/validate
   declared fields once at generation time; emit direct Go references, include
   IDs, and truncate label text deterministically to 120 UTF-8 runes
@@ -87,6 +90,8 @@ JSON writes retain their strict decoding, authorization, and association rules.
   A resource
   without text fields rejects nonempty `q`. `id` and foreign-key filters are
   positive int64 equality predicates; combined filters all apply with AND.
+  Empty optional ID controls mean no filter so native GET forms work; explicit
+  zero, negative, malformed, or surrounding-whitespace IDs reject.
 - Defaults: page 1, per_page 20, sort `id`, direction `desc`. Sort keys are `id`,
   declared scalar field names, and declared foreign-key names; direction accepts
   only `asc`/`desc`. Values beyond page 10,000 or size 100 reject rather than

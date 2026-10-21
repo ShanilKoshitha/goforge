@@ -43,12 +43,17 @@ func (controller *Controller) Index(ctx *httpx.Context) error {
 		return err
 	}
 [[end]]
-[[if .OwnerCandidateKey]]	pageNumber, pageSize, err := apiPaginationParameters(ctx)
+[[if .OwnerCandidateKey]][[if .ScalableResources]]	options, err := ParseListOptions(ctx.Request.URL.RawQuery)
+	if err != nil {
+		return err
+	}
+	page, err := controller.repository.Browse(ctx.Request.Context(), scope, options)
+[[else]]	pageNumber, pageSize, err := apiPaginationParameters(ctx)
 	if err != nil {
 		return err
 	}
 	page, err := controller.repository.Paginate(ctx.Request.Context(), [[if .AuthorizationPolicies]]scope[[else]]user.ID[[end]], pageNumber, pageSize)
-	if err != nil {
+[[end]]	if err != nil {
 		return err
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{

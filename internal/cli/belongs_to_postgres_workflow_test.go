@@ -39,6 +39,7 @@ func TestGeneratedBelongsToPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(scratch, baseEnvironment, forgeBinary, "new", "relations", "--module", "example.com/issueboard", "--replace", root); err != nil {
 		t.Fatalf("forge new: %v\n%s", err, output)
 	}
+	preserveFormat15WorkflowFixture(t, directory, forgeBinary, baseEnvironment)
 	commands := [][]string{
 		{"make:resource", "Category", "--field", "title:string"},
 		{"make:resource", "AlternateCategory", "--field", "title:string"},

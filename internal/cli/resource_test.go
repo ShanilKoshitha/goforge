@@ -243,7 +243,7 @@ func TestMakeResourceGeneratesOneTypedFieldContractAcrossEveryLayer(t *testing.T
 		"IssueColumns.UserID.Set(userID)")
 	assertGeneratedFileContains(t, "resources/views/pages/issues/form.forge.html",
 		`name="title"`, `name="notes"`, `name="priority"`, `name="active"`,
-		`components/input`, `components/textarea`, `type="number"`, `components/select`)
+		`components/input`, `components/textarea`, `type="text"`, `inputmode="numeric"`, `components/select`)
 
 	state, err := os.ReadFile(filepath.Join(".forge", "resources.json"))
 	if err != nil {
@@ -1143,7 +1143,7 @@ func assertGeneratedResourceFilesEqualExceptRegistry(t *testing.T, got, want map
 func TestMakeResourceRefusesNewerProjectFormatBeforeWriting(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 16\n"), 0o644); err != nil {
+	if err := os.WriteFile("forge.yaml", []byte("version: 17\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := makeResource("Issue", &bytes.Buffer{})

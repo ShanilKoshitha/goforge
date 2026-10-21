@@ -1531,3 +1531,21 @@ because its baseline or one helper test passes.
 Reason: normal data growth must not disable create/edit, and adding search must
 not trade away form recovery, authorization, ordinary Go, or a reproducible
 public installation path.
+
+Format-16 refresh display state preserves original scalar lexemes while writes
+and validation retain normalized values. Numeric draft controls use text plus
+numeric input mode so browsers cannot silently erase malformed values. New
+textarea components include a synthetic leading newline for HTML's initial-LF
+rule; old project formats/components are not rewritten. Choice-label declarations
+accept only editable plain string/*string fields backed by PostgreSQL text or
+varchar storage; UUID-backed strings require an explicit application replacement
+rather than a broken generated ILIKE query.
+
+Runtime-first publication is now satisfied by immutable public v0.22.0 at
+5efd243. Proxy/SumDB, isolated CLI installation, and a no-replace format-15
+application were verified before enabling the v0.22.1 format-16 candidate.
+Historical request/choice journeys keep explicit format-15 fixtures; a separate
+public v0.21.1 no-replace CI gate proves immutable old-runtime compatibility.
+The new scale journey, current scaffold, and account/job/token workflows exercise
+format 16. This separation preserves released assertions rather than weakening
+them to accommodate new form intents.

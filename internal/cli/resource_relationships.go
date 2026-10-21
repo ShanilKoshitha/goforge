@@ -14,6 +14,8 @@ type resourceRelationship struct {
 	TargetQueryAccessor string
 	IndexName           string
 	ConstraintName      string
+	ChoiceLabelGoName   string
+	ChoiceLabelNullable bool
 	targetMigrationPath string
 	targetMigration     developmentFileState
 }
@@ -48,6 +50,10 @@ func resolveResourceRelationships(child resourceSpec, state resourceState, reque
 		if err := validateResourceRelationshipTarget(target, model); err != nil {
 			return nil, fmt.Errorf("belongs-to target %s is incompatible: %w", target.Name, err)
 		}
+		label, err := resolveResourceChoiceLabel(model, relation.ChoiceLabelName)
+		if err != nil {
+			return nil, fmt.Errorf("belongs-to relationship %s: %w", relation.Name, err)
+		}
 		migrationPath, migration, err := captureResourceOwnerCandidateKey(target)
 		if err != nil {
 			return nil, fmt.Errorf("belongs-to target %s is incompatible: %w", target.Name, err)
@@ -73,11 +79,30 @@ func resolveResourceRelationships(child resourceSpec, state resourceState, reque
 			TargetQueryAccessor: accessor,
 			IndexName:           indexName,
 			ConstraintName:      constraintName,
+			ChoiceLabelGoName:   label.Name,
+			ChoiceLabelNullable: label.Nullable,
 			targetMigrationPath: migrationPath,
 			targetMigration:     migration,
 		})
 	}
 	return resolved, nil
+}
+
+func resolveResourceChoiceLabel(model modelDefinition, name string) (modelField, error) {
+	if name == "" {
+		return modelField{}, nil
+	}
+	for _, field := range model.Fields {
+		if field.Column != name {
+			continue
+		}
+		if field.typeFamily != "string" || (field.GoType != "string" && field.GoType != "*string") ||
+			field.Generated || field.Protected || (field.DBType != "text" && !sizedDatabaseType.MatchString(field.DBType)) {
+			return modelField{}, fmt.Errorf("choice-label %s:%s requires an editable string or *string target field stored as text/varchar; use application-owned choice code for other types", model.Name, name)
+		}
+		return field, nil
+	}
+	return modelField{}, fmt.Errorf("choice-label target %s has no field column %q", model.Name, name)
 }
 
 func captureResourceOwnerCandidateKey(resource resourceSpec) (string, developmentFileState, error) {
@@ -97,6 +122,33 @@ func captureResourceOwnerCandidateKey(resource resourceSpec) (string, developmen
 }
 
 func recheckResourceRelationshipDependencies(relationships []resourceRelationship) error {
+	var labeled bool
+	for _, relationship := range relationships {
+		labeled = labeled || relationship.ChoiceLabelName != ""
+	}
+	if labeled {
+		schema, err := parseModelSchema(filepath.Join("internal", "models"))
+		if err != nil {
+			return fmt.Errorf("recheck choice-label models: %w", err)
+		}
+		for _, relationship := range relationships {
+			if relationship.ChoiceLabelName == "" {
+				continue
+			}
+			matched := false
+			for _, model := range schema.Models {
+				if model.Name != relationship.TargetSpec.Name {
+					continue
+				}
+				field, err := resolveResourceChoiceLabel(model, relationship.ChoiceLabelName)
+				matched = err == nil && field.Name == relationship.ChoiceLabelGoName && field.Nullable == relationship.ChoiceLabelNullable &&
+					validateResourceRelationshipTarget(relationship.TargetSpec, model) == nil
+			}
+			if !matched {
+				return fmt.Errorf("choice-label target for relationship %s changed during resource generation; retry the command", relationship.Name)
+			}
+		}
+	}
 	for _, relationship := range relationships {
 		current, err := captureDevelopmentFile(relationship.targetMigrationPath)
 		if err != nil {

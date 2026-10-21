@@ -8,7 +8,7 @@ import (
 	schedulepostgres "github.com/ShanilKoshitha/goforge/schedule/postgres"
 )
 
-func TestFormatElevenScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
+func TestFreshScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 	files, err := scaffoldFiles("example.com/app", filepath.Clean("../framework"), "app")
 	if err != nil {
 		t.Fatal(err)
@@ -21,16 +21,18 @@ func TestFormatElevenScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 		"database/migrations/000005_create_schedules.down.sql",
 	} {
 		if files[path] == "" {
-			t.Errorf("format-12 scaffold omits %s", path)
+			t.Errorf("fresh scaffold omits %s", path)
 		}
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 15") {
-		t.Fatal("fresh scaffold must declare format 15")
+	if !strings.Contains(files["forge.yaml"], "version: 16") {
+		t.Fatal("fresh scaffold must declare format 16")
 	}
-	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.21.0") {
-		t.Fatal("fresh scaffold must pin the accepted v0.21.0 runtime")
+	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.22.0") {
+		t.Fatal("fresh scaffold must pin the public v0.22.0 runtime")
 	}
 	for _, checksum := range []string{
+		"github.com/ShanilKoshitha/goforge v0.22.0 h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=",
+		"github.com/ShanilKoshitha/goforge v0.22.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 		"github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=",
 		"github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=",
 	} {

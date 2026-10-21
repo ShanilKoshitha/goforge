@@ -49,6 +49,7 @@ type resourceBelongsTo struct {
 	ForeignKeyGoName string
 	Target           string
 	Required         bool
+	ChoiceLabelName  string
 }
 
 // resourceDefinition is deliberately ephemeral. Persistent resource metadata
@@ -108,6 +109,7 @@ func parseMakeResourceArguments(arguments []string) (string, []resourceField, []
 	name := arguments[0]
 	var fieldSpecifications []string
 	var belongsToSpecifications []string
+	var choiceLabelSpecifications []string
 	for index := 1; index < len(arguments); index++ {
 		argument := arguments[index]
 		switch {
@@ -135,6 +137,14 @@ func parseMakeResourceArguments(arguments []string) (string, []resourceField, []
 				return "", nil, nil, false, fmt.Errorf("--belongs-to requires a relationship specification; %w", resourceUsageError())
 			}
 			belongsToSpecifications = append(belongsToSpecifications, value)
+		case argument == "--choice-label":
+			if index+1 >= len(arguments) || strings.HasPrefix(arguments[index+1], "--") {
+				return "", nil, nil, false, fmt.Errorf("--choice-label requires relationship:field; %w", resourceUsageError())
+			}
+			index++
+			choiceLabelSpecifications = append(choiceLabelSpecifications, arguments[index])
+		case strings.HasPrefix(argument, "--choice-label="):
+			choiceLabelSpecifications = append(choiceLabelSpecifications, strings.TrimPrefix(argument, "--choice-label="))
 		default:
 			return "", nil, nil, false, fmt.Errorf("unknown resource option %q; %w", argument, resourceUsageError())
 		}
@@ -150,11 +160,43 @@ func parseMakeResourceArguments(arguments []string) (string, []resourceField, []
 	if err := validateResourceMemberCollisions(fields, belongsTo); err != nil {
 		return "", nil, nil, false, err
 	}
+	if err := applyResourceChoiceLabels(belongsTo, choiceLabelSpecifications); err != nil {
+		return "", nil, nil, false, err
+	}
 	return name, fields, belongsTo, len(fieldSpecifications) > 0 || len(belongsToSpecifications) > 0, nil
 }
 
 func resourceUsageError() error {
-	return fmt.Errorf("usage: forge make:resource <name> [--field <name>:<string|text|integer|boolean>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...")
+	return fmt.Errorf("usage: forge make:resource <name> [--field <name>:<string|text|integer|boolean>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]... [--choice-label <relationship>:<field>]...")
+}
+
+// Choice-label declarations are one-shot disclosure opt-ins. They are resolved
+// against source models before publication, never stored as runtime schema.
+func applyResourceChoiceLabels(relationships []resourceBelongsTo, specifications []string) error {
+	seen := make(map[string]bool, len(specifications))
+	for _, specification := range specifications {
+		parts := strings.Split(specification, ":")
+		if len(specification) > maximumResourceFieldLength || len(parts) != 2 ||
+			!resourceFieldName.MatchString(parts[0]) || !resourceFieldName.MatchString(parts[1]) {
+			return fmt.Errorf("choice-label %q must use relationship:field with lower_snake_case names", specification)
+		}
+		if seen[parts[0]] {
+			return fmt.Errorf("duplicate choice-label declaration for relationship %q", parts[0])
+		}
+		seen[parts[0]] = true
+		found := false
+		for index := range relationships {
+			if relationships[index].Name == parts[0] {
+				relationships[index].ChoiceLabelName = parts[1]
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("choice-label %q names an undeclared belongs-to relationship", specification)
+		}
+	}
+	return nil
 }
 
 func parseResourceBelongsTo(resourceName string, specifications []string) ([]resourceBelongsTo, error) {
