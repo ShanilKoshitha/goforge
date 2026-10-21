@@ -1143,7 +1143,7 @@ func assertGeneratedResourceFilesEqualExceptRegistry(t *testing.T, got, want map
 func TestMakeResourceRefusesNewerProjectFormatBeforeWriting(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := os.WriteFile("forge.yaml", []byte("version: 17\n"), 0o644); err != nil {
+	if err := os.WriteFile("forge.yaml", []byte("version: 18\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := makeResource("Issue", &bytes.Buffer{})

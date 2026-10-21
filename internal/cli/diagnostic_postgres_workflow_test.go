@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	osExec "os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -26,6 +29,7 @@ func TestGeneratedDiagnosticsPostgresWorkflow(t *testing.T) {
 	if databaseURL == "" {
 		t.Skip("GOFORGE_TEST_DATABASE_URL is not set")
 	}
+	root := projectRoot(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	admin, err := sql.Open("pgx", databaseURL)
@@ -59,7 +63,7 @@ func TestGeneratedDiagnosticsPostgresWorkflow(t *testing.T) {
 		t.Fatal("cannot open isolated PostgreSQL handle")
 	}
 	defer db.Close()
-	directory := diagnosticCandidateProject(t)
+	directory := adoptionDiagnosticProject(t)
 	t.Chdir(directory)
 	for key, value := range map[string]string{
 		"GOWORK": "off", "APP_ENV": "local", "APP_URL": "http://localhost:8080", "DATABASE_URL": isolatedURL,
@@ -67,7 +71,27 @@ func TestGeneratedDiagnosticsPostgresWorkflow(t *testing.T) {
 		t.Setenv(key, value)
 	}
 
-	runState := func(t *testing.T, wantCode string) {
+	// Compile once while the source still contains its original SQL. Exact
+	// executable exits are checked only for the pristine/healthy DB states below;
+	// source mutation states continue to recompile go:embed inputs through go run.
+	external := t.TempDir()
+	extension := filepath.Ext(workflowBuildDestination())
+	forgeBinary := filepath.Join(external, "forge"+extension)
+	diagnosticsBinary := filepath.Join(external, "diagnostics"+extension)
+	environment, err := diagnosticProcessEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, build := range [][]string{
+		{"-C", root, "build", "-mod=readonly", "-o", forgeBinary, "./cmd/forge"},
+		{"build", "-mod=readonly", "-o", diagnosticsBinary, "./cmd/diagnostics"},
+	} {
+		if err := (execProcessRunner{}).RunWithEnvironment(ctx, nil, io.Discard, io.Discard, environment, "go", build...); err != nil {
+			t.Fatalf("build diagnostic executable for OS-exit proof: %v", err)
+		}
+	}
+
+	runState := func(t *testing.T, wantCode string, executableExitProof ...bool) {
 		t.Helper()
 		beforeFiles := diagnosticSnapshot(t, directory)
 		beforeDB := diagnosticDatabaseSnapshot(t, ctx, db, schema)
@@ -96,7 +120,7 @@ func TestGeneratedDiagnosticsPostgresWorkflow(t *testing.T) {
 		// The CLI presentation/orchestration must preserve the same boundaries,
 		// including ORM/view/asset checks after an integrity failure.
 		var output bytes.Buffer
-		cliErr := diagnoseProject(ctx, &output, execProcessRunner{})
+		cliErr := RunContext(ctx, []string{"doctor"}, nil, &output, &output)
 		if (cliErr == nil) != (wantCode == "ok") {
 			t.Fatalf("CLI doctor exit disagrees with migration state %s: %v", wantCode, cliErr)
 		}
@@ -109,6 +133,57 @@ func TestGeneratedDiagnosticsPostgresWorkflow(t *testing.T) {
 		if strings.Contains(output.String(), "never-print-ledger-secret") {
 			t.Fatal("CLI doctor disclosed an applied ledger value")
 		}
+		if len(executableExitProof) > 0 && executableExitProof[0] {
+			wantExit := 1
+			if wantCode == "ok" {
+				wantExit = 0
+			}
+			for _, command := range []struct {
+				name string
+				json bool
+			}{
+				{forgeBinary, false},
+				{diagnosticsBinary, true},
+			} {
+				var stdout, stderr bytes.Buffer
+				commandErr := (execProcessRunner{}).RunWithEnvironment(ctx, nil, &stdout, &stderr, environment, command.name, "doctor")
+				if wantExit == 0 {
+					if commandErr != nil {
+						t.Fatal("healthy executable doctor did not exit zero")
+					}
+				} else {
+					var exit *osExec.ExitError
+					if !errors.As(commandErr, &exit) || exit.ExitCode() != wantExit {
+						t.Fatalf("unhealthy executable doctor did not exit exactly %d", wantExit)
+					}
+				}
+				assertDiagnosticPrivacy(t, stdout.String()+stderr.String())
+				if command.json {
+					var direct diagnosticReport
+					if err := decodeDiagnosticJSON(stdout.Bytes(), &direct); err != nil || !validDiagnosticReport(direct) {
+						t.Fatal("direct executable doctor did not emit a complete JSON report")
+					}
+					for index, check := range direct.Checks {
+						if index == 6 {
+							if check.Status != wantStatus || check.Code != wantCode {
+								t.Fatalf("direct executable migration verdict=%s/%s, want=%s/%s", check.Status, check.Code, wantStatus, wantCode)
+							}
+						} else if check.Status != "pass" {
+							t.Errorf("direct executable independent check %s did not pass", check.ID)
+						}
+					}
+				} else {
+					if !strings.Contains(stdout.String(), wantStatus+"\tmigrations\t") {
+						t.Fatal("forge executable did not report the expected migration state")
+					}
+					for _, id := range []string{"orm", "views", "assets"} {
+						if !strings.Contains(stdout.String(), "pass\t"+id+"\t") {
+							t.Errorf("forge executable independent %s check did not run", id)
+						}
+					}
+				}
+			}
+		}
 		if !reflect.DeepEqual(beforeFiles, diagnosticSnapshot(t, directory)) {
 			t.Fatal("doctor changed application files/directories")
 		}
@@ -117,7 +192,7 @@ func TestGeneratedDiagnosticsPostgresWorkflow(t *testing.T) {
 		}
 	}
 
-	t.Run("uninitialized_ledger", func(t *testing.T) { runState(t, "ledger_upgrade") })
+	t.Run("uninitialized_ledger", func(t *testing.T) { runState(t, "ledger_upgrade", true) })
 	runner := &migrate.Migrator{DB: db, Files: os.DirFS(filepath.Join(directory, "database", "migrations")), Dialect: migrate.Postgres}
 	if _, err := runner.Up(ctx, 0); err != nil {
 		t.Fatalf("prepare migrated diagnostic fixture: %v", err)
@@ -135,7 +210,7 @@ func TestGeneratedDiagnosticsPostgresWorkflow(t *testing.T) {
 			t.Fatalf("prepare persistent nonmutation sentinel: %v", err)
 		}
 	}
-	t.Run("healthy", func(t *testing.T) { runState(t, "ok") })
+	t.Run("healthy", func(t *testing.T) { runState(t, "ok", true) })
 
 	// Derive the first actual applied pair rather than assuming how many tables,
 	// migrations, or resource fixtures the fresh scaffold contains.

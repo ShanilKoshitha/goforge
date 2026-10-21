@@ -24,15 +24,15 @@ func TestFreshScaffoldOwnsInspectableSchedulerWorkflow(t *testing.T) {
 			t.Errorf("fresh scaffold omits %s", path)
 		}
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 16") {
-		t.Fatal("fresh scaffold must declare format 16")
+	if !strings.Contains(files["forge.yaml"], "version: 17") {
+		t.Fatal("fresh scaffold must declare format 17")
 	}
-	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.22.0") {
-		t.Fatal("fresh scaffold must pin the public v0.22.0 runtime")
+	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.23.0") {
+		t.Fatal("fresh scaffold must pin the public v0.23.0 runtime")
 	}
 	for _, checksum := range []string{
-		"github.com/ShanilKoshitha/goforge v0.22.0 h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=",
-		"github.com/ShanilKoshitha/goforge v0.22.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+		"github.com/ShanilKoshitha/goforge v0.23.0 h1:bjSSvFM3rBH/aJ2TesGxO7n8vcG0cPJUQVPgAT9SotY=",
+		"github.com/ShanilKoshitha/goforge v0.23.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 		"github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=",
 		"github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=",
 	} {

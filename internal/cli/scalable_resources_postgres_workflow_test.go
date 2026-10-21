@@ -168,8 +168,8 @@ func assertScalableFreshScaffoldContract(t *testing.T, directory, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(manifest), "version: 16\n") {
-		t.Fatalf("fresh scalable application is not format 16:\n%s", manifest)
+	if !strings.HasPrefix(string(manifest), "version: 17\n") {
+		t.Fatalf("fresh scalable application is not format 17:\n%s", manifest)
 	}
 
 	moduleSource, err := os.ReadFile(filepath.Join(directory, "go.mod"))
@@ -188,8 +188,8 @@ func assertScalableFreshScaffoldContract(t *testing.T, directory, root string) {
 			break
 		}
 	}
-	if runtimeVersion != "v0.22.0" {
-		t.Fatalf("fresh scalable application runtime = %q, want public v0.22.0:\n%s", runtimeVersion, moduleSource)
+	if runtimeVersion != "v0.23.0" {
+		t.Fatalf("fresh scalable application runtime = %q, want public v0.23.0:\n%s", runtimeVersion, moduleSource)
 	}
 	var replacement string
 	for _, directive := range module.Replace {
@@ -207,8 +207,8 @@ func assertScalableFreshScaffoldContract(t *testing.T, directory, root string) {
 		t.Fatal(err)
 	}
 	wantSums := map[string]bool{
-		"github.com/ShanilKoshitha/goforge v0.22.0 h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=":        false,
-		"github.com/ShanilKoshitha/goforge v0.22.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=": false,
+		"github.com/ShanilKoshitha/goforge v0.23.0 h1:bjSSvFM3rBH/aJ2TesGxO7n8vcG0cPJUQVPgAT9SotY=":        false,
+		"github.com/ShanilKoshitha/goforge v0.23.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=": false,
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(sums)), "\n") {
 		if !strings.HasPrefix(line, runtimeModule+" ") {

@@ -245,6 +245,44 @@ func TestDiagnosticCacheInsideApplicationIsRefusedBeforeSubprocess(t *testing.T)
 	}
 }
 
+func TestDiagnosticEnvironmentSuppressesGoFlagsWithoutChangingOtherConfiguration(t *testing.T) {
+	application := t.TempDir()
+	configuration := filepath.Join(t.TempDir(), "go-env")
+	content := []byte("GOFLAGS=-ldflags=-cpuprofile=private-profile.cpu\nGOPRIVATE=example.test/private/*\n")
+	if err := os.WriteFile(configuration, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(application)
+	t.Setenv("GOFLAGS", "-ldflags=-cpuprofile=private-process-profile.cpu")
+	t.Setenv("GOENV", configuration)
+	t.Setenv("GOPROXY", "https://proxy.example.test")
+	before := diagnosticSnapshot(t, application)
+	environment, err := diagnosticProcessEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make(map[string]string)
+	for _, entry := range overrideProcessEnvironment(os.Environ(), environment) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[strings.ToUpper(key)] = value
+		}
+	}
+	if values["GOFLAGS"] != " " || values["GOENV"] != configuration || values["GOPROXY"] != "https://proxy.example.test" {
+		t.Fatal("diagnostic environment must suppress flags without disabling unrelated Go configuration")
+	}
+	if os.Getenv("GOFLAGS") != "-ldflags=-cpuprofile=private-process-profile.cpu" || os.Getenv("GOENV") != configuration {
+		t.Fatal("diagnostic environment changed its caller's Go settings")
+	}
+	after, err := os.ReadFile(configuration)
+	if err != nil || !bytes.Equal(content, after) {
+		t.Fatal("diagnostic environment changed persisted Go settings")
+	}
+	if !reflect.DeepEqual(before, diagnosticSnapshot(t, application)) {
+		t.Fatal("diagnostic environment changed the application")
+	}
+}
+
 func TestResolvedDiagnosticCachePathResolvesExistingSymlinkAncestors(t *testing.T) {
 	directory := t.TempDir()
 	actual := filepath.Join(directory, "actual")

@@ -1,6 +1,6 @@
 # v0.23 read-only diagnosis and application inventory
 
-Status: **runtime-first implementation in qualification; format-17 adoption pending** — 2026-10-21.
+Status: **public runtime verified; format-17 adoption implementation in qualification** — 2026-10-21.
 
 ## Runnable baseline
 
@@ -34,14 +34,18 @@ shared caches/temporary builds, disabled workspaces, bounded process trees, and
 safe subprocess summaries. Direct `go run -mod=readonly ./cmd/diagnostics ...`
 is an ordinary escape hatch: the Go tool runs before application code, so the
 caller must select external caches and `GOWORK=off` when requiring the same
-build-tool nonmutation boundary. Direct compiler output retains ordinary Go
+build-tool nonmutation boundary, and deliberately control Go flags and output
+targets. Direct compiler output retains ordinary Go
 behavior; application diagnostic reports themselves never echo raw errors.
 
 Fresh applications will introduce format 17 only after any new runtime APIs
 are publicly available with verified checksums. Existing applications are not
 rewritten; older formats receive an explicit unsupported-command explanation.
-During runtime-first preparation, current fresh output stays format 16 and the
-new scaffold is exercised through explicit candidate fixtures.
+Runtime-first preparation retained format 16 while explicit candidate fixtures
+qualified the new scaffold. Runtime v0.23.0 is now published and publicly
+verified; this checkout's v0.23.1 candidate generates format 17 with its exact
+public sums. Adoption still needs its own complete qualification and public CLI
+distribution; runtime publication alone does not accept the milestone.
 
 ## Measurable acceptance criteria
 
@@ -74,6 +78,9 @@ new scaffold is exercised through explicit candidate fixtures.
    `GOWORK=off`; conventional shared user caches and temporary Go build files
    outside the project are allowed. Diagnostic subprocesses explicitly select
    external caches rather than inheriting app-local Go cache settings.
+   Suppress both process and persisted `GOFLAGS`, including linker-profile and
+   alternate-module/overlay flags, without disabling unrelated persisted private
+   module/proxy configuration or changing the caller's environment file.
    No source/lock/build publication, migration bookkeeping/domain writes, SMTP
    connection, server bind, job claim, or scheduler startup occurs. DB checks
    have finite deadlines; cancellation stops descendants through the existing

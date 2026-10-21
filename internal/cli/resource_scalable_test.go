@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// Exercise future-format source independently of the default scaffold format.
-// This lets runtime-first implementation qualify without publishing a scaffold
-// that depends on an unavailable runtime module.
+// Exercise the released format-16 source independently of the current scaffold
+// format and runtime. New diagnostics must not leak into historical fixtures.
 func createScalableResourceApplication(t *testing.T) string {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), "scalableboard")
@@ -19,6 +18,8 @@ func createScalableResourceApplication(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Chdir(directory)
+	preserveFormat16WorkflowFixture(t, directory)
+	assertFormat16WorkflowBoundaries(t, directory, root)
 	textareaPath := "resources/views/components/textarea.forge.html"
 	textarea, err := renderTemplate("templates/scaffold/"+textareaPath+".tmpl", textareaPath, scaffoldData{ScalableResources: true})
 	if err != nil {

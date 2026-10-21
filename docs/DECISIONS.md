@@ -1595,3 +1595,25 @@ passed all 40 runs each. Cached compilation had hidden the error in earlier
 direct diagnostics. The selected child preserves complete assertions and the
 existing process-tree boundary; no retries or suppressed cleanup failures are
 used to qualify the workflow.
+
+Runtime-first qualification completed at immutable public v0.23.0, merge
+8f92f31557d05920bcdef25376dcbd3b181c5b96, with identical final-content trees
+across both complete CI matrices. Public proxy/SumDB origin, downloaded
+installer, added-API proof, and unchanged no-replace format-16 application were
+verified before enabling the v0.23.1 format-17 candidate. Adoption now uses
+normal generation and public CLI dispatch rather than a hand-overlaid manifest.
+Retain real recompilation in migration-source mutation tests: their SQL is
+embedded in the diagnostic command, so a stale prebuilt binary cannot prove
+source drift. Exact executable exit-code proofs use only the pristine and
+first healthy states, where embedded source is unchanged.
+
+Suppress ambient and persisted `GOFLAGS` for guarded diagnosis, but preserve the
+rest of `GOENV` so private-module/proxy configuration continues to work. A native
+normal-app probe proved that the ordinary linker's `-cpuprofile` flag created
+application-local files during both successful inventory and failed offline
+doctor, including when flags came from a separate Go environment file. This
+violates nonmutation without any custom application code. Supply one nonempty
+blank as the child-only flag value: Go parses zero flags, while an empty string
+would fall back to persisted flags. Never edit the caller's Go configuration.
+Direct Go commands remain the complete explicit path for custom build flags and
+caller-managed profiling/output targets.

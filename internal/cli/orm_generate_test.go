@@ -309,7 +309,7 @@ func TestORMGenerateRequiresSupportedProjectFormatBeforeWriting(t *testing.T) {
 		want    string
 	}{
 		{version: "3", want: "upgrade the project to format 4"},
-		{version: "17", want: "newer than this CLI supports"},
+		{version: "18", want: "newer than this CLI supports"},
 	} {
 		t.Run(test.version, func(t *testing.T) {
 			directory := t.TempDir()
