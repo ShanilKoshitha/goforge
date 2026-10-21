@@ -93,6 +93,7 @@ func TestChoiceLabelResolutionIsReadOnlyAndRechecksTargetSource(t *testing.T) {
 
 func TestChoiceLabelDeclarationRejectsOldFormatWithoutPublication(t *testing.T) {
 	fixture := newResourceRelationshipFixture(t, "Category", "Ticket")
+	setChoiceLabelFixtureFormat(t, "15")
 	before := snapshotRelationshipProject(t, fixture.directory)
 	var output bytes.Buffer
 	err := Run([]string{"make:resource", "Ticket", "--belongs-to", "category:Category", "--choice-label", "category:name"}, &output, &output)
@@ -102,5 +103,153 @@ func TestChoiceLabelDeclarationRejectsOldFormatWithoutPublication(t *testing.T) 
 	assertRelationshipProjectUnchanged(t, fixture.directory, before)
 	if _, err := os.Stat(filepath.Join("internal", "resources", "ticket")); !os.IsNotExist(err) {
 		t.Fatalf("old-format resource unexpectedly published: %v", err)
+	}
+}
+
+func TestFormatSixteenChoiceLabelCLIRejectsInvalidDeclarationsWithoutPublication(t *testing.T) {
+	if currentProjectFormat < 16 {
+		t.Skip("actual format-16 CLI acceptance activates after public runtime adoption")
+	}
+	directory := newChoiceLabelCLIFixture(t)
+	tests := []struct {
+		name   string
+		flags  []string
+		wanted string
+	}{
+		{"unknown relationship", []string{"--choice-label", "other:title"}, "undeclared belongs-to relationship"},
+		{"unknown target field", []string{"--choice-label", "category:missing"}, "has no field column"},
+		{"wrong target field type", []string{"--choice-label", "category:rank"}, "requires an editable string"},
+		{"duplicate disclosure", []string{"--choice-label", "category:title", "--choice-label", "category:title"}, "duplicate choice-label"},
+		// private_label is real text on Project, never on Category. Resolution
+		// must not borrow another relationship's field or presentation grant.
+		{"cross-target field", []string{"--choice-label", "category:private_label"}, "has no field column"},
+		{"qualified cross-target field", []string{"--choice-label", "category:Project.private_label"}, "lower_snake_case"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			before := snapshotRelationshipProject(t, directory)
+			arguments := []string{"make:resource", "Ticket", "--field", "summary:string", "--belongs-to", "category:Category", "--belongs-to", "project:Project"}
+			arguments = append(arguments, test.flags...)
+			var output bytes.Buffer
+			err := Run(arguments, &output, &output)
+			if err == nil || !strings.Contains(err.Error(), test.wanted) {
+				t.Fatalf("invalid declaration returned %v, want %q\n%s", err, test.wanted, output.String())
+			}
+			// This includes every model, SQL file, managed ORM/view/registry
+			// artifact, metadata file, module file, and their permissions.
+			assertRelationshipProjectUnchanged(t, directory, before)
+		})
+	}
+}
+
+func TestFormatSixteenChoiceLabelCLIPreservesOneShotSourceAcrossRegeneration(t *testing.T) {
+	if currentProjectFormat < 16 {
+		t.Skip("actual format-16 CLI acceptance activates after public runtime adoption")
+	}
+	directory := newChoiceLabelCLIFixture(t)
+	runChoiceLabelCLI(t, "make:resource", "Ticket", "--field", "summary:string", "--belongs-to", "category:Category", "--belongs-to", "project:Project", "--choice-label", "category:title")
+	before := snapshotRelationshipProject(t, directory)
+	browse, exists := before["internal/resources/ticket/browse.go"]
+	if !exists || !bytes.Contains(browse.Data, []byte("models.CategoryColumns.Title")) ||
+		!bytes.Contains(browse.Data, []byte("ContainsFoldNullable")) || bytes.Contains(browse.Data, []byte("PrivateLabel")) {
+		t.Fatalf("one-shot declaration was not emitted as explicit, isolated source:\n%s", browse.Data)
+	}
+	metadata := before[".forge/resources.json"].Data
+	for _, forbidden := range []string{"choice_label", "ChoiceLabel", "category:title", "private_label", "relationships"} {
+		if bytes.Contains(metadata, []byte(forbidden)) {
+			t.Fatalf("one-shot choice schema was persisted in resource metadata as %q: %s", forbidden, metadata)
+		}
+	}
+
+	runChoiceLabelCLI(t, "orm:generate")
+	runChoiceLabelCLI(t, "orm:generate", "--check")
+	runChoiceLabelCLI(t, "views:compile")
+	runChoiceLabelCLI(t, "views:compile", "--check")
+	// Registry generation has no standalone CLI command. Exercise its real
+	// source-only renderer explicitly, then exercise publication through the
+	// next actual resource command below.
+	state, err := loadResourceState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := generatedResourceRegistryForFormat("example.com/choiceproof", state, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedFile(filepath.Join("routes", "resources_gen.go"), []byte(registry)); err != nil {
+		t.Fatal(err)
+	}
+	assertRelationshipProjectUnchanged(t, directory, before)
+
+	runChoiceLabelCLI(t, "make:resource", "AuditEntry", "--field", "message:text")
+	after := snapshotRelationshipProject(t, directory)
+	managed := map[string]bool{
+		".forge/resources.json":   true,
+		"routes/resources_gen.go": true,
+		generatedORMPath:          true,
+		generatedViewsPath:        true,
+	}
+	for name, previous := range before {
+		if managed[name] {
+			continue
+		}
+		current, exists := after[name]
+		if !exists || !bytes.Equal(current.Data, previous.Data) || current.Mode != previous.Mode {
+			t.Errorf("later resource generation rewrote existing application-owned file %s", name)
+		}
+	}
+	if bytes.Equal(after["routes/resources_gen.go"].Data, before["routes/resources_gen.go"].Data) ||
+		!bytes.Contains(after["routes/resources_gen.go"].Data, []byte("auditentryController")) {
+		t.Fatal("later resource did not actually regenerate and publish the registry")
+	}
+	runChoiceLabelCLI(t, "orm:generate", "--check")
+	runChoiceLabelCLI(t, "views:compile", "--check")
+	if current, err := os.ReadFile(filepath.Join(directory, "internal", "resources", "ticket", "browse.go")); err != nil || !bytes.Equal(current, browse.Data) {
+		t.Fatalf("choice-safe application-owned source changed after final checks: %v", err)
+	}
+}
+
+func newChoiceLabelCLIFixture(t *testing.T) string {
+	t.Helper()
+	directory := filepath.Join(t.TempDir(), "choice-label-app")
+	if err := createProject(newOptions{directory: directory, module: "example.com/choiceproof", replace: projectRoot(t)}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(directory)
+	setChoiceLabelFixtureFormat(t, "16")
+	// Fixture-only opt-in leaves the production default scaffold untouched.
+	textareaPath := "resources/views/components/textarea.forge.html"
+	textarea, err := renderTemplate("templates/scaffold/"+textareaPath+".tmpl", textareaPath, scaffoldData{ScalableResources: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.FromSlash(textareaPath), []byte(textarea), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runChoiceLabelCLI(t, "make:resource", "Category", "--field", "title:string:nullable", "--field", "rank:integer")
+	runChoiceLabelCLI(t, "make:resource", "Project", "--field", "private_label:string")
+	return directory
+}
+
+func setChoiceLabelFixtureFormat(t *testing.T, version string) {
+	t.Helper()
+	manifest, err := os.ReadFile("forge.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, tail, exists := strings.Cut(string(manifest), "\n")
+	if !exists {
+		t.Fatal("generated manifest has no version line")
+	}
+	if err := os.WriteFile("forge.yaml", []byte("version: "+version+"\n"+tail), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runChoiceLabelCLI(t *testing.T, arguments ...string) {
+	t.Helper()
+	var output bytes.Buffer
+	if err := Run(arguments, &output, &output); err != nil {
+		t.Fatalf("forge %s: %v\n%s", strings.Join(arguments, " "), err, output.String())
 	}
 }

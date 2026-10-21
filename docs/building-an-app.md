@@ -105,6 +105,84 @@ Register at `/register`, sign in at `/login`, and use the generated browser
 resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 `/issues`; handlers do not silently switch behavior based on content negotiation.
 
+## Candidate: browse resources and select relationships at scale
+
+This section describes the **unreleased v0.22.1 / format-16 candidate**. Public
+v0.21.1 still generates format 15. Format-16 adoption requires the public
+v0.22.0 runtime and passing acceptance/distribution checks; these examples do
+not upgrade an existing application. See the [milestone criteria](MILESTONE_0.22.md)
+for the release gate.
+
+The candidate adds paginated relationship choices with an ID-only default.
+Declare a target field explicitly when it is safe to expose its text through
+the source resource's create/edit forms:
+
+```sh
+forge make:resource Category --field title:string
+forge make:resource Ticket --field title:string --field notes:text:nullable \
+  --belongs-to category:Category --choice-label category:title
+```
+
+`--choice-label category:title` permits actors authorized to create or edit a
+Ticket to see/search that Category field in the corresponding form, even when
+they cannot list Categories. It does not grant target
+list access or relax ownership constraints. Without the declaration, the picker
+shows IDs and offers ID lookup. Declarations accept editable plain Go `string`
+or `*string` fields backed by PostgreSQL `text` or sized `varchar`/`character varying`;
+standard/custom wrappers use application-owned choice code. Labels include IDs,
+truncate text to 120 UTF-8
+runes before HTML escaping, and fall back to IDs for null text. The choice
+declaration is generation input, not a runtime schema or discovery mechanism.
+
+Browser `GET /app/tickets` and JSON `GET /tickets` share one typed query contract:
+
+- `q` searches declared string/text fields with literal case-insensitive contains.
+  Matches across fields use OR; other filters combine with AND. `%`, `_`, and
+  backslash are literal text. PostgreSQL supplies case/collation behavior.
+- `id` and declared foreign-key names such as `category_id` apply exact positive
+  integer filters. Empty optional ID controls mean no filter.
+- `sort` accepts `id`, declared scalar names, and declared foreign-key names;
+  `direction` accepts `asc` or `desc`. Defaults are `sort=id&direction=desc`.
+  Every sort has an ID tie-breaker. PostgreSQL puts nulls last ascending and
+  first descending.
+- `page` defaults to 1 and `per_page` to 20. Limits are page 10,000 and size 100;
+  exceeding them rejects the request. Search permits at most 200 UTF-8
+  runes, with no control characters. Unknown/duplicate parameters, malformed
+  encoding, invalid UTF-8, and invalid values return 400 before repository access.
+  Resources without text fields reject nonempty `q`.
+
+For example, `/app/tickets?q=urgent&category_id=7&sort=title&direction=asc&page=2&per_page=20`
+retains its filters in Previous/Next links. The JSON route keeps the existing
+`data` and `pagination` envelope. Choice pages contain at most 20 options plus a
+separately retained selected item. Bounded pages/offsets do not promise constant
+database execution cost.
+
+Search, ID Lookup, Previous, and Next work without JavaScript. Each button posts
+the complete CSRF-protected form with `formnovalidate`, preserving unfinished
+fields, independent relationship states, selections outside the current results,
+and optimistic versions without writing domain data. Text Search clears that
+relationship's ID filter; ID Lookup clears its text filter; both reset its page.
+Draft display strings survive refresh, including scalar spellings such as `000`;
+validation and persistence retain their normalization rules. Native textareas
+normalize CRLF/CR to LF. A 422 remains correctable, and a valid stale version
+still produces a conflict when saved.
+
+When editing the emitted form, preserve the explicit controls:
+`choice[category][q]`, `choice[category][id]`, and `choice[category][page]`.
+Submit one `intent=save`, or `intent=choice:category:search` with `search`
+replaced by `lookup`, `previous`, or `next` for those buttons. Keep
+`validation_attempted=0` initially and `1` after a failed save. That flag controls
+error display only; save always validates. Missing, duplicate, or unknown intents
+reject without writes. The generated buttons supply these values; there is no default-save
+fallback for submissions lacking a submitter.
+
+The emitted `internal/resources/ticket/browse.go`, repository, controllers,
+requests, and `resources/views/pages/tickets/*.forge.html` remain ordinary
+application-owned source. Edit or replace their typed options, query predicates,
+labels, form controls, or repository wiring directly, then run
+`forge views:compile` after template changes. Existing format-15 and older
+resources keep their released contracts and are not rewritten automatically.
+
 ## Authenticate a machine client
 
 Fresh format-14 and format-15 applications let a signed-in user create a named, expiring

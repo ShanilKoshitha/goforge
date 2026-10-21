@@ -10,7 +10,8 @@ import (
 // Exercise future-format source independently of the default scaffold format.
 // This lets runtime-first implementation qualify without publishing a scaffold
 // that depends on an unavailable runtime module.
-func TestFormatSixteenResourceTemplatesCompileAndTest(t *testing.T) {
+func createScalableResourceApplication(t *testing.T) string {
+	t.Helper()
 	directory := filepath.Join(t.TempDir(), "scalableboard")
 	root := projectRoot(t)
 	const module = "example.com/scalableboard"
@@ -75,6 +76,12 @@ func TestFormatSixteenResourceTemplatesCompileAndTest(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeScalableFixture(t, generatedViewsPath, views)
+	return directory
+}
+
+func TestFormatSixteenResourceTemplatesCompileAndTest(t *testing.T) {
+	directory := createScalableResourceApplication(t)
+	const module = "example.com/scalableboard"
 	for _, fragment := range []string{"type ListOptions struct", "func ParseListOptions", "func (repository *PostgresRepository) Browse", "ContainsFoldNullable"} {
 		found := false
 		for _, name := range []string{"browse.go", "repository.go"} {

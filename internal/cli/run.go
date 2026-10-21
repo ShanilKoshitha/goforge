@@ -176,14 +176,14 @@ Usage:
   forge make request <name>
   forge make migration <name>
   forge make model <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingModel>]...
-  forge make resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...
+  forge make resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]... [--choice-label <relationship>:<field>]...
   forge make component <name>
   forge make job <name>
   forge make:controller <name>
   forge make:request <name>
   forge make:migration <name>
   forge make:model <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingModel>]...
-  forge make:resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...
+  forge make:resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]... [--choice-label <relationship>:<field>]...
   forge make:component <name>
   forge make:job <name>
   forge make:mail <name>
@@ -203,6 +203,11 @@ Format-10 through format-15 projects may add repeatable required relationships
 with --belongs-to <name>:<ExistingResource>. The target must already be a
 generated resource. Relationship IDs remain explicit, owner-scoped, and
 database-backed.
+
+Format-16 resources additionally accept --choice-label <relationship>:<field>.
+This explicit declaration exposes the target text field to actors allowed to
+create/edit the source resource; omitted labels remain ID-only. Format 16 is
+not enabled in the v0.22.0 runtime-first scaffold.
 
 Format-13 through format-15 resources include an application-owned authorization
 function shared by JSON and browser controllers. Owner access is the default;

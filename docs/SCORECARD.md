@@ -10,12 +10,12 @@ capability or public release is accepted yet.
 | Runnable generator baseline | Native `go test ./internal/cli -run '^(TestFormatFifteenGeneratesAccessibleRecoverableResourceForms\|TestFormatsEightThroughFourteenRetainLegacyResourceGeneration)$' -count=1` passed in 4.709s |
 | Runnable public application baseline | The public v0.21.1 CLI's no-replace format-15 `example.com/releasedv0211` application passed `go test ./... -count=1`; Category, Ticket, and legacy resource tests passed |
 | Scale gap confirmed | Generated repository tests explicitly expect `ErrAssociationChoicesOverflow` above 100 related rows; browser rendering maps that state to 409 |
-| Runtime helper | `ContainsFold`/`ContainsFoldNullable` implemented; local unit/race/vet and hosted framework race tests with PostgreSQL passed; complete qualification is pending corrected CI on runtime PR #41 at `5cf1222` |
+| Runtime helper | `ContainsFold`/`ContainsFoldNullable` passed both corrected Linux/PostgreSQL and Windows matrices at `5cf1222`; PR #41 merged with an identical tree at `5efd243`; exact-main CI/publication pending |
 | Fresh candidate application | Native candidate CLI generated format 15 with Category, related Ticket, and legacy resource against a local runtime replacement; artifact checks, `forge test`, vet, and `forge build` passed; inspected module pin, scoped forms, and ordinary compiled views |
 | Format-16 implementation | Fresh explicit-format Category, boolean-only Project, all-scalar/two-relationship Ticket, and legacy resource app tests pass; CLI disclosure/rejection/source-recheck tests pass. No-relationship helper compile issue is fixed |
 | Legacy output | All 22 legacy/typed/related format 8–15 render digests match the frozen pre-change revision, normalizing checkout newlines only |
 | Raw draft recovery | Actual HTML refresh-to-save tests pass for padded text, leading textarea newlines, CRLF, numeric/boolean/association lexemes, malformed values, and unchanged normalized persistence; the final gated fixture combined suite passed in 15.368s |
-| PostgreSQL acceptance harness | Dedicated 10,000-category browser/JSON and DB/Tx observation journey added; embedded proof program compiles in the fresh explicit-format fixture. Full execution awaits format-16 CLI activation and a database |
+| PostgreSQL acceptance harness | Dedicated 10,000-category browser/JSON and DB/Tx observation journey added, including six first/middle/last saves by text and ID; embedded proof compiles. Native database is available; full journey awaits format-16 activation |
 | Independent review and two complete passes | Pending; baseline tests are not v0.22 acceptance |
 
 Read-only data and developer-workflow inventories identified the existing typed
@@ -52,6 +52,50 @@ a native unit test now checks it against the source version. These failed runs
 are not counted as complete acceptance passes. Native full framework regression
 on the candidate also passed (`internal/cli` 323.324s). Public runtime publication
 remains pending two complete corrected CI passes.
+
+Corrected runtime qualification passed both complete Linux/PostgreSQL and
+Windows matrices at `5cf1222`:
+[39618054326](https://github.com/ShanilKoshitha/goforge/actions/runs/39618054326)
+and [39618060116](https://github.com/ShanilKoshitha/goforge/actions/runs/39618060116).
+PR #41 merged at `5efd243`; its tree matches that tested head exactly. Exact-main
+CI and runtime publication are still pending. This accepts no format-16 workflow.
+
+Follow-up acceptance review found no P0/P1 production defect, but identified
+missing executable evidence for CLI atomicity/source preservation, app-owned
+replacement compilation, and saving first/middle/last choices. Those checks are
+being added before adoption; a compiled PostgreSQL harness is not an executed
+journey. Global help now documents both choice-label spellings and the explicit
+disclosure boundary (focused regression passed in 4.419s). The candidate guide
+clearly distinguishes unreleased format 16 from public format 15.
+
+The textarea acceptance helper now models line-ending normalization and the
+initial HTML newline rule; its focused regression and compiled future-format
+fixture passed together in 13.064s. A separate browser check was attempted but
+blocked by the browser URL security policy; no real-browser evidence is claimed.
+
+An isolated loopback-only PostgreSQL 18 cluster now provides native acceptance
+infrastructure without changing the host's existing service. `go test ./orm/...
+-count=1` passed with the database configured (`orm/postgres` 3.122s), including
+literal-search DB/Tx behavior. The actual CLI atomicity/source-preservation tests
+compile and skip deliberately while format 16 is unsupported; they become active
+automatically on adoption. Their existing focused companion tests passed in
+6.965s. `go vet ./...` passed. None of this substitutes for the format-16 journey.
+
+The explicit-format application-owned replacement proof passed in 19.157s:
+ordinary Go storage implements the resource repository, custom query/controller
+constructors are wired into the registered routes, a replacement Forge index is
+compiled, custom HTTP behavior is asserted, and all generated app tests plus a
+server build pass. The generated defaults remain tested too. This is a local
+replacement seam proof, not public no-replace or full PostgreSQL acceptance.
+The finalized proof uses human-owned route wiring and keeps the managed registry
+byte-identical; baseline plus replacement checks passed together in 27.422s.
+
+Checkpoint verification: complete native `go test ./... -count=1` passed
+(`internal/cli` 298.079s; database-dependent tests skipped without the URL).
+The finalized focused help/choice/replacement/future-format suite separately
+passed in 29.099s, with only the two deliberately gated actual format-16 CLI
+tests skipped. Final `go vet ./...`, trimmed CLI build/version inspection, and
+`git diff --check` passed. Full format-16 acceptance is still pending.
 
 # v0.21 component attributes and accessible forms scorecard
 

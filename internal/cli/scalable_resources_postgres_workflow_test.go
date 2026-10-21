@@ -141,6 +141,7 @@ func TestGeneratedScalableResourcesPostgresWorkflow(t *testing.T) {
 	if after := scalableTicketCount(t, ctx, database); after != beforeRefreshes {
 		t.Fatalf("choice refreshes wrote tickets: before=%d after=%d", beforeRefreshes, after)
 	}
+	testScalableChoiceSelectionPersistence(t, owner, baseURL, seed)
 
 	created := testScalableCorrectableBrowserCreate(t, owner, baseURL, seed, database)
 	testScalableExplicitIntentAndCSRF(t, owner, baseURL, seed, database)
@@ -408,6 +409,63 @@ func testScalableChoiceReachability(t *testing.T, client *http.Client, baseURL s
 	label := assertScalableChoice(t, body, seed.UnsafeCategory, "<b>", false)
 	if strings.Contains(body, "<b>") || !strings.Contains(body, "&lt;b&gt;") || utf8.RuneCountInString(label) > 160 {
 		t.Fatalf("choice label was not escaped and bounded: runes=%d label=%q body=%s", utf8.RuneCountInString(label), label, body)
+	}
+}
+
+func testScalableChoiceSelectionPersistence(t *testing.T, client *http.Client, baseURL string, seed scalableSeed) {
+	t.Helper()
+	targets := []struct {
+		name  string
+		id    int64
+		query string
+	}{
+		{name: "first", id: seed.FirstCategory, query: "First searchable"},
+		{name: "middle", id: seed.MiddleCategory, query: "Middle searchable"},
+		{name: "last", id: seed.LastCategory, query: "Last searchable"},
+	}
+	for _, method := range []string{"text", "id"} {
+		for _, target := range targets {
+			t.Run(method+"_"+target.name, func(t *testing.T) {
+				response, body := requestBrowser(t, client, http.MethodGet, baseURL+"/app/tickets/new", nil)
+				if response.StatusCode != http.StatusOK {
+					t.Fatalf("open selection form: got %d: %s", response.StatusCode, body)
+				}
+				values := scalableTicketForm(browserCSRF(t, body), seed)
+				values.Set("title", fmt.Sprintf("Persisted %s choice via %s", target.name, method))
+				switch method {
+				case "text":
+					values.Set("choice[category][q]", target.query)
+					values.Set("intent", "choice:category:search")
+				case "id":
+					values.Set("choice[category][id]", strconv.FormatInt(target.id, 10))
+					values.Set("intent", "choice:category:lookup")
+				default:
+					t.Fatalf("unsupported choice method %q", method)
+				}
+				response, body = requestBrowser(t, client, http.MethodPost, baseURL+"/app/tickets", values)
+				if response.StatusCode != http.StatusOK {
+					t.Fatalf("%s choice refresh for %s: got %d: %s", method, target.name, response.StatusCode, body)
+				}
+				assertScalableChoice(t, body, target.id, target.query, target.id == seed.FirstCategory)
+
+				values.Set("_token", browserCSRF(t, body))
+				values.Set("category_id", strconv.FormatInt(target.id, 10))
+				values.Set("intent", "save")
+				response, body = requestBrowser(t, client, http.MethodPost, baseURL+"/app/tickets", values)
+				if response.StatusCode != http.StatusSeeOther {
+					t.Fatalf("persist %s choice for %s: got %d location=%q: %s", method, target.name, response.StatusCode, response.Header.Get("Location"), body)
+				}
+				id := scalableLocationID(t, response.Header.Get("Location"), "/app/tickets/")
+				response, body = requestJSON(t, client, http.MethodGet, fmt.Sprintf("%s/tickets/%d", baseURL, id), "")
+				if response.StatusCode != http.StatusOK {
+					t.Fatalf("read persisted %s choice for %s: got %d: %s", method, target.name, response.StatusCode, body)
+				}
+				item := decodeScalableTicket(t, body)
+				if item.CategoryID != target.id {
+					t.Fatalf("persisted %s choice for %s = category %d, want %d", method, target.name, item.CategoryID, target.id)
+				}
+			})
+		}
 	}
 }
 
@@ -799,7 +857,27 @@ func scalableTextareaValue(t *testing.T, body, name string) string {
 	if len(match) != 2 {
 		t.Fatalf("form textarea %q is absent: %s", name, body)
 	}
-	return stdhtml.UnescapeString(match[1])
+	value := strings.ReplaceAll(strings.ReplaceAll(match[1], "\r\n", "\n"), "\r", "\n")
+	return stdhtml.UnescapeString(strings.TrimPrefix(value, "\n"))
+}
+
+func TestScalableTextareaValueModelsNativeHTMLParsing(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "empty", body: "<textarea name=\"notes\">\n</textarea>", want: ""},
+		{name: "padded", body: "<textarea name=\"notes\">\n  padded  \n</textarea>", want: "  padded  \n"},
+		{name: "leading LF", body: "<textarea name=\"notes\">\r\n\r\nleading\rline</textarea>", want: "\nleading\nline"},
+		{name: "entities", body: "<textarea name=\"notes\">\n&lt;b&gt;&amp;</textarea>", want: "<b>&"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := scalableTextareaValue(t, test.body, "notes"); got != test.want {
+				t.Fatalf("textarea value = %q, want %q", got, test.want)
+			}
+		})
+	}
 }
 
 func scalableSelectedOption(t *testing.T, body, name string) string {
