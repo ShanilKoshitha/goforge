@@ -259,9 +259,37 @@ jobs:
           "$RUNNER_TEMP/forge" test
           go vet ./...
           "$RUNNER_TEMP/forge" build
+      - name: Public v0.22.1 format-16 compatibility
+        run: |
+          mkdir -p "$RUNNER_TEMP/released-format16-cli"
+          GOBIN="$RUNNER_TEMP/released-format16-cli" go install github.com/ShanilKoshitha/goforge/cmd/forge@v0.22.1
+          "$RUNNER_TEMP/released-format16-cli/forge" new "$RUNNER_TEMP/released-format16-app" --module example.com/releasedformat16
+          cd "$RUNNER_TEMP/released-format16-app"
+          "$RUNNER_TEMP/forge" make:resource Category --field title:string
+          "$RUNNER_TEMP/forge" make:resource RelatedIssue --field summary:string --belongs-to category:Category --choice-label category:title
+          test "$("$RUNNER_TEMP/released-format16-cli/forge" version)" = 'forge 0.22.1'
+          grep -q '^version: 16$' forge.yaml
+          grep -q 'github.com/ShanilKoshitha/goforge v0.22.0' go.mod
+          test -z "$(grep '^replace ' go.mod || true)"
+          test -f internal/resources/relatedissue/browse.go
+          test ! -e cmd/diagnostics
+          test ! -e internal/diagnostics
+          "$RUNNER_TEMP/forge" orm:generate --check
+          "$RUNNER_TEMP/forge" views:compile --check
+          "$RUNNER_TEMP/forge" assets:check
+          go mod verify
+          go mod tidy -diff
+          "$RUNNER_TEMP/forge" test
+          go vet ./...
+          "$RUNNER_TEMP/forge" build
+          find . -type f -exec sha256sum {} \; | sort > "$RUNNER_TEMP/format16-before.sha256"
+          if "$RUNNER_TEMP/forge" doctor > "$RUNNER_TEMP/format16-doctor.log" 2>&1; then exit 1; fi
+          if "$RUNNER_TEMP/forge" routes:list > "$RUNNER_TEMP/format16-routes.log" 2>&1; then exit 1; fi
+          find . -type f -exec sha256sum {} \; | sort > "$RUNNER_TEMP/format16-after.sha256"
+          diff "$RUNNER_TEMP/format16-before.sha256" "$RUNNER_TEMP/format16-after.sha256"
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.22.1'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.23.0'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
           grep -q 'github.com/ShanilKoshitha/goforge v0.22.0' go.mod
@@ -358,7 +386,7 @@ jobs:
       - name: Generated PostgreSQL applications
         # Preserve both runs of every journey, including the 10,000-row slice,
         # with the same finite package budget as the race-tested framework run.
-        run: go test ./internal/cli -timeout 20m -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow|TestGeneratedResourceAuthorizationPostgresWorkflow|TestGeneratedModelPostgresWorkflow|TestGeneratedPersonalTokenPostgresWorkflow|TestGeneratedScalableResourcesPostgresWorkflow)$' -count=2 -v
+        run: go test ./internal/cli -timeout 20m -run '^(TestGeneratedPostgresWorkflow|TestGeneratedJobPostgresWorkflow|TestGeneratedDevelopmentServerWorkflow|TestGeneratedAccountRecoveryPostgresWorkflow|TestGeneratedBelongsToPostgresWorkflow|TestGeneratedSchedulePostgresWorkflow|TestGeneratedResourceAuthorizationPostgresWorkflow|TestGeneratedModelPostgresWorkflow|TestGeneratedPersonalTokenPostgresWorkflow|TestGeneratedScalableResourcesPostgresWorkflow|TestGeneratedDiagnosticsPostgresWorkflow)$' -count=2 -v
 
   windows:
     runs-on: windows-latest

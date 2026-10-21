@@ -1,0 +1,186 @@
+package diagnostics
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge"
+	forgeconfig "github.com/ShanilKoshitha/goforge/config"
+	"github.com/ShanilKoshitha/goforge/database/migrate"
+	"github.com/ShanilKoshitha/goforge/httpx"
+
+	"[[.Module]]/internal/config"
+)
+
+func testInspector() *Inspector {
+	inspector := New()
+	inspector.LoadHTTP = func() (config.Config, error) { return config.Config{}, nil }
+	inspector.CheckWorker = func() error { return nil }
+	inspector.CheckScheduler = func() error { return nil }
+	inspector.LoadDatabase = func() (config.DatabaseConfig, error) {
+		return config.DatabaseConfig{DatabaseURL: "postgres://diagnostic@127.0.0.1:1/diagnostic?sslmode=disable"}, nil
+	}
+	inspector.BuildApplication = func(config.Config, *sql.DB) (*forge.App, error) {
+		return forge.New(forge.Config{}), nil
+	}
+	inspector.Ping = func(context.Context, *sql.DB) error { return nil }
+	inspector.Verify = func(context.Context, *sql.DB) error { return nil }
+	return inspector
+}
+
+func TestDoctorRunsIndependentChecksAndDoesNotExposeErrors(t *testing.T) {
+	inspector := testInspector()
+	const secret = "never-print-this-secret"
+	inspector.LoadHTTP = func() (config.Config, error) {
+		return config.Config{}, errors.Join(
+			&forgeconfig.FieldError{Key: "APP_MAX_HEADER_BYTES", Rule: "integer"},
+			&forgeconfig.FieldError{Key: secret, Rule: "integer"}, errors.New(secret))
+	}
+	inspector.CheckWorker = func() error { panic(secret) }
+	schedulerCalled := false
+	inspector.CheckScheduler = func() error { schedulerCalled = true; return errors.New(secret) }
+	inspector.BuildApplication = func(config.Config, *sql.DB) (*forge.App, error) {
+		t.Fatal("application must be skipped after invalid HTTP configuration")
+		return nil, nil
+	}
+	inspector.Ping = func(context.Context, *sql.DB) error { return errors.New(secret) }
+	inspector.Verify = func(context.Context, *sql.DB) error {
+		t.Fatal("verification must be skipped after failed database ping")
+		return nil
+	}
+	report := inspector.Doctor(context.Background())
+	if report.Healthy() || len(report.Checks) != 7 || !schedulerCalled {
+		t.Fatalf("independent checks were lost: %+v", report)
+	}
+	want := []string{"fail", "fail", "fail", "pass", "skipped", "fail", "skipped"}
+	for index, check := range report.Checks {
+		if check.Status != want[index] {
+			t.Errorf("check %s status = %s, want %s", check.ID, check.Status, want[index])
+		}
+	}
+	if !reflect.DeepEqual(report.Checks[0].Fields, []string{"APP_MAX_HEADER_BYTES"}) || report.Checks[1].Code != "panic" {
+		t.Fatalf("unsafe or unstructured configuration result: %+v", report.Checks)
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil || strings.Contains(string(encoded), secret) {
+		t.Fatalf("report leaked a raw error or panic: %s, %v", encoded, err)
+	}
+}
+
+func TestDoctorAndInventoryUseExplicitApplicationConstruction(t *testing.T) {
+	inspector := testInspector()
+	builds, pings, verifications := 0, 0, 0
+	inspector.BuildApplication = func(config.Config, *sql.DB) (*forge.App, error) {
+		builds++
+		app := forge.New(forge.Config{})
+		app.Router.Named("handwritten.show", "GET", "/handwritten", func(*httpx.Context) error {
+			t.Fatal("route inventory must not invoke handlers")
+			return nil
+		})
+		return app, nil
+	}
+	inspector.Ping = func(ctx context.Context, _ *sql.DB) error {
+		pings++
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 2*time.Second {
+			t.Fatal("database check has no bounded deadline")
+		}
+		return nil
+	}
+	inspector.Verify = func(ctx context.Context, _ *sql.DB) error {
+		verifications++
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("migration check has no bounded deadline")
+		}
+		return nil
+	}
+	if report := inspector.Doctor(context.Background()); !report.Healthy() {
+		t.Fatalf("healthy callbacks rejected: %+v", report)
+	}
+	routes, err := inspector.Routes()
+	if err != nil || !reflect.DeepEqual(routes.Routes, []Route{{Method: "GET", Path: "/handwritten", Name: "handwritten.show"}}) {
+		t.Fatalf("inventory is not the actual explicit route table: %+v, %v", routes, err)
+	}
+	if builds != 2 || pings != 1 || verifications != 1 {
+		t.Fatalf("inventory connected or did not build: builds=%d pings=%d verify=%d", builds, pings, verifications)
+	}
+}
+
+func TestDoctorClassifiesAuthoritativeMigrationErrors(t *testing.T) {
+	for _, item := range []struct {
+		problem error
+		code    string
+	}{
+		{migrate.ErrPendingMigration, "pending"},
+		{migrate.ErrMigrationDrift, "drift"},
+		{migrate.ErrLedgerUpgradeRequired, "ledger_upgrade"},
+		{migrate.ErrInvalidMigrationSource, "invalid_source"},
+		{errors.New("secret SQL failure"), "inspection_failed"},
+	} {
+		t.Run(item.code, func(t *testing.T) {
+			inspector := testInspector()
+			inspector.Verify = func(context.Context, *sql.DB) error { return fmt.Errorf("private context: %w", item.problem) }
+			report := inspector.Doctor(context.Background())
+			check := report.Checks[6]
+			if check.Status != "fail" || check.Code != item.code || report.Healthy() {
+				t.Fatalf("classification = %+v", check)
+			}
+			encoded, _ := json.Marshal(report)
+			if strings.Contains(string(encoded), "private context") || strings.Contains(string(encoded), "secret SQL") {
+				t.Fatalf("verification error leaked: %s", encoded)
+			}
+		})
+	}
+}
+
+func TestDoctorBoundsDatabaseWaitAndHonorsCancellation(t *testing.T) {
+	inspector := testInspector()
+	inspector.DatabaseTimeout = 20 * time.Millisecond
+	inspector.Ping = func(ctx context.Context, _ *sql.DB) error { <-ctx.Done(); return ctx.Err() }
+	started := time.Now()
+	report := inspector.Doctor(context.Background())
+	if time.Since(started) > time.Second || report.Checks[5].Code != "unavailable" || report.Checks[6].Status != "skipped" {
+		t.Fatalf("unbounded or misleading database result: %+v", report)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report = inspector.Doctor(ctx)
+	if report.Checks[5].Code != "cancelled" {
+		t.Fatalf("cancelled probe = %+v", report.Checks[5])
+	}
+}
+
+func TestProductionWorkerAndSchedulerValidationDoNotNeedLiveServices(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for key, value := range map[string]string{
+		"APP_ENV": "local", "DATABASE_URL": "postgres://diagnostic@127.0.0.1:1/diagnostic?sslmode=disable",
+		"MAIL_SMTP_ADDRESS": "127.0.0.1:1", "MAIL_SMTP_TLS": "none", "MAIL_SMTP_USERNAME": "", "MAIL_SMTP_PASSWORD": "",
+		"MAIL_OUTBOX_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "JOB_QUEUES": "default", "JOB_CONCURRENCY": "4",
+		"JOB_POLL_INTERVAL": "1s", "JOB_LEASE_DURATION": "30s", "JOB_HEARTBEAT_INTERVAL": "10s", "JOB_OPERATION_TIMEOUT": "5s",
+		"JOB_CANCELLATION_TIMEOUT": "5s", "JOB_SHUTDOWN_TIMEOUT": "15s", "SCHEDULE_POLL_INTERVAL": "15s", "SCHEDULE_OP_TIMEOUT": "5s",
+	} {
+		t.Setenv(key, value)
+	}
+	if err := checkWorker(); err != nil {
+		t.Fatalf("offline worker constructor validation failed: %v", err)
+	}
+	if err := checkScheduler(); err != nil {
+		t.Fatalf("offline scheduler constructor validation failed: %v", err)
+	}
+	for key, value := range map[string]string{
+		"JOB_QUEUES": "default,default", "JOB_CONCURRENCY": "-1", "JOB_LEASE_DURATION": "1ms", "MAIL_SMTP_ADDRESS": "127.0.0.1:not-a-port",
+	} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, value)
+			if err := checkWorker(); err == nil {
+				t.Fatal("production constructor validation was bypassed")
+			}
+		})
+	}
+}

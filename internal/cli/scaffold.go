@@ -52,6 +52,15 @@ func scaffoldFiles(module, replace, projectName string) (map[string]string, erro
 	if err != nil {
 		return nil, err
 	}
+	if currentProjectFormat >= minimumDiagnosticFormat {
+		diagnostics, err := diagnosticScaffoldFiles(module)
+		if err != nil {
+			return nil, err
+		}
+		for name, content := range diagnostics {
+			files[name] = content
+		}
+	}
 	compiledViews, err := compileViewArtifact(files)
 	if err != nil {
 		return nil, err

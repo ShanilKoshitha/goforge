@@ -1,0 +1,370 @@
+// Package diagnostics owns the application's explicit, read-only checks.
+// Constructors and replacement checks are trusted application Go: keep them
+// side-effect-free. This package does not sandbox arbitrary application code.
+package diagnostics
+
+import (
+	"context"
+	"crypto/tls"
+	"database/sql"
+	"errors"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/ShanilKoshitha/goforge"
+	forgeconfig "github.com/ShanilKoshitha/goforge/config"
+	"github.com/ShanilKoshitha/goforge/database/migrate"
+	"github.com/ShanilKoshitha/goforge/job"
+	jobpostgres "github.com/ShanilKoshitha/goforge/job/postgres"
+	mailsmtp "github.com/ShanilKoshitha/goforge/mail/smtp"
+	"github.com/ShanilKoshitha/goforge/schedule"
+	schedulepostgres "github.com/ShanilKoshitha/goforge/schedule/postgres"
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"[[.Module]]/database/migrations"
+	"[[.Module]]/internal/application"
+	"[[.Module]]/internal/auth"
+	"[[.Module]]/internal/config"
+	"[[.Module]]/internal/jobmanifest"
+	"[[.Module]]/internal/jobs"
+	"[[.Module]]/internal/mailbox"
+	"[[.Module]]/internal/schedules"
+)
+
+// Check deliberately contains no underlying error or configuration value.
+type Check struct {
+	ID      string   `json:"id"`
+	Status  string   `json:"status"`
+	Code    string   `json:"code"`
+	Message string   `json:"message"`
+	Action  string   `json:"action"`
+	Fields  []string `json:"fields,omitempty"`
+}
+
+type Report struct {
+	Version int     `json:"version"`
+	Checks  []Check `json:"checks"`
+}
+
+func (report Report) Healthy() bool {
+	if len(report.Checks) == 0 {
+		return false
+	}
+	for _, check := range report.Checks {
+		if check.Status != "pass" {
+			return false
+		}
+	}
+	return true
+}
+
+type Route struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Name   string `json:"name"`
+}
+
+type RouteReport struct {
+	Version int     `json:"version"`
+	Routes  []Route `json:"routes"`
+}
+
+// Inspector is an explicit replacement seam, not a discovery registry. Replace
+// a check here in ordinary Go and keep its error private; the report uses only
+// fixed safe categories and allowlisted configuration keys.
+type Inspector struct {
+	LoadHTTP         func() (config.Config, error)
+	CheckWorker      func() error
+	CheckScheduler   func() error
+	LoadDatabase     func() (config.DatabaseConfig, error)
+	OpenDatabase     func(string) (*sql.DB, error)
+	BuildApplication func(config.Config, *sql.DB) (*forge.App, error)
+	Ping             func(context.Context, *sql.DB) error
+	Verify           func(context.Context, *sql.DB) error
+	DatabaseTimeout  time.Duration
+}
+
+func New() *Inspector {
+	return &Inspector{
+		LoadHTTP: config.Load, CheckWorker: checkWorker, CheckScheduler: checkScheduler,
+		LoadDatabase: config.LoadDatabase,
+		OpenDatabase: func(value string) (*sql.DB, error) { return sql.Open("pgx", value) },
+		BuildApplication: func(settings config.Config, db *sql.DB) (*forge.App, error) {
+			return application.New(settings, application.Dependencies{
+				DB: db, Sessions: auth.NewPostgresSessionStore(db),
+			})
+		},
+		Ping: func(ctx context.Context, db *sql.DB) error { return db.PingContext(ctx) },
+		Verify: func(ctx context.Context, db *sql.DB) error {
+			return (&migrate.Migrator{DB: db, Files: migrations.Files, Dialect: migrate.Postgres}).Verify(ctx)
+		},
+		DatabaseTimeout: 2 * time.Second,
+	}
+}
+
+var errCheckPanic = errors.New("diagnostic check panicked")
+
+// protect discards panic payloads. Do not log the recovered value or a stack:
+// constructor errors and panics can contain credentials or application data.
+func protect[T any](run func() (T, error)) (value T, err error) {
+	defer func() {
+		if recover() != nil {
+			var zero T
+			value, err = zero, errCheckPanic
+		}
+	}()
+	return run()
+}
+
+func protectCheck(run func() error) error {
+	_, err := protect(func() (struct{}, error) { return struct{}{}, run() })
+	return err
+}
+
+func result(id, code, message, action string, err error) Check {
+	if err == nil {
+		return Check{ID: id, Status: "pass", Code: "ok", Message: "Check passed."}
+	}
+	if errors.Is(err, errCheckPanic) {
+		return Check{ID: id, Status: "fail", Code: "panic", Message: "Check could not complete safely.", Action: "Review the application-owned diagnostic check and constructors."}
+	}
+	if errors.Is(err, context.Canceled) {
+		return Check{ID: id, Status: "fail", Code: "cancelled", Message: "Check was cancelled.", Action: "Run the command again when ready."}
+	}
+	return Check{ID: id, Status: "fail", Code: code, Message: message, Action: action}
+}
+
+func skipped(id string) Check {
+	return Check{ID: id, Status: "skipped", Code: "dependency", Message: "A required check failed.", Action: "Correct the failed prerequisite and rerun forge doctor."}
+}
+
+func configuration(id string, err error) Check {
+	check := result(id, "invalid_config", "Configuration is invalid.", "Review .env and the named loader in internal/config; correct its required values and constraints.", err)
+	if err != nil && check.Code == "invalid_config" {
+		check.Fields = configurationFields(err)
+	}
+	return check
+}
+
+// Doctor runs every independent check. It opens SQL handles but performs no
+// network work until the bounded database ping and migration reads. No server,
+// worker, scheduler, handler, SMTP sender, or migration operation is run.
+func (inspector *Inspector) Doctor(ctx context.Context) Report {
+	report := Report{Version: 1, Checks: make([]Check, 0, 7)}
+	settings, httpErr := protect(inspector.LoadHTTP)
+	report.Checks = append(report.Checks, configuration("config.http", httpErr))
+	report.Checks = append(report.Checks, configuration("config.worker", protectCheck(inspector.CheckWorker)))
+	report.Checks = append(report.Checks, configuration("config.scheduler", protectCheck(inspector.CheckScheduler)))
+	databaseSettings, databaseErr := protect(inspector.LoadDatabase)
+	var db *sql.DB
+	if databaseErr == nil {
+		db, databaseErr = protect(func() (*sql.DB, error) { return inspector.OpenDatabase(databaseSettings.DatabaseURL) })
+		if databaseErr == nil && db == nil {
+			databaseErr = errors.New("database handle is unavailable")
+		}
+	}
+	if db != nil {
+		defer db.Close()
+	}
+	databaseCheck := configuration("config.database", databaseErr)
+	if databaseErr != nil && databaseCheck.Code == "invalid_config" && len(databaseCheck.Fields) == 0 {
+		databaseCheck.Fields = []string{"DATABASE_URL"}
+	}
+	report.Checks = append(report.Checks, databaseCheck)
+	if httpErr != nil || databaseErr != nil {
+		report.Checks = append(report.Checks, skipped("application"))
+	} else {
+		_, err := protect(func() (*forge.App, error) {
+			app, err := inspector.BuildApplication(settings, db)
+			if err == nil && (app == nil || app.Router == nil) {
+				return nil, errors.New("application router is unavailable")
+			}
+			return app, err
+		})
+		report.Checks = append(report.Checks, result("application", "construction_failed", "Application construction failed.", "Review internal/application, routes, session policy, trusted proxies, and application assets.", err))
+	}
+	if databaseErr != nil {
+		report.Checks = append(report.Checks, skipped("database"), skipped("migrations"))
+		return report
+	}
+	timeout := inspector.DatabaseTimeout
+	if timeout <= 0 || timeout > 10*time.Second {
+		timeout = 2 * time.Second
+	}
+	probe, cancel := context.WithTimeout(ctx, timeout)
+	pingErr := protectCheck(func() error { return inspector.Ping(probe, db) })
+	cancel()
+	report.Checks = append(report.Checks, result("database", "unavailable", "PostgreSQL is unavailable or the check timed out.", "Check DATABASE_URL, PostgreSQL availability, credentials, TLS, and network access.", pingErr))
+	if pingErr != nil {
+		report.Checks = append(report.Checks, skipped("migrations"))
+		return report
+	}
+	probe, cancel = context.WithTimeout(ctx, timeout)
+	verifyErr := protectCheck(func() error { return inspector.Verify(probe, db) })
+	cancel()
+	code, message, action := "inspection_failed", "Migration verification could not complete.", "Review migration source and database read permissions; do not rebaseline applied migrations."
+	switch {
+	case errors.Is(verifyErr, migrate.ErrPendingMigration):
+		code, message, action = "pending", "Migrations are pending.", "Review pending SQL, then deliberately run forge migrate."
+	case errors.Is(verifyErr, migrate.ErrMigrationDrift):
+		code, message, action = "drift", "Applied migration integrity does not match source.", "Restore and review the original applied migration files; do not edit checksums or automatically rebaseline."
+	case errors.Is(verifyErr, migrate.ErrLedgerUpgradeRequired):
+		code, message, action = "ledger_upgrade", "The migration ledger is uninitialized or needs an operational upgrade.", "Review the database and migration history before deliberately running an operational migration command."
+	case errors.Is(verifyErr, migrate.ErrInvalidMigrationSource):
+		code, message, action = "invalid_source", "Migration source cannot be verified.", "Review the paired up/down SQL files and restore missing original source before any operational migration command."
+	}
+	report.Checks = append(report.Checks, result("migrations", code, message, action, verifyErr))
+	return report
+}
+
+// Routes constructs exactly the application's explicit production wiring but
+// never pings the SQL handle or starts the application. Constructors must stay
+// side-effect-free. Returned metadata is the router's copied registration table.
+func (inspector *Inspector) Routes() (RouteReport, error) {
+	return protect(func() (RouteReport, error) {
+		settings, err := inspector.LoadHTTP()
+		if err != nil {
+			return RouteReport{}, errors.New("HTTP configuration is invalid; review .env and internal/config")
+		}
+		db, err := inspector.OpenDatabase(settings.DatabaseURL)
+		if err != nil || db == nil {
+			return RouteReport{}, errors.New("DATABASE_URL cannot create a SQL handle; review configuration")
+		}
+		defer db.Close()
+		app, err := inspector.BuildApplication(settings, db)
+		if err != nil || app == nil || app.Router == nil {
+			return RouteReport{}, errors.New("application construction failed; review internal/application and routes")
+		}
+		report := RouteReport{Version: 1, Routes: make([]Route, 0)}
+		for _, route := range app.Router.Routes() {
+			report.Routes = append(report.Routes, Route{Method: route.Method, Path: route.Path, Name: route.Name})
+		}
+		return report, nil
+	})
+}
+
+// configurationFields walks structured errors only. It never examines Error()
+// text, and refuses caller-provided keys outside the explicit application list.
+func configurationFields(err error) []string {
+	allowed := map[string]bool{}
+	for _, key := range strings.Fields(`APP_ENV APP_ADDRESS APP_URL APP_SHUTDOWN_TIMEOUT APP_REQUEST_TIMEOUT APP_READ_HEADER_TIMEOUT APP_READ_TIMEOUT APP_WRITE_TIMEOUT APP_IDLE_TIMEOUT APP_MAX_HEADER_BYTES APP_ENABLE_HSTS TRUSTED_PROXIES DATABASE_URL SESSION_SECRET SESSION_IDLE_LIFETIME SESSION_ABSOLUTE_LIFETIME AUTH_PASSWORD_RESET_TTL MAIL_FROM MAIL_SMTP_ADDRESS MAIL_SMTP_USERNAME MAIL_SMTP_PASSWORD MAIL_SMTP_TLS MAIL_SMTP_SERVER_NAME MAIL_SMTP_TIMEOUT MAIL_OUTBOX_KEY JOB_QUEUES JOB_CONCURRENCY JOB_POLL_INTERVAL JOB_LEASE_DURATION JOB_HEARTBEAT_INTERVAL JOB_OPERATION_TIMEOUT JOB_CANCELLATION_TIMEOUT JOB_SHUTDOWN_TIMEOUT SCHEDULE_POLL_INTERVAL SCHEDULE_OP_TIMEOUT`) {
+		allowed[key] = true
+	}
+	keys := map[string]bool{}
+	var walk func(error)
+	walk = func(current error) {
+		if current == nil {
+			return
+		}
+		if field, ok := current.(*forgeconfig.FieldError); ok && allowed[field.Key] {
+			keys[field.Key] = true
+		}
+		switch wrapped := current.(type) {
+		case interface{ Unwrap() []error }:
+			for _, nested := range wrapped.Unwrap() {
+				walk(nested)
+			}
+		case interface{ Unwrap() error }:
+			walk(wrapped.Unwrap())
+		}
+	}
+	walk(err)
+	fields := make([]string, 0, len(keys))
+	for key := range keys {
+		fields = append(fields, key)
+	}
+	sort.Strings(fields)
+	return fields
+}
+
+func checkWorker() error {
+	settings, err := config.LoadWorker()
+	if err != nil {
+		return err
+	}
+	// SQL Open parses configuration only. None of the constructors below connect
+	// or deliver mail; they match the worker's explicit production wiring.
+	db, err := sql.Open("pgx", settings.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	store, err := jobpostgres.New(db)
+	if err != nil {
+		return err
+	}
+	outbox, err := mailbox.New(settings.MailOutboxKey)
+	if err != nil {
+		return err
+	}
+	tlsMode, plaintext := mailsmtp.TLSSTARTTLS, false
+	switch settings.MailSMTPTLS {
+	case "implicit":
+		tlsMode = mailsmtp.TLSImplicit
+	case "none":
+		plaintext = true
+	}
+	sender, err := mailsmtp.New(mailsmtp.Config{
+		Address: settings.MailSMTPAddress, TLSMode: tlsMode,
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: settings.MailSMTPServerName},
+		Username: settings.MailSMTPUsername, Password: settings.MailSMTPPassword,
+		DialTimeout: settings.MailSMTPTimeout, OperationTimeout: settings.MailSMTPTimeout,
+		UnsafeAllowPlaintext: plaintext,
+	})
+	if err != nil {
+		return err
+	}
+	registry, err := jobs.NewRegistry(jobs.Dependencies{DB: db, Outbox: outbox, MailSender: sender})
+	if err != nil {
+		return err
+	}
+	var queues []string
+	for _, item := range strings.Split(settings.JobQueues, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			queues = append(queues, item)
+		}
+	}
+	_, err = job.NewWorker(store, registry, job.WorkerConfig{
+		Queues: queues, Concurrency: settings.JobConcurrency, PollInterval: settings.JobPollInterval,
+		LeaseDuration: settings.JobLeaseDuration, HeartbeatInterval: settings.JobHeartbeatInterval,
+		OperationTimeout: settings.JobOperationTimeout, CancellationTimeout: settings.JobCancellationTimeout,
+		ShutdownTimeout: settings.JobShutdownTimeout,
+	})
+	return err
+}
+
+func checkScheduler() error {
+	settings, err := config.LoadScheduler()
+	if err != nil {
+		return err
+	}
+	registry, err := schedules.NewRegistry()
+	if err != nil {
+		return err
+	}
+	if err := jobmanifest.ValidateScheduledTargets(registry); err != nil {
+		return err
+	}
+	db, err := sql.Open("pgx", settings.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	queueStore, err := jobpostgres.New(db)
+	if err != nil {
+		return err
+	}
+	dispatcher, err := job.NewDispatcher(queueStore, db, job.DispatcherConfig{})
+	if err != nil {
+		return err
+	}
+	store, err := schedulepostgres.New(db)
+	if err != nil {
+		return err
+	}
+	_, err = schedule.NewScheduler(store, registry, dispatcher, schedule.Config{
+		PollInterval: settings.SchedulePollInterval, OperationTimeout: settings.ScheduleOperationTimeout,
+	})
+	return err
+}
