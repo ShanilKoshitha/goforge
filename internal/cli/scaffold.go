@@ -11,10 +11,11 @@ import (
 )
 
 type scaffoldData struct {
-	Module        string
-	ProjectName   string
-	SessionSecret string
-	MailOutboxKey string
+	Module            string
+	ProjectName       string
+	SessionSecret     string
+	MailOutboxKey     string
+	ScalableResources bool
 }
 
 func scaffoldFiles(module, replace, projectName string) (map[string]string, error) {
@@ -28,8 +29,9 @@ func scaffoldFiles(module, replace, projectName string) (map[string]string, erro
 	}
 	data := scaffoldData{
 		Module: module, ProjectName: strconv.Quote(projectName),
-		SessionSecret: base64.RawURLEncoding.EncodeToString(secret),
-		MailOutboxKey: base64.RawURLEncoding.EncodeToString(outboxKey),
+		SessionSecret:     base64.RawURLEncoding.EncodeToString(secret),
+		MailOutboxKey:     base64.RawURLEncoding.EncodeToString(outboxKey),
+		ScalableResources: currentProjectFormat >= 16,
 	}
 	files := make(map[string]string)
 	err := fs.WalkDir(templateFiles, "templates/scaffold", func(path string, entry fs.DirEntry, err error) error {

@@ -308,11 +308,13 @@ func decodeFormString(form httpx.Form, field string, multiline bool) (string, va
 	if !form.Has(field) {
 		return "", validation.Missing[string](), "", nil
 	}
-	raw = normalizeString(raw, multiline)
+[[if .ScalableResources]]	// Presentation retains unfinished input; normalization applies only to data.
+	display := raw
+[[end]]	raw = normalizeString(raw, multiline)
 	if raw == "" {
-		return "", validation.Empty[string](), raw, nil
+		return "", validation.Empty[string](), [[if .ScalableResources]]display[[else]]raw[[end]], nil
 	}
-	return raw, validation.Present(raw), raw, nil
+	return raw, validation.Present(raw), [[if .ScalableResources]]display[[else]]raw[[end]], nil
 }
 
 func decodeFormInt64(form httpx.Form, field string) (int64, validation.Input[int64], string, error) {
@@ -363,15 +365,16 @@ func decodeFormBoolean(form httpx.Form, field string) (bool, validation.Input[bo
 	if !form.Has(field) {
 		return 0, validation.Missing[int64](), "", "", nil
 	}
-	raw = strings.TrimSpace(raw)
+[[if .ScalableResources]]	display := raw
+[[end]]	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return 0, validation.Empty[int64](), raw, "", nil
+		return 0, validation.Empty[int64](), [[if .ScalableResources]]display[[else]]raw[[end]], "", nil
 	}
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return 0, validation.Missing[int64](), raw, "must be an integer", nil
+		return 0, validation.Missing[int64](), [[if .ScalableResources]]display[[else]]raw[[end]], "must be an integer", nil
 	}
-	return value, validation.Present(value), raw, "", nil
+	return value, validation.Present(value), [[if .ScalableResources]]display[[else]]raw[[end]], "", nil
 }
 
 func decodeAccessibleFormBoolean(form httpx.Form, field string) (bool, validation.Input[bool], string, string, error) {
@@ -382,17 +385,86 @@ func decodeAccessibleFormBoolean(form httpx.Form, field string) (bool, validatio
 	if !form.Has(field) {
 		return false, validation.Missing[bool](), "", "", nil
 	}
-	raw = strings.TrimSpace(raw)
+[[if .ScalableResources]]	display := raw
+[[end]]	raw = strings.TrimSpace(raw)
 	switch raw {
 	case "":
-		return false, validation.Empty[bool](), raw, "", nil
+		return false, validation.Empty[bool](), [[if .ScalableResources]]display[[else]]raw[[end]], "", nil
 	case "true":
-		return true, validation.Present(true), raw, "", nil
+		return true, validation.Present(true), [[if .ScalableResources]]display[[else]]raw[[end]], "", nil
 	case "false":
-		return false, validation.Present(false), raw, "", nil
+		return false, validation.Present(false), [[if .ScalableResources]]display[[else]]raw[[end]], "", nil
 	default:
-		return false, validation.Missing[bool](), raw, "must be true or false", nil
+		return false, validation.Missing[bool](), [[if .ScalableResources]]display[[else]]raw[[end]], "must be true or false", nil
 	}
+}
+
+[[end]][[if .ScalableResources]]// formNavigation is presentation state, never authorization or write permission.
+type formNavigation struct {
+	Intent string
+	ValidationAttempted bool
+[[if .Relationships]]	Choices map[string]ChoiceOptions
+[[end]]
+}
+
+func defaultFormNavigation() formNavigation {
+	return formNavigation{[[if .Relationships]]Choices: map[string]ChoiceOptions{
+[[range .Relationships]]		"[[.Name]]": DefaultChoiceOptions(),
+[[end]]	}[[end]]}
+}
+
+func parseFormNavigation(ctx *httpx.Context) (formNavigation, error) {
+	state := defaultFormNavigation()
+	form, err := ctx.Form()
+	if err != nil { return state, err }
+	intent, err := form.Value("intent")
+	if err != nil { return state, err }
+	allowedIntent := intent == "save"
+[[range .Relationships]]	switch intent {
+	case "choice:[[.Name]]:search", "choice:[[.Name]]:lookup", "choice:[[.Name]]:previous", "choice:[[.Name]]:next": allowedIntent = true
+	}
+[[end]]	if !allowedIntent { return state, httpx.NewHTTPError(http.StatusBadRequest, "one explicit supported intent is required") }
+	state.Intent = intent
+	attempted, err := form.Value("validation_attempted")
+	if err != nil { return state, err }
+	if attempted != "0" && attempted != "1" { return state, httpx.NewHTTPError(http.StatusBadRequest, "validation_attempted must be 0 or 1") }
+	state.ValidationAttempted = attempted == "1"
+	allowedControls := map[string]bool{
+[[range .Relationships]]		"choice[[`[`]][[.Name]]][q]": true,
+		"choice[[`[`]][[.Name]]][id]": true,
+		"choice[[`[`]][[.Name]]][page]": true,
+[[end]]	}
+	for key := range ctx.Request.PostForm {
+		if strings.HasPrefix(key, "choice[") && !allowedControls[key] { return state, httpx.NewHTTPError(http.StatusBadRequest, "unknown relationship choice control") }
+	}
+[[range .Relationships]]	{
+		options := DefaultChoiceOptions()
+		options.Search, err = form.Value("choice[[`[`]][[.Name]]][q]")
+		if err != nil { return state, err }
+		if err := validateSearch(options.Search, true); err != nil { return state, err }
+		id, err := form.Value("choice[[`[`]][[.Name]]][id]")
+		if err != nil { return state, err }
+		if id != "" {
+			options.ID, err = strconv.ParseInt(id, 10, 64)
+			if err != nil || options.ID < 1 { return state, httpx.NewHTTPError(http.StatusBadRequest, "choice ID must be a positive integer") }
+		}
+		if form.Has("choice[[`[`]][[.Name]]][page]") {
+			value, err := form.Value("choice[[`[`]][[.Name]]][page]")
+			if err != nil { return state, err }
+			options.Page, err = strconv.Atoi(value)
+			if err != nil || options.Page < 1 || options.Page > 10000 { return state, httpx.NewHTTPError(http.StatusBadRequest, "choice page must be between 1 and 10000") }
+		}
+		switch intent {
+		case "choice:[[.Name]]:search": options.ID, options.Page = 0, 1
+		case "choice:[[.Name]]:lookup": options.Search, options.Page = "", 1
+		case "choice:[[.Name]]:previous": options.Page--
+		case "choice:[[.Name]]:next": options.Page++
+		}
+		if options.Page < 1 || options.Page > 10000 { return state, httpx.NewHTTPError(http.StatusBadRequest, "choice page must be between 1 and 10000") }
+		if err := options.Validate([[if .ChoiceLabelGoName]]true[[else]]false[[end]]); err != nil { return state, httpx.NewHTTPError(http.StatusBadRequest, "invalid [[.Name]] choice parameters").WithCause(err) }
+		state.Choices["[[.Name]]"] = options
+	}
+[[end]]	return state, nil
 }
 
 [[end]]func inputPointer[T any](input validation.Input[T]) *T {

@@ -61,6 +61,13 @@ func makeResourceWithProcessRelationships(ctx context.Context, name string, fiel
 		if err := requireProjectFormatRange(10, currentProjectFormat); err != nil {
 			return fmt.Errorf("belongs-to resource generation requires project format 10 or newer: %w", err)
 		}
+		for _, relationship := range relationships {
+			if relationship.ChoiceLabelName != "" {
+				if err := requireProjectFormatRange(16, currentProjectFormat); err != nil {
+					return fmt.Errorf("choice-label resource generation requires project format 16 or newer: %w", err)
+				}
+			}
+		}
 	}
 	return makeResourceWithRelationshipDependencies(ctx, name, fields, relationships, schemaDriven, stdin, stdout, stderr, processes, publishResourceManagedFile)
 }

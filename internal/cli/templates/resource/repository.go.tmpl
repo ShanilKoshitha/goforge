@@ -47,11 +47,12 @@ type AssociationChoice struct {
 type Repository interface {
 	List(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]]) ([][[.Name]], error)
 	Paginate(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]], page, perPage int) ([[.Name]]Page, error)
-	Create(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]], attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]]) ([[.Name]], error)
+[[if .ScalableResources]]	Browse(ctx context.Context, scope Scope, options ListOptions) ([[.Name]]Page, error)
+[[end]]	Create(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope[[else]]userID int64[[end]], attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]]) ([[.Name]], error)
 	Find(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]]) ([[.Name]], error)
 	Update(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]], attributes Attributes[[if .Relationships]], associations AssociationIDs[[end]], expectedVersion *int64) ([[.Name]], error)
 	Delete(ctx context.Context, [[if .AuthorizationPolicies]]scope Scope, id int64[[else]]userID, id int64[[end]]) error
-[[range .Relationships]]	[[.GoName]]Choices(ctx context.Context, userID int64) ([]AssociationChoice, error)
+[[range .Relationships]]	[[.GoName]]Choices(ctx context.Context, userID int64[[if $.ScalableResources]], options ChoiceOptions) (AssociationChoicePage[[else]]) ([]AssociationChoice[[end]], error)
 [[end]]
 }
 
@@ -359,7 +360,7 @@ func (repository *PostgresRepository) loadRelationships(ctx context.Context, [[i
 [[end]]	return items, nil
 }
 
-[[range .Relationships]]func (repository *PostgresRepository) [[.GoName]]Choices(ctx context.Context, userID int64) ([]AssociationChoice, error) {
+[[if not .ScalableResources]][[range .Relationships]]func (repository *PostgresRepository) [[.GoName]]Choices(ctx context.Context, userID int64) ([]AssociationChoice, error) {
 	items, err := models.NewStore(repository.Executor).[[.TargetQueryAccessor]]().Select().
 		Where(models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID)).
 		OrderBy(models.[[.TargetSpec.Name]]Columns.ID.Asc()).
@@ -378,7 +379,7 @@ func (repository *PostgresRepository) loadRelationships(ctx context.Context, [[i
 	return choices, nil
 }
 
-[[end]][[end]]
+[[end]][[end]][[end]]
 
 func nullableField[T any](value *T) orm.Field[*T] {
 	if value == nil {

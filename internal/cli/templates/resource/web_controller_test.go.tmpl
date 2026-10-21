@@ -253,13 +253,19 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	if paged.Code != http.StatusOK || repository.paginationUserID != 9 || repository.pageNumber != 2 || repository.pageSize != 5 {
 		t.Fatalf("explicit pagination: status=%d owner=%d page=%d per_page=%d: %s", paged.Code, repository.paginationUserID, repository.pageNumber, repository.pageSize, paged.Body.String())
 	}
-	if !strings.Contains(paged.Body.String(), `/app/[[.Plural]]?page=1&amp;per_page=5`) || !strings.Contains(paged.Body.String(), `/app/[[.Plural]]?page=3&amp;per_page=5`) {
-		t.Fatalf("pagination links are missing or do not retain page size: %s", paged.Body.String())
+[[if .ScalableResources]]	previousOptions := resource.DefaultListOptions()
+	previousOptions.Page, previousOptions.PerPage = 1, 5
+	nextOptions := previousOptions
+	nextOptions.Page = 3
+	if !strings.Contains(paged.Body.String(), html.EscapeString("/app/[[.Plural]]?"+previousOptions.Values().Encode())) || !strings.Contains(paged.Body.String(), html.EscapeString("/app/[[.Plural]]?"+nextOptions.Values().Encode())) {
+[[else]]	if !strings.Contains(paged.Body.String(), `/app/[[.Plural]]?page=1&amp;per_page=5`) || !strings.Contains(paged.Body.String(), `/app/[[.Plural]]?page=3&amp;per_page=5`) {
+[[end]]		t.Fatalf("pagination links are missing or do not retain page size: %s", paged.Body.String())
 	}
 	cookie = responseCookie(paged, cookie)
 	bounded := browserRequest(router, http.MethodGet, "/app/[[.Plural]]?page=999999&per_page=999999", nil, cookie)
-	if bounded.Code != http.StatusOK || repository.pageNumber != 10_000 || repository.pageSize != 100 {
-		t.Fatalf("bounded pagination: status=%d page=%d per_page=%d: %s", bounded.Code, repository.pageNumber, repository.pageSize, bounded.Body.String())
+[[if .ScalableResources]]	if bounded.Code != http.StatusBadRequest || repository.pageNumber != 2 || repository.pageSize != 5 {
+[[else]]	if bounded.Code != http.StatusOK || repository.pageNumber != 10_000 || repository.pageSize != 100 {
+[[end]]		t.Fatalf("bounded pagination: status=%d page=%d per_page=%d: %s", bounded.Code, repository.pageNumber, repository.pageSize, bounded.Body.String())
 	}
 	cookie = responseCookie(bounded, cookie)
 	for _, target := range []string{
@@ -718,10 +724,292 @@ func TestBrowserAuthorizationMatchesJSONAndRunsAfterValidCSRF(t *testing.T) {
 
 [[end]]
 
-func sampleResourceFormValues() url.Values {
+[[if .ScalableResources]]func TestBrowserExplicitIntentAndSharedListOptions(t *testing.T) {
+	repository, router, cookie := scalableBrowser(t)
+	page := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/new", nil, cookie)
+	values := sampleResourceFormValues()
+	values.Set("_token", browserCSRFToken(t, page.Body.String()))
+	cookie = responseCookie(page, cookie)
+	for _, intent := range []string{"", "unknown", "choice:unknown:next"} {
+		values.Set("intent", intent)
+		response := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", values, cookie)
+		if response.Code != http.StatusBadRequest || repository.item.ID != 0 || repository.repositoryCalls != 0 {
+			t.Fatalf("invalid intent %q reached persistence: %d: %s", intent, response.Code, response.Body.String())
+		}
+	}
+	values.Set("intent", "save")
+	values.Add("intent", "save")
+	duplicate := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", values, cookie)
+	if duplicate.Code != http.StatusBadRequest || repository.item.ID != 0 { t.Fatalf("duplicate intent reached persistence: %d", duplicate.Code) }
+	values.Set("intent", "save")
+	for _, flag := range []string{"", "2", "true"} {
+		values.Set("validation_attempted", flag)
+		response := browserRequest(router, http.MethodPost, "/app/[[.Plural]]", values, cookie)
+		if response.Code != http.StatusBadRequest || repository.item.ID != 0 { t.Fatalf("invalid flag %q reached persistence: %d", flag, response.Code) }
+	}
+	values.Set("validation_attempted", "0")
+	values.Add("validation_attempted", "0")
+	duplicate = browserRequest(router, http.MethodPost, "/app/[[.Plural]]", values, cookie)
+	if duplicate.Code != http.StatusBadRequest || repository.item.ID != 0 { t.Fatalf("duplicate flag reached persistence: %d", duplicate.Code) }
+	for _, query := range []string{"q=%FF", "q=%00", "q=%", "sort=unknown", "direction=SIDEWAYS", "unknown=1", "page=10001", "per_page=101", "id=0"} {
+		before := repository.repositoryCalls
+		response := browserRequest(router, http.MethodGet, "/app/[[.Plural]]?"+query, nil, cookie)
+		if response.Code != http.StatusBadRequest || repository.repositoryCalls != before { t.Fatalf("invalid list %q reached repository: %d", query, response.Code) }
+	}
+	options := resource.DefaultListOptions()
+	options.Page, options.PerPage, options.Sort, options.Direction = 2, 5, "id", "asc"
+[[if .HasTextualFields]]	options.Search = "100%_!\\safe"
+[[end]][[range .Relationships]]	options.[[.ForeignKeyGoName]] = 7
+[[end]]	repository.paginationHasNext = true
+	query := options.Values().Encode()
+	response := browserRequest(router, http.MethodGet, "/app/[[.Plural]]?"+query, nil, cookie)
+	if response.Code != http.StatusOK || !reflect.DeepEqual(repository.browseOptions, options) { t.Fatalf("browser list options lost: %d %+v", response.Code, repository.browseOptions) }
+	previous, next := options, options
+	previous.Page, next.Page = 1, 3
+	for _, target := range []string{previous.Values().Encode(), next.Values().Encode()} {
+		if !strings.Contains(response.Body.String(), html.EscapeString("/app/[[.Plural]]?"+target)) { t.Fatalf("pagination lost filters: %s", response.Body.String()) }
+	}
+	jsonResponse := browserRequest(router, http.MethodGet, "/[[.Plural]]?"+query, nil, cookie)
+	if jsonResponse.Code != http.StatusOK || !reflect.DeepEqual(repository.browseOptions, options) || !strings.Contains(jsonResponse.Body.String(), `"page":2`) { t.Fatalf("JSON/browser options disagree: %d %s", jsonResponse.Code, jsonResponse.Body.String()) }
+}
+
+[[if .Relationships]]func TestBrowserChoiceRefreshPreservesRealFormState(t *testing.T) {
+	repository, router, cookie := scalableBrowser(t)
+	response := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/new", nil, cookie)
+	action, values := renderedResourceForm(t, response.Body.String())
+	if action != "/app/[[.Plural]]" || values.Get("validation_attempted") != "0" { t.Fatalf("initial form contract: %q %v", action, values) }
+	for key, entries := range accessibleEdgeResourceFormValues() { values[key] = entries }
+	values.Set("_token", browserCSRFToken(t, response.Body.String()))
+	cookie = responseCookie(response, cookie)
+[[range .Relationships]]	{
+		intent := "choice:[[.Name]]:next"
+		assertRefreshButton(t, response.Body.String(), intent)
+		values.Set("intent", intent)
+		before := repository.item
+		response = browserRequest(router, http.MethodPost, action, values, cookie)
+		if response.Code != http.StatusOK || !reflect.DeepEqual(repository.item, before) || repository.repositoryCalls != 0 || repository.choiceOptions["[[.Name]]"].Page != 2 {
+			t.Fatalf("refresh wrote or lost state: %d %+v: %s", response.Code, repository.choiceOptions, response.Body.String())
+		}
+		assertResourceFormValues(t, response.Body.String(), values)
+		action, values = renderedResourceForm(t, response.Body.String())
+		if values.Get("choice[[`[`]][[.Name]]][page]") != "2" { t.Fatalf("choice page was not retained: %v", values) }
+		cookie = responseCookie(response, cookie)
+		values.Set("choice[[`[`]][[.Name]]][id]", "7")
+		values.Set("choice[[`[`]][[.Name]]][q]", "[[if .ChoiceLabelGoName]]old text[[end]]")
+		values.Set("intent", "choice:[[.Name]]:lookup")
+		response = browserRequest(router, http.MethodPost, action, values, cookie)
+		if response.Code != http.StatusOK || repository.choiceOptions["[[.Name]]"].ID != 7 || repository.choiceOptions["[[.Name]]"].Search != "" || repository.choiceOptions["[[.Name]]"].Page != 1 { t.Fatalf("lookup did not clear text/reset page: %d %+v", response.Code, repository.choiceOptions) }
+		action, values = renderedResourceForm(t, response.Body.String())
+		cookie = responseCookie(response, cookie)
+[[if .ChoiceLabelGoName]]		values.Set("choice[[`[`]][[.Name]]][q]", "new%_text")
+		values.Set("intent", "choice:[[.Name]]:search")
+		response = browserRequest(router, http.MethodPost, action, values, cookie)
+		if response.Code != http.StatusOK || repository.choiceOptions["[[.Name]]"].ID != 0 || repository.choiceOptions["[[.Name]]"].Search != "new%_text" { t.Fatalf("search did not clear ID: %d %+v", response.Code, repository.choiceOptions) }
+		action, values = renderedResourceForm(t, response.Body.String())
+		cookie = responseCookie(response, cookie)
+[[end]]	}
+[[end]]	// A failed save followed by refresh retains correctable errors and every value.
+[[$first := index .Fields 0]]	values.Set("[[$first.Name]]", [[if $first.Integer]]"not-a-number"[[else if $first.Boolean]]"not-a-boolean"[[else if $first.Text]]strings.Repeat("x", 65536)[[else]]strings.Repeat("x", 256)[[end]])
+	values.Set("intent", "save")
+	response = browserRequest(router, http.MethodPost, action, values, cookie)
+	if response.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 { t.Fatalf("invalid save: %d %s", response.Code, response.Body.String()) }
+	action, values = renderedResourceForm(t, response.Body.String())
+	if values.Get("validation_attempted") != "1" { t.Fatalf("failed save did not mark validation: %v", values) }
+	cookie = responseCookie(response, cookie)
+[[with index .Relationships 0]]	values.Set("intent", "choice:[[.Name]]:lookup")
+	values.Set("choice[[`[`]][[.Name]]][id]", "7")
+[[end]]	response = browserRequest(router, http.MethodPost, action, values, cookie)
+	if response.Code != http.StatusUnprocessableEntity || repository.item.ID != 0 { t.Fatalf("refresh lost validation errors or wrote: %d %s", response.Code, response.Body.String()) }
+	assertResourceFormValues(t, response.Body.String(), values)
+	action, values = renderedResourceForm(t, response.Body.String())
+	values.Set("[[$first.Name]]", [[printf "%q" $first.SampleFormValue]])
+	values.Set("intent", "save")
+	response = browserRequest(router, http.MethodPost, action, values, responseCookie(response, cookie))
+	if response.Code != http.StatusSeeOther || repository.item.ID == 0 { t.Fatalf("corrected form did not save: %d %s", response.Code, response.Body.String()) }
+}
+
+func TestBrowserRefreshPreservesDisplayLexemesWhileSaveNormalizes(t *testing.T) {
+	repository, router, cookie := scalableBrowser(t)
+	response := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/new", nil, cookie)
+	action, values := renderedResourceForm(t, response.Body.String())
+[[range .Fields]][[if .String]]	values.Set("[[.Name]]", "  unfinished <draft>  ")
+[[else if .Text]]	values.Set("[[.Name]]", "\n\r\n  first line\r\n\r\nlast line  \r\n ")
+[[else if .Integer]]	values.Set("[[.Name]]", " 000 ")
+[[else]]	values.Set("[[.Name]]", " false ")
+[[end]][[end]][[range .Relationships]]	values.Set("[[.ForeignKey]]", " 007 ")
+[[end]][[with index .Relationships 0]]	values.Set("choice[[`[`]][[.Name]]][id]", "7")
+	values.Set("intent", "choice:[[.Name]]:lookup")
+[[end]]	response = browserRequest(router, http.MethodPost, action, values, responseCookie(response, cookie))
+	if response.Code != http.StatusOK || repository.item.ID != 0 { t.Fatalf("draft refresh wrote or rejected: %d %s", response.Code, response.Body.String()) }
+	_, displayed := renderedResourceForm(t, response.Body.String())
+[[range .Fields]]	{
+		want := values.Get("[[.Name]]")
+[[if .Text]]		// Native textarea DOM values normalize source CRLF/CR to LF.
+		want = strings.ReplaceAll(strings.ReplaceAll(want, "\r\n", "\n"), "\r", "\n")
+[[end]]		if displayed.Get("[[.Name]]") != want { t.Fatalf("refresh changed unfinished [[.Name]]: got %q, want %q", displayed.Get("[[.Name]]"), want) }
+[[if .Integer]]		control := accessibleControlTag(t, response.Body.String(), "[[$.Package]]-[[.Name]]")
+		if !strings.Contains(control, `type="text"`) || !strings.Contains(control, `inputmode="numeric"`) { t.Fatalf("integer draft control can sanitize unfinished input: %s", control) }
+[[end]]	}
+[[end]][[range .Relationships]]	if displayed.Get("[[.ForeignKey]]") != " 007 " || !strings.Contains(response.Body.String(), `>[[.TargetSpec.Name]] #7</option>`) { t.Fatalf("refresh changed association lexeme/authorized label: %s", response.Body.String()) }
+[[end]]	// Recoverable malformed scalars keep their lexical spelling during refresh.
+[[range .Fields]][[if or .Integer .Boolean]]	{
+		values = displayed
+		values.Set("[[.Name]]", "  not-a-[[if .Integer]]number[[else]]boolean[[end]]  ")
+[[with index $.Relationships 0]]		values.Set("intent", "choice:[[.Name]]:lookup")
+[[end]]		response = browserRequest(router, http.MethodPost, action, values, responseCookie(response, cookie))
+		if response.Code != http.StatusOK || repository.item.ID != 0 { t.Fatalf("unvalidated scalar refresh wrote/rejected: %d %s", response.Code, response.Body.String()) }
+		_, displayed = renderedResourceForm(t, response.Body.String())
+		if displayed.Get("[[.Name]]") != "  not-a-[[if .Integer]]number[[else]]boolean[[end]]  " { t.Fatalf("malformed [[.Name]] display was trimmed: %q", displayed.Get("[[.Name]]")) }
+		displayed.Set("[[.Name]]", "[[if .Integer]] 000 [[else]] false [[end]]")
+	}
+[[end]][[end]]	values = displayed
+	values.Set("intent", "save")
+	response = browserRequest(router, http.MethodPost, action, values, responseCookie(response, cookie))
+	if response.Code != http.StatusSeeOther || repository.item.ID == 0 { t.Fatalf("normalized save failed: %d %s", response.Code, response.Body.String()) }
+[[range .Fields]][[if .String]]	if [[if .Nullable]]repository.createdAttributes.[[.GoName]] == nil || *[[end]]repository.createdAttributes.[[.GoName]] != "unfinished <draft>" { t.Fatalf("[[.Name]] persistence was not normalized: %#v", repository.createdAttributes.[[.GoName]]) }
+[[else if .Text]]	if [[if .Nullable]]repository.createdAttributes.[[.GoName]] == nil || *[[end]]repository.createdAttributes.[[.GoName]] != "first line\n\nlast line" { t.Fatalf("[[.Name]] persistence was not normalized: %#v", repository.createdAttributes.[[.GoName]]) }
+[[else if .Integer]]	if [[if .Nullable]]repository.createdAttributes.[[.GoName]] == nil || *[[end]]repository.createdAttributes.[[.GoName]] != 0 { t.Fatalf("[[.Name]] zero persistence changed: %#v", repository.createdAttributes.[[.GoName]]) }
+[[else]]	if [[if .Nullable]]repository.createdAttributes.[[.GoName]] == nil || *[[end]]repository.createdAttributes.[[.GoName]] { t.Fatalf("[[.Name]] false persistence changed: %#v", repository.createdAttributes.[[.GoName]]) }
+[[end]][[end]]}
+
+func TestBrowserChoiceRefreshRejectsUnsafeStateAndPreservesVersions(t *testing.T) {
+	repository, router, cookie := scalableBrowser(t)
+	page := browserRequest(router, http.MethodGet, "/app/[[.Plural]]/new", nil, cookie)
+	token := browserCSRFToken(t, page.Body.String())
+	cookie = responseCookie(page, cookie)
+[[with index .Relationships 0]]	for _, mutate := range []func(url.Values){
+		func(values url.Values) { values.Set("choice[unknown][page]", "1") },
+		func(values url.Values) { values.Set("choice[[`[`]][[.Name]]][page]", "10001") },
+		func(values url.Values) { values.Set("choice[[`[`]][[.Name]]][id]", "0") },
+		func(values url.Values) { values.Add("choice[[`[`]][[.Name]]][page]", "1") },
+		func(values url.Values) { values.Set("choice[[`[`]][[.Name]]][q]", "bad\x00text") },
+		func(values url.Values) { values.Set("choice[[`[`]][[.Name]]][q]", strings.Repeat("é", 201)) },
+		func(values url.Values) { values.Set("choice[[`[`]][[.Name]]][q]", "text"); values.Set("choice[[`[`]][[.Name]]][id]", "7") },
+	} {
+		values := sampleResourceFormValues()
+		values.Set("_token", token)
+		values.Set("choice[[`[`]][[.Name]]][page]", "1")
+		mutate(values)
+		before := repository.choiceCalls
+		response := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", values, cookie)
+		if response.Code != http.StatusBadRequest || repository.choiceCalls != before || repository.repositoryCalls != 0 || repository.item.ID != 0 { t.Fatalf("unsafe choice state queried or wrote: %d %v: %s", response.Code, values, response.Body.String()) }
+	}
+	refresh := sampleResourceFormValues()
+	refresh.Set("intent", "choice:[[.Name]]:lookup")
+	refresh.Set("choice[[`[`]][[.Name]]][id]", "7")
+	beforeChoices := repository.choiceCalls
+	missingCSRF := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", refresh, cookie)
+	if missingCSRF.Code != http.StatusForbidden || repository.choiceCalls != beforeChoices { t.Fatalf("refresh bypassed CSRF: %d", missingCSRF.Code) }
+	// A selected authorized row need not appear on the current result page.
+	repository.choicePages = map[string]resource.AssociationChoicePage{
+		"[[.Name]]": {Items: []resource.AssociationChoice{{ID: 11, Label: "different page"}}, Selected: &resource.AssociationChoice{ID: 7, Label: "safe <selected>"}, Number: 1},
+	}
+	refresh.Set("_token", token)
+	selected := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", refresh, cookie)
+	if selected.Code != http.StatusOK || !strings.Contains(selected.Body.String(), `value="7" selected`) || strings.Contains(selected.Body.String(), "safe <selected>") || !strings.Contains(selected.Body.String(), "safe &lt;selected&gt;") { t.Fatalf("outside-page selection lost or unescaped: %d %s", selected.Code, selected.Body.String()) }
+	repository.choicePages = nil
+	cookie = responseCookie(selected, cookie)
+	// Refresh keeps a valid stale version, while repairing an invalid one from
+	// the authorized current member. A correction cannot bypass the later CAS.
+	repository.item = resource.[[$.Name]]{ID: 1, UserID: 9, Version: 2}
+	edit := browserRequest(router, http.MethodGet, "/app/[[$.Plural]]/1/edit", nil, cookie)
+	values := updatedResourceFormValues()
+	values.Set("_token", browserCSRFToken(t, edit.Body.String()))
+	values.Set("_method", http.MethodPut)
+	values.Set("intent", "choice:[[.Name]]:lookup")
+	values.Set("choice[[`[`]][[.Name]]][id]", "7")
+	values.Set("version", "1")
+	values.Set("validation_attempted", "1")
+	stale := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]/1", values, responseCookie(edit, cookie))
+	if stale.Code != http.StatusOK || browserVersion(t, stale.Body.String()) != "1" || repository.item.Version != 2 || !reflect.DeepEqual(repository.updatedAttributes, resource.Attributes{}) { t.Fatalf("refresh replaced stale version or wrote: %d %s", stale.Code, stale.Body.String()) }
+	values.Set("_token", browserCSRFToken(t, stale.Body.String()))
+	values.Set("intent", "save")
+	conflict := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]/1", values, responseCookie(stale, cookie))
+	if conflict.Code != http.StatusConflict || repository.item.Version != 2 || !reflect.DeepEqual(repository.updatedAttributes, resource.Attributes{}) { t.Fatalf("refresh bypassed optimistic conflict: %d %s", conflict.Code, conflict.Body.String()) }
+	values.Set("_token", browserCSRFToken(t, conflict.Body.String()))
+	values.Set("intent", "choice:[[.Name]]:lookup")
+	values.Set("version", "not-a-version")
+	repaired := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]/1", values, responseCookie(conflict, cookie))
+	if repaired.Code != http.StatusUnprocessableEntity || browserVersion(t, repaired.Body.String()) != "2" || repository.item.Version != 2 { t.Fatalf("invalid refresh version was not correctable: %d %s", repaired.Code, repaired.Body.String()) }
+	values.Set("_token", browserCSRFToken(t, repaired.Body.String()))
+	repository.item.UserID = 27
+	beforeChoices = repository.choiceCalls
+	foreign := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]/1", values, responseCookie(repaired, cookie))
+	if foreign.Code != http.StatusNotFound || repository.choiceCalls != beforeChoices || strings.Contains(foreign.Body.String(), `name="version"`) { t.Fatalf("hidden member exposed choices/form: %d %s", foreign.Code, foreign.Body.String()) }
+[[end]]}
+
+func assertRefreshButton(t *testing.T, body, intent string) {
+	t.Helper()
+	pattern := regexp.MustCompile(`<button\b[^>]*name="intent"[^>]*value="`+regexp.QuoteMeta(intent)+`"[^>]*formnovalidate[^>]*>`)
+	if !pattern.MatchString(body) { t.Fatalf("missing no-JavaScript refresh control %q: %s", intent, body) }
+}
+
+// renderedResourceForm submits the actual successful controls, including the
+// current CSRF/version/picker state, rather than inventing a page-state struct.
+func renderedResourceForm(t *testing.T, body string) (string, url.Values) {
+	t.Helper()
+	match := regexp.MustCompile(`(?s)<form action="([^"]+)" method="post">(.*?)</form>`).FindStringSubmatch(body)
+	if len(match) != 3 { t.Fatalf("missing resource POST form: %s", body) }
+	values := make(url.Values)
+	attribute := func(tag, key string) string {
+		match := regexp.MustCompile(`\b`+key+`="([^"]*)"`).FindStringSubmatch(tag)
+		if len(match) != 2 { return "" }
+		return html.UnescapeString(match[1])
+	}
+	for _, tag := range regexp.MustCompile(`<input\b[^>]*>`).FindAllString(match[2], -1) {
+		if name := attribute(tag, "name"); name != "" { values.Set(name, attribute(tag, "value")) }
+	}
+	for _, item := range regexp.MustCompile(`(?s)(<textarea\b[^>]*>)(.*?)</textarea>`).FindAllStringSubmatch(match[2], -1) {
+		// Model HTML source newline preprocessing and the parser's ignored first
+		// LF. The component emits one synthetic LF so a draft's own first LF stays.
+		text := strings.ReplaceAll(strings.ReplaceAll(item[2], "\r\n", "\n"), "\r", "\n")
+		values.Set(attribute(item[1], "name"), strings.TrimPrefix(html.UnescapeString(text), "\n"))
+	}
+	for _, item := range regexp.MustCompile(`(?s)(<select\b[^>]*>)(.*?)</select>`).FindAllStringSubmatch(match[2], -1) {
+		options := regexp.MustCompile(`<option\b[^>]*>`).FindAllString(item[2], -1)
+		selected := ""
+		for index, option := range options { if index == 0 || strings.Contains(option, " selected") { selected = attribute(option, "value") } }
+		values.Set(attribute(item[1], "name"), selected)
+	}
+	return html.UnescapeString(match[1]), values
+}
+
+[[end]]func scalableBrowser(t *testing.T) (*fakeRepository, http.Handler, *http.Cookie) {
+	t.Helper()
+	repository := &fakeRepository{}
+	users := fakeUsers{user: auth.User{ID: 9, Email: "ada@example.com", CredentialVersion: 1}}
+	manager, err := session.NewManager(session.NewMemoryStore(), []byte(strings.Repeat("s", 32)), session.Cookie{UnsafeAllowHTTP: true}, time.Hour)
+	if err != nil { t.Fatal(err) }
+	renderer, err := views.New()
+	if err != nil { t.Fatal(err) }
+	webController, err := resource.NewWebController(repository, renderer, resource.Authorize)
+	if err != nil { t.Fatal(err) }
+	jsonController, err := resource.NewController(repository, resource.Authorize)
+	if err != nil { t.Fatal(err) }
+	router := httpx.NewRouter()
+	router.Use(httpx.MethodOverride("/app/"))
+	protect := func(handler httpx.Handler) httpx.Handler { return web.Sessions(manager)(auth.RequireWeb(users)(web.CSRF()(handler))) }
+	router.GET("/app/[[.Plural]]", protect(webController.Index))
+	router.GET("/app/[[.Plural]]/new", protect(webController.New))
+	router.POST("/app/[[.Plural]]", protect(webController.Create))
+	router.GET("/app/[[.Plural]]/{id}/edit", protect(webController.Edit))
+	router.PUT("/app/[[.Plural]]/{id}", protect(webController.Update))
+	router.GET("/[[.Plural]]", auth.Require(manager, users)(jsonController.Index))
+	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil { t.Fatal(err) }
+	if err := current.Put("user_id", int64(9)); err != nil { t.Fatal(err) }
+	if err := current.Put("credential_version", int64(1)); err != nil { t.Fatal(err) }
+	seed := httptest.NewRecorder()
+	if err := manager.Save(context.Background(), seed, current); err != nil { t.Fatal(err) }
+	return repository, router, seed.Result().Cookies()[0]
+}
+
+[[end]]func sampleResourceFormValues() url.Values {
 	values := make(url.Values, [[len .Fields]])
 [[range .Fields]]	values.Set("[[.Name]]", [[printf "%q" .SampleFormValue]])
 [[end]][[range .Relationships]]	values.Set("[[.ForeignKey]]", "7")
+[[end]][[if .ScalableResources]]	values.Set("intent", "save")
+	values.Set("validation_attempted", "0")
 [[end]]	return values
 }
 
@@ -729,6 +1017,8 @@ func updatedResourceFormValues() url.Values {
 	values := make(url.Values, [[len .Fields]])
 [[range .Fields]]	values.Set("[[.Name]]", [[printf "%q" .UpdatedFormValue]])
 [[end]][[range .Relationships]]	values.Set("[[.ForeignKey]]", "7")
+[[end]][[if .ScalableResources]]	values.Set("intent", "save")
+	values.Set("validation_attempted", "0")
 [[end]]	return values
 }
 
@@ -781,7 +1071,7 @@ func assertResourceFormValues(t *testing.T, body string, values url.Values) {
 	t.Helper()
 [[range .Fields]]	{
 		value := html.EscapeString(values.Get("[[.Name]]"))
-[[if $.AccessibleForms]][[if .Text]]		marker := `>` + value + `</textarea>`
+[[if $.AccessibleForms]][[if .Text]]		marker := [[if $.ScalableResources]]value[[else]]`>` + value[[end]] + `</textarea>`
 [[else if .Boolean]]		marker := `value="` + value + `" selected`
 [[else]]		control := accessibleControlTag(t, body, "[[$.Package]]-[[.Name]]")
 		if !strings.Contains(control, `name="[[.Name]]"`) || !strings.Contains(control, `value="`+value+`"`) {

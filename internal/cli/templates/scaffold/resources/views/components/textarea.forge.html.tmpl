@@ -7,6 +7,7 @@
     @if(and $help $errors)aria-describedby="{{$id}}-help {{$id}}-errors"
     @elseif($help)aria-describedby="{{$id}}-help"
     @elseif($errors)aria-describedby="{{$id}}-errors"@endif
-    @if($errors)aria-invalid="true"@endif>{{$form.Old $name $fallback}}</textarea>
+    @if($errors)aria-invalid="true"@endif>[[if .ScalableResources]]
+[[end]]{{$form.Old $name $fallback}}</textarea>
   @if($errors)<div id="{{$id}}-errors" class="field__errors" role="alert">@for($errors)<p>{{.}}</p>@endfor</div>@endif
 </div>

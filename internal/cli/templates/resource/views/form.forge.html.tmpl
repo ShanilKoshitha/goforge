@@ -1,23 +1,40 @@
 [[if .AccessibleForms]]<form action="{{.Action}}" method="post">
   @csrf(form=.Form)
-  {{if .Method}}<input type="hidden" name="_method" value="{{.Method}}">{{end}}
+[[if .ScalableResources]]  <input type="hidden" name="validation_attempted" value="{{if .ValidationAttempted}}1{{else}}0{{end}}">
+[[end]]  {{if .Method}}<input type="hidden" name="_method" value="{{.Method}}">{{end}}
   {{if .Version}}<input type="hidden" name="version" value="{{.Version}}">{{end}}
 [[range .Fields]][[if .String]]  @component("components/input", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", recover=true, help="[[if .Nullable]]Optional. [[end]][[if $.SchemaDriven]]Use at most 255 characters.[[else]]Use between 2 and 200 characters.[[end]]", attributes([[if $.SchemaDriven]]maxlength="255"[[else]]minlength="2", maxlength="200"[[end]][[if .Required]], required=true[[end]]))@endcomponent
 [[else if .Text]]  @component("components/textarea", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", help="[[if .Nullable]]Optional. [[end]]Use at most 65,535 characters.", attributes(maxlength="65535"[[if .Required]], required=true[[end]]))@endcomponent
-[[else if .Integer]]  @component("components/input", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", recover=true, type="number", help="[[if .Nullable]]Optional. Enter a whole number or leave this blank.[[else]]Enter a whole number.[[end]]", attributes(step="1"[[if .Required]], required=true[[end]]))@endcomponent
+[[else if .Integer]]  @component("components/input", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", recover=true, type="[[if $.ScalableResources]]text[[else]]number[[end]]", help="[[if .Nullable]]Optional. Enter a whole number or leave this blank.[[else]]Enter a whole number.[[end]]", attributes([[if $.ScalableResources]]inputmode="numeric"[[else]]step="1"[[end]][[if .Required]], required=true[[end]]))@endcomponent
 [[else]]  @component("components/select", form=.Form, id="[[$.Package]]-[[.Name]]", name="[[.Name]]", label="[[.Label]]", help="[[if .Nullable]]Optional. Choose true, false, or not set.[[else]]Choose true or false.[[end]]", attributes([[if .Required]]required=true[[end]]))
       {{$[[.Name]]Value := .Form.Old "[[.Name]]"}}
       <option value="" {{if eq $[[.Name]]Value ""}}selected{{end}}>[[if .Nullable]]Not set[[else]]Choose true or false[[end]]</option>
       <option value="false" {{if eq (.Form.Old "[[.Name]]") "false"}}selected{{end}}>False</option>
       <option value="true" {{if eq (.Form.Old "[[.Name]]") "true"}}selected{{end}}>True</option>
-      {{if and $[[.Name]]Value (ne $[[.Name]]Value "false") (ne $[[.Name]]Value "true")}}<option value="{{$[[.Name]]Value}}" selected>Unavailable selection</option>{{end}}
+      {{if and $[[.Name]]Value (ne $[[.Name]]Value "false") (ne $[[.Name]]Value "true")}}<option value="{{$[[.Name]]Value}}" selected>[[if $.ScalableResources]]Submitted value: {{$[[.Name]]Value}}[[else]]Unavailable selection[[end]]</option>{{end}}
     @endcomponent
-[[end]][[end]][[range .Relationships]]  @component("components/select", form=.Form, id="[[$.Package]]-[[.ForeignKey]]", name="[[.ForeignKey]]", label="[[.Label]]", help="Choose an available [[.TargetSpec.Name]].", attributes(required=true))
+[[end]][[end]][[range .Relationships]][[if $.ScalableResources]]  <fieldset>
+    <legend>Find [[.Label]]</legend>
+[[if .ChoiceLabelGoName]]    <label for="[[$.Package]]-[[.Name]]-search">Search [[.Label]]</label>
+    <input id="[[$.Package]]-[[.Name]]-search" name="choice[[`[`]][[.Name]]][q]" value="{{.[[.GoName]]State.Search}}" aria-describedby="[[$.Package]]-[[.Name]]-search-help">
+    <small id="[[$.Package]]-[[.Name]]-search-help">Use at most 200 characters.</small>
+    <button type="submit" name="intent" value="choice:[[.Name]]:search" formnovalidate>Search [[.Label]]</button>
+[[end]]    <label for="[[$.Package]]-[[.Name]]-lookup">[[.Label]] ID</label>
+    <input id="[[$.Package]]-[[.Name]]-lookup" name="choice[[`[`]][[.Name]]][id]" value="{{.[[.GoName]]State.ID}}" type="number" min="1" step="1">
+    <button type="submit" name="intent" value="choice:[[.Name]]:lookup" formnovalidate>Look up [[.Label]] ID</button>
+    <input type="hidden" name="choice[[`[`]][[.Name]]][page]" value="{{.[[.GoName]]State.Page}}">
+    <nav aria-label="[[.Label]] choices">
+      {{if .[[.GoName]]State.HasPrevious}}<button type="submit" name="intent" value="choice:[[.Name]]:previous" formnovalidate>Previous [[.Label]] choices</button>{{end}}
+      <span>Page {{.[[.GoName]]State.Page}}</span>
+      {{if .[[.GoName]]State.HasNext}}<button type="submit" name="intent" value="choice:[[.Name]]:next" formnovalidate>Next [[.Label]] choices</button>{{end}}
+    </nav>
+[[end]]  @component("components/select", form=.Form, id="[[$.Package]]-[[.ForeignKey]]", name="[[.ForeignKey]]", label="[[.Label]]", help="Choose an available [[.TargetSpec.Name]].", attributes(required=true))
       <option value=""{{if eq ($.Form.Old "[[.ForeignKey]]") ""}} selected{{end}}>Choose [[.TargetSpec.Name]]</option>
       {{range .[[.GoName]]Choices}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{else}}<option value="" disabled>No [[.TargetSpec.Name]] choices available</option>{{end}}
     @endcomponent
-[[end]]  {{with .Form.Errors "version"}}<div id="[[$.Package]]-version-errors" role="alert"><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
-  <button type="submit">{{.Submit}}</button>
+[[if $.ScalableResources]]  </fieldset>
+[[end]][[end]]  {{with .Form.Errors "version"}}<div id="[[$.Package]]-version-errors" role="alert"><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+  <button type="submit"[[if .ScalableResources]] name="intent" value="save"[[end]]>{{.Submit}}</button>
 </form>
 [[else]]<form action="{{.Action}}" method="post">
   @csrf

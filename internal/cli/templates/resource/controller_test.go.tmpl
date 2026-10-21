@@ -35,9 +35,19 @@ type fakeRepository struct {
 	pageSize          int
 	paginationUserID  int64
 	paginationHasNext bool
+[[if .ScalableResources]]	browseOptions resource.ListOptions
+[[if .Relationships]]	choiceOptions map[string]resource.ChoiceOptions
+	choicePages map[string]resource.AssociationChoicePage
+	choiceCalls int
+[[end]][[end]]
 }
 
-func (repository *fakeRepository) List(context.Context, [[if .AuthorizationPolicies]]resource.Scope[[else]]int64[[end]]) ([]resource.[[.Name]], error) {
+[[if .ScalableResources]]func (repository *fakeRepository) Browse(ctx context.Context, scope resource.Scope, options resource.ListOptions) (resource.[[.Name]]Page, error) {
+	repository.browseOptions = options
+	return repository.Paginate(ctx, scope, options.Page, options.PerPage)
+}
+
+[[end]]func (repository *fakeRepository) List(context.Context, [[if .AuthorizationPolicies]]resource.Scope[[else]]int64[[end]]) ([]resource.[[.Name]], error) {
 [[if .AuthorizationPolicies]]	repository.repositoryCalls++
 [[end]]	return []resource.[[.Name]]{repository.item}, nil
 }
@@ -128,7 +138,17 @@ func (repository *fakeRepository) Update(_ context.Context, [[if .AuthorizationP
 	[[end]]}
 [[end]]
 [[range .Relationships]]
-[[if $.AuthorizationPolicies]]func (repository *fakeRepository) [[.GoName]]Choices(_ context.Context, userID int64) ([]resource.AssociationChoice, error) {
+[[if $.ScalableResources]]func (repository *fakeRepository) [[.GoName]]Choices(_ context.Context, userID int64, options resource.ChoiceOptions) (resource.AssociationChoicePage, error) {
+	repository.choiceUserID = userID
+	repository.choiceCalls++
+	if repository.choiceOptions == nil { repository.choiceOptions = make(map[string]resource.ChoiceOptions) }
+	repository.choiceOptions["[[.Name]]"] = options
+	if page, ok := repository.choicePages["[[.Name]]"]; ok { return page, nil }
+	page := resource.AssociationChoicePage{Items: []resource.AssociationChoice{{ID: 7, Label: "[[.TargetSpec.Name]] #7"}}, Number: options.Page, HasPrevious: options.Page > 1, HasNext: options.Page == 1}
+	if options.SelectedID == 7 { page.Selected = &resource.AssociationChoice{ID: 7, Label: "[[.TargetSpec.Name]] #7"} }
+	return page, nil
+}
+[[else if $.AuthorizationPolicies]]func (repository *fakeRepository) [[.GoName]]Choices(_ context.Context, userID int64) ([]resource.AssociationChoice, error) {
 	repository.choiceUserID = userID
 	return []resource.AssociationChoice{{ID: 7, Label: "[[.TargetSpec.Name]] #7"}}, nil
 }

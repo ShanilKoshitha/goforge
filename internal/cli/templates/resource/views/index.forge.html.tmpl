@@ -4,7 +4,31 @@
 @section("content")
   @component("components/card", title=.Title, tone="resource")
     @if(.Notice)<p role="status">{{.Notice}}</p>@endif
-    <ul>
+[[if .ScalableResources]]    <form method="get" action="/app/[[.Plural]]">
+[[if .HasTextualFields]]      <label for="[[.Package]]-list-search">Search</label>
+      <input id="[[.Package]]-list-search" name="q" value="{{.Options.Search}}" aria-describedby="[[.Package]]-list-search-help">
+      <small id="[[.Package]]-list-search-help">Use at most 200 characters.</small>
+[[end]]      <label for="[[.Package]]-list-id">[[.Name]] ID</label>
+      <input id="[[.Package]]-list-id" name="id" type="number" min="1" step="1" value="{{if .Options.ID}}{{.Options.ID}}{{end}}">
+[[range .Relationships]]      <label for="[[$.Package]]-filter-[[.Name]]">[[.Label]] ID</label>
+      <input id="[[$.Package]]-filter-[[.Name]]" name="[[.ForeignKey]]" type="number" min="1" step="1" value="{{if .Options.[[.ForeignKeyGoName]]}}{{.Options.[[.ForeignKeyGoName]]}}{{end}}">
+[[end]]      <label for="[[.Package]]-list-sort">Sort by</label>
+      <select id="[[.Package]]-list-sort" name="sort">
+        <option value="id"{{if eq .Options.Sort "id"}} selected{{end}}>ID</option>
+[[range .Fields]]        <option value="[[.Name]]"{{if eq .Options.Sort "[[.Name]]"}} selected{{end}}>[[.Label]]</option>
+[[end]][[range .Relationships]]        <option value="[[.ForeignKey]]"{{if eq .Options.Sort "[[.ForeignKey]]"}} selected{{end}}>[[.Label]] ID</option>
+[[end]]      </select>
+      <label for="[[.Package]]-list-direction">Direction</label>
+      <select id="[[.Package]]-list-direction" name="direction">
+        <option value="asc"{{if eq .Options.Direction "asc"}} selected{{end}}>Ascending</option>
+        <option value="desc"{{if eq .Options.Direction "desc"}} selected{{end}}>Descending</option>
+      </select>
+      <label for="[[.Package]]-list-size">Items per page</label>
+      <input id="[[.Package]]-list-size" name="per_page" type="number" min="1" max="100" value="{{.Options.PerPage}}" required>
+      <button type="submit">Apply filters</button>
+      <a href="/app/[[.Plural]]">Clear filters</a>
+    </form>
+[[end]]    <ul>
       @for(.Items)<li>
         <a href="/app/[[.Plural]]/{{.ID}}">[[if .SchemaDriven]][[.Name]] #{{.ID}}[[else]]{{.Name}}[[end]]</a>
 [[if .SchemaDriven]]
@@ -13,7 +37,7 @@
 [[end]][[range .Relationships]]          <dt>[[.Label]]</dt><dd>{{.[[.GoName]]}}</dd>
 [[end]]        </dl>
 [[end]]
-      </li>@empty<li>No [[.Plural]] yet.</li>@endfor
+      </li>@empty<li>[[if .ScalableResources]]No matching [[.Plural]].[[else]]No [[.Plural]] yet.[[end]]</li>@endfor
     </ul>
     <nav aria-label="Pagination">
       {{if .PreviousURL}}<a href="{{.PreviousURL}}">Previous</a>{{end}}

@@ -1,0 +1,244 @@
+package [[.Package]]
+
+import (
+	"context"
+[[if .Relationships]]	"errors"
+[[end]]	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+[[if .Relationships]]	"strings"
+[[end]]	"unicode"
+	"unicode/utf8"
+
+	"github.com/ShanilKoshitha/goforge/httpx"
+	"github.com/ShanilKoshitha/goforge/orm"
+	"github.com/ShanilKoshitha/goforge/orm/postgres"
+
+	"[[.Module]]/internal/models"
+)
+
+const maximumSearchRunes = 200
+
+// ListOptions is the complete application-owned browsing contract. Search is
+// literal case-insensitive contains; ID and relationship filters are exact.
+// Zero pagination/order values use defaults when called directly from Go.
+type ListOptions struct {
+	Search string
+	ID int64
+	Sort string
+	Direction string
+	Page int
+	PerPage int
+[[range .Relationships]]	[[.ForeignKeyGoName]] int64
+[[end]]}
+
+func DefaultListOptions() ListOptions {
+	return ListOptions{Sort: "id", Direction: "desc", Page: defaultPageNumber, PerPage: defaultPageSize}
+}
+
+func (options ListOptions) normalized() ListOptions {
+	if options.Sort == "" { options.Sort = "id" }
+	if options.Direction == "" { options.Direction = "desc" }
+	if options.Page == 0 { options.Page = defaultPageNumber }
+	if options.PerPage == 0 { options.PerPage = defaultPageSize }
+	return options
+}
+
+func (options ListOptions) Validate() error {
+	options = options.normalized()
+	if err := validateSearch(options.Search, [[.HasTextualFields]]); err != nil { return err }
+	if options.ID < 0 { return browseInputError("id must be a positive integer when provided") }
+[[range .Relationships]]	if options.[[.ForeignKeyGoName]] < 0 { return browseInputError("[[.ForeignKey]] must be a positive integer when provided") }
+[[end]]	if options.Page < 1 || options.Page > maximumPageNumber { return browseInputError("page must be between 1 and 10000") }
+	if options.PerPage < 1 || options.PerPage > maximumPageSize { return browseInputError("per_page must be between 1 and 100") }
+	if options.Direction != "asc" && options.Direction != "desc" { return browseInputError("direction must be asc or desc") }
+	switch options.Sort {
+	case "id"[[range .Fields]], "[[.Name]]"[[end]][[range .Relationships]], "[[.ForeignKey]]"[[end]]:
+		return nil
+	default:
+		return browseInputError("sort is not a declared resource field")
+	}
+}
+
+// ParseListOptions is shared by browser and JSON indexes. Parse the raw query
+// to reject malformed encoding rather than silently using a partial query.
+func ParseListOptions(rawQuery string) (ListOptions, error) {
+	options := DefaultListOptions()
+	if len(rawQuery) > 16_384 { return options, browseInputError("resource query is too large") }
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil { return options, browseInputError("resource query has invalid URL encoding") }
+	for name, items := range values {
+		if len(items) != 1 { return options, browseInputError(name + " must appear exactly once") }
+		value := items[0]
+		if !utf8.ValidString(name) || !utf8.ValidString(value) { return options, browseInputError("resource query must be valid UTF-8") }
+		for _, text := range []string{name, value} {
+			for _, character := range text { if unicode.IsControl(character) { return options, browseInputError("resource query cannot contain control characters") } }
+		}
+		switch name {
+		case "q": options.Search = value
+		case "sort":
+			if value == "" { return options, browseInputError("sort must not be empty") }
+			options.Sort = value
+		case "direction":
+			if value == "" { return options, browseInputError("direction must not be empty") }
+			options.Direction = value
+		case "page":
+			parsed, parseErr := positiveBrowseInteger(name, value)
+			if parseErr != nil || parsed > maximumPageNumber { return options, browseInputError("page must be between 1 and 10000") }
+			options.Page = int(parsed)
+		case "per_page":
+			parsed, parseErr := positiveBrowseInteger(name, value)
+			if parseErr != nil || parsed > maximumPageSize { return options, browseInputError("per_page must be between 1 and 100") }
+			options.PerPage = int(parsed)
+		case "id":
+			if value == "" { continue }
+			options.ID, err = positiveBrowseInteger(name, value)
+[[range .Relationships]]		case "[[.ForeignKey]]":
+			if value == "" { continue }
+			options.[[.ForeignKeyGoName]], err = positiveBrowseInteger(name, value)
+[[end]]		default: return options, browseInputError("unknown resource query field " + name)
+		}
+		if err != nil { return options, err }
+	}
+	return options, options.Validate()
+}
+
+func positiveBrowseInteger(name, value string) (int64, error) {
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 1 { return 0, browseInputError(name + " must be one positive integer") }
+	return parsed, nil
+}
+
+func validateSearch(search string, searchable bool) error {
+	if !utf8.ValidString(search) { return browseInputError("search must be valid UTF-8") }
+	if utf8.RuneCountInString(search) > maximumSearchRunes { return browseInputError("search exceeds 200 characters") }
+	for _, character := range search { if unicode.IsControl(character) { return browseInputError("search cannot contain control characters") } }
+	if search != "" && !searchable { return browseInputError("text search is not declared for this resource") }
+	return nil
+}
+
+func browseInputError(message string) error { return httpx.NewHTTPError(http.StatusBadRequest, message) }
+
+// Values retains every declared filter when building browser pagination links.
+func (options ListOptions) Values() url.Values {
+	options = options.normalized()
+	values := url.Values{"sort": {options.Sort}, "direction": {options.Direction}, "page": {strconv.Itoa(options.Page)}, "per_page": {strconv.Itoa(options.PerPage)}}
+	if options.Search != "" { values.Set("q", options.Search) }
+	if options.ID > 0 { values.Set("id", strconv.FormatInt(options.ID, 10)) }
+[[range .Relationships]]	if options.[[.ForeignKeyGoName]] > 0 { values.Set("[[.ForeignKey]]", strconv.FormatInt(options.[[.ForeignKeyGoName]], 10)) }
+[[end]]	return values
+}
+
+func (repository *PostgresRepository) Browse(ctx context.Context, scope Scope, options ListOptions) ([[.Name]]Page, error) {
+	predicates, err := repositoryScopePredicates(scope)
+	if err != nil { return [[.Name]]Page{}, fmt.Errorf("browse [[.Plural]]: %w", err) }
+	options = options.normalized()
+	if err := options.Validate(); err != nil { return [[.Name]]Page{}, err }
+	if options.ID > 0 { predicates = append(predicates, models.[[.Name]]Columns.ID.Eq(options.ID)) }
+[[range .Relationships]]	if options.[[.ForeignKeyGoName]] > 0 { predicates = append(predicates, models.[[$.Name]]Columns.[[.ForeignKeyGoName]].Eq(options.[[.ForeignKeyGoName]])) }
+[[end]][[if .HasTextualFields]]	if options.Search != "" {
+		predicates = append(predicates, orm.Or(
+[[range .Fields]][[if or .String .Text]]			orm.[[if .Nullable]]ContainsFoldNullable[[else]]ContainsFold[[end]](models.[[$.Name]]Columns.[[.GoName]], options.Search),
+[[end]][[end]]		))
+	}
+[[end]]	items, err := repository.query().Select().Where(predicates...).OrderBy(browseOrders(options)...).
+		Limit(options.PerPage + 1).Offset((options.Page - 1) * options.PerPage).All(ctx, repository.Executor)
+	if err != nil { return [[.Name]]Page{}, fmt.Errorf("browse [[.Plural]]: %w", postgres.Classify(err)) }
+	hasNext := len(items) > options.PerPage
+	if hasNext { items = items[:options.PerPage] }
+[[if .Relationships]]	items, err = repository.loadRelationships(ctx, scope, items)
+	if err != nil { return [[.Name]]Page{}, err }
+[[end]]	return [[.Name]]Page{Items: items, Number: options.Page, PerPage: options.PerPage, HasPrevious: options.Page > 1, HasNext: hasNext}, nil
+}
+
+// PostgreSQL's default ordering puts NULL last in ASC and first in DESC.
+// The ID tie-breaker makes every allowlisted order deterministic.
+func browseOrders(options ListOptions) []orm.Order[models.[[.Name]]] {
+	orders := make([]orm.Order[models.[[.Name]]], 0, 2)
+	switch options.Sort {
+[[range .Fields]]	case "[[.Name]]":
+		if options.Direction == "asc" { orders = append(orders, models.[[$.Name]]Columns.[[.GoName]].Asc()) } else { orders = append(orders, models.[[$.Name]]Columns.[[.GoName]].Desc()) }
+[[end]][[range .Relationships]]	case "[[.ForeignKey]]":
+		if options.Direction == "asc" { orders = append(orders, models.[[$.Name]]Columns.[[.ForeignKeyGoName]].Asc()) } else { orders = append(orders, models.[[$.Name]]Columns.[[.ForeignKeyGoName]].Desc()) }
+[[end]]	}
+	if options.Direction == "asc" { return append(orders, models.[[.Name]]Columns.ID.Asc()) }
+	return append(orders, models.[[.Name]]Columns.ID.Desc())
+}
+[[if .Relationships]]
+const associationChoicePageSize = 20
+
+type ChoiceOptions struct {
+	Search string
+	ID int64
+	Page int
+	SelectedID int64
+}
+
+func DefaultChoiceOptions() ChoiceOptions { return ChoiceOptions{Page: 1} }
+
+func (options ChoiceOptions) normalized() ChoiceOptions {
+	if options.Page == 0 { options.Page = 1 }
+	return options
+}
+
+func (options ChoiceOptions) Validate(searchable bool) error {
+	options = options.normalized()
+	if err := validateSearch(options.Search, searchable); err != nil { return err }
+	if options.ID < 0 || options.SelectedID < 0 { return browseInputError("choice IDs must be positive when provided") }
+	if options.ID > 0 && options.Search != "" { return browseInputError("choice text and ID filters cannot be combined") }
+	if options.Page < 1 || options.Page > maximumPageNumber { return browseInputError("choice page must be between 1 and 10000") }
+	return nil
+}
+
+type AssociationChoicePage struct {
+	Items []AssociationChoice
+	Selected *AssociationChoice
+	Number int
+	HasPrevious bool
+	HasNext bool
+}
+
+func associationChoiceLabel(name string, id int64, text string) string {
+	identity := fmt.Sprintf("%s #%d", name, id)
+	text = strings.TrimSpace(text)
+	characters := []rune(text)
+	if len(characters) > 120 { text = string(characters[:120]) }
+	if text == "" { return identity }
+	return text + " (" + identity + ")"
+}
+
+[[range .Relationships]]func [[.Name]]AssociationChoice(item models.[[.TargetSpec.Name]]) AssociationChoice {
+	text := ""
+[[if .ChoiceLabelGoName]][[if .ChoiceLabelNullable]]	if item.[[.ChoiceLabelGoName]] != nil { text = string(*item.[[.ChoiceLabelGoName]]) }
+[[else]]	text = string(item.[[.ChoiceLabelGoName]])
+[[end]][[end]]	return AssociationChoice{ID: item.ID, Label: associationChoiceLabel("[[.TargetSpec.Name]]", item.ID, text)}
+}
+
+func (repository *PostgresRepository) [[.GoName]]Choices(ctx context.Context, userID int64, options ChoiceOptions) (AssociationChoicePage, error) {
+	if userID < 1 { return AssociationChoicePage{}, fmt.Errorf("choice owner must be positive") }
+	options = options.normalized()
+	if err := options.Validate([[if .ChoiceLabelGoName]]true[[else]]false[[end]]); err != nil { return AssociationChoicePage{}, err }
+	predicates := []orm.Predicate[models.[[.TargetSpec.Name]]]{models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID)}
+	if options.ID > 0 { predicates = append(predicates, models.[[.TargetSpec.Name]]Columns.ID.Eq(options.ID)) }
+[[if .ChoiceLabelGoName]]	if options.Search != "" { predicates = append(predicates, orm.[[if .ChoiceLabelNullable]]ContainsFoldNullable[[else]]ContainsFold[[end]](models.[[.TargetSpec.Name]]Columns.[[.ChoiceLabelGoName]], options.Search)) }
+[[end]]	query := models.NewStore(repository.Executor).[[.TargetQueryAccessor]]()
+	items, err := query.Select().Where(predicates...).OrderBy(models.[[.TargetSpec.Name]]Columns.ID.Asc()).
+		Limit(associationChoicePageSize + 1).Offset((options.Page - 1) * associationChoicePageSize).All(ctx, repository.Executor)
+	if err != nil { return AssociationChoicePage{}, fmt.Errorf("list [[.ForeignKey]] choices: %w", postgres.Classify(err)) }
+	page := AssociationChoicePage{Items: make([]AssociationChoice, 0, associationChoicePageSize), Number: options.Page, HasPrevious: options.Page > 1, HasNext: len(items) > associationChoicePageSize}
+	if page.HasNext { items = items[:associationChoicePageSize] }
+	for _, item := range items {
+		choice := [[.Name]]AssociationChoice(item)
+		page.Items = append(page.Items, choice)
+		if item.ID == options.SelectedID { selected := choice; page.Selected = &selected }
+	}
+	if options.SelectedID > 0 && page.Selected == nil {
+		selected, err := query.Select().Where(models.[[.TargetSpec.Name]]Columns.UserID.Eq(userID), models.[[.TargetSpec.Name]]Columns.ID.Eq(options.SelectedID)).First(ctx, repository.Executor)
+		if err != nil && !errors.Is(err, orm.ErrNotFound) { return AssociationChoicePage{}, fmt.Errorf("selected [[.ForeignKey]] choice: %w", postgres.Classify(err)) }
+		if err == nil { choice := [[.Name]]AssociationChoice(selected); page.Selected = &choice }
+	}
+	return page, nil
+}
+
+[[end]][[end]]

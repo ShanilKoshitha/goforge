@@ -319,7 +319,21 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 [[range .Relationships]]	{
 		connection.targetRowCount = 1
 		connection.resetStatements()
-		choices, err := repository.[[.GoName]]Choices(context.Background(), 9)
+[[if $.ScalableResources]]		page, err := repository.[[.GoName]]Choices(context.Background(), 9, DefaultChoiceOptions())
+		choices := page.Items
+		if err != nil || len(choices) != 1 || choices[0].ID != 71 || page.HasNext || page.Number != 1 {
+			t.Fatalf("[[.GoName]] choices = %#v, %v", page, err)
+		}
+		if len(connection.queries) != 1 || !strings.Contains(connection.queries[0], `"[[.TargetSpec.Plural]]"."user_id" = $1`) ||
+			!strings.Contains(connection.queries[0], "ORDER BY") || !strings.Contains(connection.queries[0], "LIMIT $2 OFFSET $3") {
+			t.Fatalf("[[.GoName]] choices are not bounded and owner-scoped: %#v", connection.queries)
+		}
+		connection.targetRowCount = associationChoicePageSize + 1
+		page, err = repository.[[.GoName]]Choices(context.Background(), 9, DefaultChoiceOptions())
+		if err != nil || len(page.Items) != associationChoicePageSize || !page.HasNext {
+			t.Fatalf("[[.GoName]] sentinel was not bounded: %#v, %v", page, err)
+		}
+[[else]]		choices, err := repository.[[.GoName]]Choices(context.Background(), 9)
 		if err != nil || len(choices) != 1 || choices[0].ID != 71 || choices[0].Label != "[[.TargetSpec.Name]] #71" {
 			t.Fatalf("[[.GoName]] choices = %#v, %v", choices, err)
 		}
@@ -331,7 +345,7 @@ func TestPostgresRepositoryRelationshipWritesLoadsAndChoicesAreBounded(t *testin
 		if _, err := repository.[[.GoName]]Choices(context.Background(), 9); !errors.Is(err, ErrAssociationChoicesOverflow) {
 			t.Fatalf("[[.GoName]] choice overflow = %v", err)
 		}
-	}
+[[end]]	}
 [[end]]}
 
 func TestPostgresRepositoryUpdateHidesTargetBeforeClassifyingAssociation(t *testing.T) {
@@ -459,9 +473,11 @@ type repositoryConnection struct {
 	execError   error
 	updateFound bool
 	exists      bool
-[[if .Relationships]]	associationExists bool
+[[if .ScalableResources]]	resourceRowCount int
+[[end]][[if .Relationships]]	associationExists bool
 	targetRowCount   int
-[[end]]
+[[if .ScalableResources]]	targetQuery func(string, []driver.NamedValue) (driver.Rows, error)
+[[end]][[end]]
 }
 
 func (connection *repositoryConnection) resetStatements() {
@@ -495,15 +511,20 @@ func (connection *repositoryConnection) QueryContext(_ context.Context, query st
 [[end]][[end]]		return &repositoryRows{values: []driver.Value{connection.exists}, remaining: 1}, nil
 	}
 [[if .Relationships]][[range .Relationships]]	if strings.Contains(query, `FROM "[[.TargetSpec.Plural]]"`) {
-		columns := repositorySelectedColumns(query)
+[[if $.ScalableResources]]		if connection.targetQuery != nil { return connection.targetQuery(query, args) }
+[[end]]		columns := repositorySelectedColumns(query)
 		count := connection.targetRowCount
 		if count == 0 {
 			count = 1
 		}
 		return &repositoryRows{columns: columns, values: repositoryTargetValues(columns), remaining: count}, nil
 	}
-[[end]][[end]]	return &repositoryRows{values: repositoryModelValues(3), remaining: 1}, nil
-}
+[[end]][[end]][[if .ScalableResources]]	count := connection.resourceRowCount
+	if count == 0 { count = 1 }
+	if count < 0 { count = 0 }
+	return &repositoryRows{values: repositoryModelValues(3), remaining: count}, nil
+[[else]]	return &repositoryRows{values: repositoryModelValues(3), remaining: 1}, nil
+[[end]]}
 func (connection *repositoryConnection) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	connection.query = query
 	connection.args = append([]driver.NamedValue(nil), args...)

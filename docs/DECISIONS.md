@@ -1531,3 +1531,12 @@ because its baseline or one helper test passes.
 Reason: normal data growth must not disable create/edit, and adding search must
 not trade away form recovery, authorization, ordinary Go, or a reproducible
 public installation path.
+
+Format-16 refresh display state preserves original scalar lexemes while writes
+and validation retain normalized values. Numeric draft controls use text plus
+numeric input mode so browsers cannot silently erase malformed values. New
+textarea components include a synthetic leading newline for HTML's initial-LF
+rule; old project formats/components are not rewritten. Choice-label declarations
+accept only editable plain string/*string fields backed by PostgreSQL text or
+varchar storage; UUID-backed strings require an explicit application replacement
+rather than a broken generated ILIKE query.
