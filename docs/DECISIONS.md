@@ -1478,3 +1478,23 @@ atomically when updating.
 Reason: rejecting invalid input is only half of a browser workflow. The response
 must expose all actionable errors and permit correction without losing values,
 disclosing inaccessible rows, or silently overwriting concurrent changes.
+
+## D049 — Separate roadmap allocation from release acceptance
+
+**Status:** accepted planning policy — 2026-10-21
+
+Version components are integers, not decimal progress indicators. Later work
+after v0.34 uses v0.35 and subsequent minors, followed by v1 prereleases; it must
+not jump backward to v0.9. The allocations in ROADMAP.md are proposals, not
+completed capabilities or permission to skip written milestone acceptance.
+
+Each functional slice must contribute to a cumulative integration application.
+Production delivery, safe adoption, independent qualification, and the API and
+support contract require explicit acceptance before v1. The reference-application
+milestone completes the learning/reproducibility contract rather than postponing
+integration until the end. New data work extends the existing ORM instead of
+introducing a parallel abstraction.
+
+Reason: a numbered feature list neither establishes product completeness nor
+proves operational readiness. Keep the release runway and evidence visible,
+without adding speculative parity features to a closed milestone.
