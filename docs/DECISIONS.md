@@ -1552,7 +1552,7 @@ them to accommodate new form intents.
 
 ## D051 — Diagnostics inspect rather than repair
 
-**Status:** accepted design — 2026-10-21; implementation pending acceptance
+**Status:** accepted design and implementation — public v0.23.1 verified, 2026-10-21
 
 v0.23 introduces explicit application-owned diagnostic and route-inventory Go,
 not a runtime discovery system. Doctor aggregates independent safe checks;
@@ -1575,9 +1575,9 @@ side effects; diagnostics are not a sandbox. Go build/module caches outside
 the app are allowed, but module manifests are readonly and workspace overlays
 are disabled for diagnostic subprocesses.
 
-Fresh adoption requires format 17 and a publicly verified runtime first. Until
-then, candidate fixtures prove the new scaffold while normal generation stays
-format 16 on its public pin. Existing application source is never silently
+Fresh adoption requires format 17 and a publicly verified runtime first.
+Preparation used candidate fixtures while normal generation stayed at format 16
+on its public pin. Existing application source is never silently
 upgraded. MILESTONE_0.23.md defines measurable gates and deferred scope.
 
 Diagnostic subprocesses reuse conventional shared user Go build/module cache
@@ -1600,7 +1600,7 @@ Runtime-first qualification completed at immutable public v0.23.0, merge
 8f92f31557d05920bcdef25376dcbd3b181c5b96, with identical final-content trees
 across both complete CI matrices. Public proxy/SumDB origin, downloaded
 installer, added-API proof, and unchanged no-replace format-16 application were
-verified before enabling the v0.23.1 format-17 candidate. Adoption now uses
+verified before enabling v0.23.1 format-17 generation. Adoption uses
 normal generation and public CLI dispatch rather than a hand-overlaid manifest.
 Retain real recompilation in migration-source mutation tests: their SQL is
 embedded in the diagnostic command, so a stale prebuilt binary cannot prove
@@ -1617,3 +1617,13 @@ blank as the child-only flag value: Go parses zero flags, while an empty string
 would fall back to persisted flags. Never edit the caller's Go configuration.
 Direct Go commands remain the complete explicit path for custom build flags and
 caller-managed profiling/output targets.
+
+Adoption closed at immutable public v0.23.1, merge
+f2e8b5a42d84250d2ee22a6bd303b340897d5fcf, with the identical qualified tree
+e10a3306b2f5f76f4b51d89d0df6a17f5f743ad8. Two complete final-source matrices,
+a fresh native full-framework race/vet pass, and the downloaded public CLI's
+no-replace format-17 application proof passed. Public diagnosis preserved file
+and database snapshots; the proof completed exact owned-schema cleanup and
+process-environment restoration. The scorecard retains intermediate failures
+and the unidentified Windows filesystem boundary without claiming that a
+successful proof establishes general host reliability.

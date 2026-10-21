@@ -19,9 +19,9 @@ Its contract is simple:
 
 ## Status
 
-The accepted GoForge v0.22.1 release generates format-16 applications pinned to the published
-v0.22.0 runtime without a local replacement. Literal-search queries and compiled
-views use the same immutable runtime verified through the public Go proxy.
+The accepted GoForge v0.23.1 release generates format-17 applications pinned to
+the published v0.23.0 runtime without a local replacement. Diagnostics, typed
+queries, and compiled views use that immutable, publicly verified runtime.
 GoForge includes explicit database wiring,
 parallel JSON and server-rendered authentication, database-backed sessions,
 CSRF-protected HTML forms, production middleware, embedded migrations,
@@ -48,10 +48,10 @@ and [acceptance gates](docs/MILESTONE_0.22.md). Acceptance and
 public distribution evidence are recorded in the [scorecard](docs/SCORECARD.md).
 Existing applications are not
 rewritten automatically.
-The v0.23.0 diagnostic runtime is now public and verified. This checkout's
-v0.23.1 adoption candidate generates format 17 on that runtime and adds read-only
-`forge doctor` and actual-router `forge routes:list`. Full adoption qualification
-and public CLI distribution are still pending; this is not v0.23 acceptance.
+Public v0.23.1 adds read-only `forge doctor` and actual-router
+`forge routes:list` through ordinary application-owned Go. Complete framework,
+generated-application, and public installation qualification passed; the
+[v0.23 acceptance contract](docs/MILESTONE_0.23.md) records the boundaries.
 See the [diagnostic workflow and boundaries](docs/diagnostics.md).
 Newly generated format-13 through format-17 resources own a typed action/access
 function shared by their JSON and browser
@@ -136,7 +136,7 @@ apply to format 15.
 
 ## Install and try it
 
-The commands below install the published [v0.22.1 release](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.22.1).
+The commands below install the published [v0.23.1 release](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.23.1).
 Acceptance and public distribution evidence are recorded in the [scorecard](docs/SCORECARD.md).
 
 On Windows, use the PowerShell installer. It shows each installation step,
@@ -153,7 +153,7 @@ Get-Content $installer
 After reviewing it, run:
 
 ```powershell
-& $installer -Version v0.22.1
+& $installer -Version v0.23.1
 forge version
 forge new myapp --module example.com/myapp
 ```
@@ -168,7 +168,7 @@ On macOS and Linux, install the released CLI and verify it before generating an
 application:
 
 ```sh
-go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.22.1
+go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.23.1
 gobin="$(go env GOBIN)"
 if [ -z "$gobin" ]; then gopath="$(go env GOPATH)"; gobin="${gopath%%:*}/bin"; fi
 export PATH="$gobin:$PATH"
@@ -235,13 +235,13 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (v0.23.1 adoption candidate)
+## CLI (v0.23.1)
 
-The command surface below describes this checkout. Fresh applications use
-format 17 while pinning the verified public v0.23.0 runtime. Use
-`go install ./cmd/forge` for the adoption candidate; public v0.22.1 retains
-format 16/runtime v0.22.0, and public v0.23.0 is runtime-first with the same old
-scaffold. Do not assume a runtime release automatically upgrades generation.
+The command surface below is available in public v0.23.1. Fresh applications use
+format 17 while pinning the verified public v0.23.0 runtime. Public v0.22.1
+retains format 16/runtime v0.22.0, and public v0.23.0 is runtime-first with that
+older scaffold. A runtime release does not automatically upgrade generation or
+rewrite existing application source.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
@@ -327,7 +327,7 @@ fetch-then-write race. Edit this ordinary Go file, inject another function, or
 replace the controller/repository wiring when the closed scope is insufficient.
 
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-17 projects in this checkout (the public v0.23.0 CLI
+format-4 through format-17 projects with public v0.23.1 (the v0.23.0 CLI
 supports formats 4–16). Both non-mutating preflights check the
 generated ORM first, compiled views second, and format-12-or-newer embedded assets third.
 Testing then runs exactly `go test ./...`. Building stages a trimmed
