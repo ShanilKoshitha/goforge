@@ -21,6 +21,31 @@ type Reader struct {
 	errors []error
 }
 
+// FieldError identifies an invalid configuration field without retaining its
+// supplied value or the value-bearing conversion error. Key is the name passed
+// by application code, not an untrusted field name read from a configuration file.
+// Rule is one of required, integer, boolean, or duration for Reader errors.
+// Errors accumulated by Reader remain discoverable with errors.As.
+type FieldError struct {
+	Key  string
+	Rule string
+}
+
+func (problem *FieldError) Error() string {
+	switch problem.Rule {
+	case "required":
+		return fmt.Sprintf("%s is required", problem.Key)
+	case "integer":
+		return fmt.Sprintf("%s must be an integer", problem.Key)
+	case "boolean":
+		return fmt.Sprintf("%s must be a boolean", problem.Key)
+	case "duration":
+		return fmt.Sprintf("%s must be a duration", problem.Key)
+	default:
+		return fmt.Sprintf("%s has an invalid value", problem.Key)
+	}
+}
+
 func FromEnvironment() *Reader {
 	values := make(map[string]string)
 	for _, entry := range os.Environ() {
@@ -89,7 +114,7 @@ func (reader *Reader) Required(key string) string {
 	if value, ok := reader.values[key]; ok && strings.TrimSpace(value) != "" {
 		return value
 	}
-	reader.errors = append(reader.errors, fmt.Errorf("%s is required", key))
+	reader.errors = append(reader.errors, &FieldError{Key: key, Rule: "required"})
 	return ""
 }
 
@@ -100,7 +125,7 @@ func (reader *Reader) Int(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
-		reader.errors = append(reader.errors, fmt.Errorf("%s must be an integer: %w", key, err))
+		reader.errors = append(reader.errors, &FieldError{Key: key, Rule: "integer"})
 		return fallback
 	}
 	return parsed
@@ -113,7 +138,7 @@ func (reader *Reader) Bool(key string, fallback bool) bool {
 	}
 	parsed, err := strconv.ParseBool(value)
 	if err != nil {
-		reader.errors = append(reader.errors, fmt.Errorf("%s must be a boolean: %w", key, err))
+		reader.errors = append(reader.errors, &FieldError{Key: key, Rule: "boolean"})
 		return fallback
 	}
 	return parsed
@@ -126,7 +151,7 @@ func (reader *Reader) Duration(key string, fallback time.Duration) time.Duration
 	}
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
-		reader.errors = append(reader.errors, fmt.Errorf("%s must be a duration: %w", key, err))
+		reader.errors = append(reader.errors, &FieldError{Key: key, Rule: "duration"})
 		return fallback
 	}
 	return parsed
