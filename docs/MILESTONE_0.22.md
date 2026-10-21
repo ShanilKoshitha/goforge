@@ -1,6 +1,8 @@
 # v0.22 — Resource browsing and relationship selection at scale
 
-Status: **runtime published and verified; format-16 adoption candidate in qualification** — 2026-10-21.
+Status: **accepted** — v0.22.0 runtime and v0.22.1 format-16 adoption published; public distribution verified — 2026-10-21.
+
+Release and acceptance evidence are recorded in the [scorecard](SCORECARD.md).
 
 This milestone extends the accepted v0.21.1 application workflow. It does not
 reopen the completed component/form milestone or claim the rest of ROADMAP.md.

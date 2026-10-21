@@ -1,23 +1,30 @@
 # v0.22 resource browsing and relationship selection scorecard
 
-Status: **runtime published and verified; format-16 adoption candidate in qualification** — 2026-10-21.
+Status: **accepted** — v0.22.0 runtime and v0.22.1 format-16 adoption published; public distribution verified — 2026-10-21.
 
-Acceptance is defined in [MILESTONE_0.22.md](MILESTONE_0.22.md). The runtime-first
-v0.22.0 release is verified; the complete milestone and v0.22.1 adoption are not
-accepted yet.
+Acceptance is defined in [MILESTONE_0.22.md](MILESTONE_0.22.md). Both complete
+final-content matrices and public v0.22.1 installation/no-replace application
+qualification passed. This closes the resource-browsing milestone, not the
+remaining [roadmap](ROADMAP.md).
 
 | Gate | Current evidence |
 | --- | --- |
 | Runnable generator baseline | Native `go test ./internal/cli -run '^(TestFormatFifteenGeneratesAccessibleRecoverableResourceForms\|TestFormatsEightThroughFourteenRetainLegacyResourceGeneration)$' -count=1` passed in 4.709s |
 | Runnable public application baseline | The public v0.21.1 CLI's no-replace format-15 `example.com/releasedv0211` application passed `go test ./... -count=1`; Category, Ticket, and legacy resource tests passed |
-| Scale gap confirmed | Generated repository tests explicitly expect `ErrAssociationChoicesOverflow` above 100 related rows; browser rendering maps that state to 409 |
+| Baseline scale gap confirmed | Format-15 generated repository tests explicitly expect `ErrAssociationChoicesOverflow` above 100 related rows; browser rendering maps that state to 409 |
 | Runtime helper | Immutable public `v0.22.0` at `5efd243` passed both corrected matrices, exact-main CI, proxy/SumDB verification, isolated installer, and a no-replace format-15 application |
-| Fresh candidate application | Actual local v0.22.1 CLI generated a no-replace format-16 app against public v0.22.0 with nullable Category, boolean-only Project, all-scalar/two-relationship Ticket, and LegacyIssue; artifact/module checks, ordinary/race tests, vet, and four process builds passed |
+| Fresh public application | Public v0.22.1 downloaded through proxy/SumDB into a fresh cache, installed with the downloaded installer, and generated a no-replace format-16 app pinned to public v0.22.0: nullable Category, boolean-only Project, all-scalar/two-relationship Ticket, and LegacyIssue; artifact/module checks, ordinary/race tests, vet, and four process builds passed |
 | Format-16 implementation | Actual CLI atomicity/one-shot regeneration tests passed (17.209s); explicit-format baseline/escape fixtures and activated fresh-scaffold contracts pass; first complete native scale journey passed (47.466s) |
 | Legacy output | All 22 legacy/typed/related format 8–15 render digests match the frozen pre-change revision, normalizing checkout newlines only |
 | Raw draft recovery | Actual HTML refresh-to-save tests pass for padded text, leading textarea newlines, CRLF, numeric/boolean/association lexemes, malformed values, and unchanged normalized persistence; the final gated fixture combined suite passed in 15.368s |
-| PostgreSQL acceptance harness | Final strengthened scale journey passed twice consecutively (49.36s, 52.23s), including six first/middle/last saves and a broad matching owner-scope search; complete CI matrices still pending |
-| Independent review and two complete passes | Pending; baseline tests are not v0.22 acceptance |
+| PostgreSQL acceptance | Each final matrix passed all ten generated-app journeys twice: 20 top-level passes per matrix, no skips/failures/timeouts in that stage. All six first/middle/last text/ID saves passed per scale repetition (18.49s, 18.51s; 18.14s, 18.32s) |
+| Complete native PostgreSQL race regression | `go test -race -count=1 -timeout 30m -json ./...` passed with PostgreSQL configured (`internal/cli` 1060.460s), followed by vet/diff checks; scale journey 36.09s, development workflow 66.60s. Unix-permission-only checks retain their Windows skips and run in Linux CI |
+| Independent review and two complete passes | No unresolved P0–P2 issue; complete [push 39636604194](https://github.com/ShanilKoshitha/goforge/actions/runs/39636604194) and [PR 39636612761](https://github.com/ShanilKoshitha/goforge/actions/runs/39636612761) matrices passed, with actual checkout/tree and acceptance-log audits |
+
+## Qualification history
+
+The entries below preserve intermediate failures and pending gates at each
+checkpoint; the accepted state and final evidence are recorded above and below.
 
 Read-only data and developer-workflow inventories identified the existing typed
 query, scope, selected-value, and version boundaries. The milestone preserves
@@ -233,6 +240,48 @@ Lead supervisor/watch/fresh-app/escape/snapshot race verification passed
 must pass twice again. A separate finite 30-minute native Windows all-package
 PostgreSQL/race qualification will account for the expensive nested builds;
 Linux CI retains its existing 20-minute budget and every acceptance group.
+
+## Final acceptance — 2026-10-21
+
+Both complete final-content matrices passed at `c201677`: push Linux 23m51s /
+Windows 9m23s; PR Linux 23m44s / Windows 6m15s. Independent log audits confirmed
+formatting, race/vet/build, all nine public format 7–15 compatibility stages,
+the current no-replace format-16 scaffold, and every repeated PostgreSQL journey.
+The final PostgreSQL stages passed in 471.488s and 462.347s. Actual checkouts
+were `c201677` and synthetic merge `20c2899`; both have tree
+`ed19ce06ff41c0fb5be7399a36ea1de4010f175e`. PR #42 merged at `d71a93a` with
+that exact tree. Immutable unsigned `v0.22.1` points to
+`d71a93af85d212956fcc5f08bd17f2796f914a50`; the
+[adoption release](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.22.1)
+is public. The runtime remains independently published v0.22.0.
+
+Public proxy/SumDB verification resolved CLI module sum
+`h1:02D7JfoxlnU523K0lcmj9MTILLM0h0grV1f/zZ5EJME=` and Go-module sum
+`h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`, with origin hash matching
+the tagged merge. A complete fresh-cache confirmation ran the downloaded
+Windows installer without changing persistent PATH, verified exact CLI binary
+version/module checksum, and created `example.com/releasedscale` in the workspace.
+It retained format 16, public v0.22.0 and its exact two runtime sums, with no
+replacement. Nullable Category, boolean-only Project, all-scalar/two-relation
+Ticket with an explicit nullable choice label, and LegacyIssue passed generator
+checks, assets, module verify/tidy, ordinary/race tests, vet, and server, worker,
+scheduler, and console builds. Generated source and binaries are retained for
+inspection.
+
+The first public attempt passed download/installation but Windows denied its
+final scaffold directory rename. Atomic cleanup left no application or staging
+directory. The same public binary subsequently created the original destination
+successfully; the denial's cause remains unproven. That diagnostic retry is not
+full acceptance evidence. The complete confirmation used a separate guarded
+directory and newly downloaded module cache on the same workspace/OneDrive
+path class, with all original assertions unchanged. No framework patch or tag
+rewrite was used to conceal the interrupted attempt. Independent review found
+no remaining milestone blocker; no later roadmap feature is included.
+
+After review, the two validated run-local module caches were removed (68,935,400
+bytes total). Public modules can regenerate them; generated applications,
+installed binaries, scripts, evidence, shared caches, and older worktrees were
+retained.
 
 # v0.21 component attributes and accessible forms scorecard
 
