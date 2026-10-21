@@ -198,6 +198,21 @@ race detector (47.708s); `go vet ./...` and diff checks passed. Independent
 review found no remaining P0–P2 issue. Final complete matrices must pass again
 on this correction; earlier Windows passes do not replace those gates.
 
+Final acceptance audit closed one additional criterion-5 proof gap: denied
+browser operations previously asserted the persistence counter but not the
+separate relationship-choice counter. Format-16 relationship tests now prove
+the counter is active on authorized New, then require zero choice calls for
+every denied operation, including valid Create and PUT Update lookup refreshes
+for each relationship. Production handlers are unchanged. Fresh format-16 app
+tests and all 22 format 8–15 snapshots passed together (15.004s); lead race
+verification including the corrected watcher passed (27.422s), followed by vet
+and diff checks. Independent review found no remaining concrete implementation
+or gate-coverage blocker. Two complete matrices on the final test-content head
+and public v0.22.1 distribution remain required. Earlier-head push
+[39628686188](https://github.com/ShanilKoshitha/goforge/actions/runs/39628686188)
+completed its entire Linux/PostgreSQL and Windows matrix successfully; it is
+supporting evidence, not one of the final-head passes.
+
 # v0.21 component attributes and accessible forms scorecard
 
 Status: **accepted** — v0.21.0 runtime and v0.21.1 format-15 adoption published; public distribution verified — 2026-10-21

@@ -545,7 +545,11 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	}
 	token := browserCSRFToken(t, newPage.Body.String())
 	cookie = responseCookie(newPage, cookie)
-	denied = true
+[[if and .ScalableResources .Relationships]]	if repository.choiceCalls == 0 {
+		t.Fatal("authorized new form did not exercise choice queries")
+	}
+	repository.item = resource.[[.Name]]{ID: 1, UserID: 9, Version: 1}
+[[end]]	denied = true
 
 	tests := []struct {
 		name   string
@@ -561,17 +565,37 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 		{name: "edit", method: http.MethodGet, target: "/app/[[.Plural]]/not-an-id/edit", action: resource.ActionUpdate},
 		{name: "update", method: http.MethodPost, target: "/app/[[.Plural]]/not-an-id", values: url.Values{"_token": {token}, "_method": {http.MethodPut}}, action: resource.ActionUpdate},
 		{name: "delete", method: http.MethodPost, target: "/app/[[.Plural]]/not-an-id", values: url.Values{"_token": {token}, "_method": {http.MethodDelete}}, action: resource.ActionDelete},
-	}
+[[if .ScalableResources]][[range .Relationships]]		{name: "create [[.Name]] choice refresh", method: http.MethodPost, target: "/app/[[$.Plural]]", values: func() url.Values {
+			values := sampleResourceFormValues()
+			values.Set("_token", token)
+			values.Set("intent", "choice:[[.Name]]:lookup")
+			values.Set("choice[[`[`]][[.Name]]][id]", "7")
+			return values
+		}(), action: resource.ActionCreate},
+		{name: "update [[.Name]] choice refresh", method: http.MethodPost, target: "/app/[[$.Plural]]/1", values: func() url.Values {
+			values := updatedResourceFormValues()
+			values.Set("_token", token)
+			values.Set("_method", http.MethodPut)
+			values.Set("version", "1")
+			values.Set("intent", "choice:[[.Name]]:lookup")
+			values.Set("choice[[`[`]][[.Name]]][id]", "7")
+			return values
+		}(), action: resource.ActionUpdate},
+[[end]][[end]]	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			authorizationCalls = 0
 			gotAction = ""
 			repository.repositoryCalls = 0
-			response := browserRequest(router, test.method, test.target, test.values, cookie)
+[[if and .ScalableResources .Relationships]]			repository.choiceCalls = 0
+[[end]]			response := browserRequest(router, test.method, test.target, test.values, cookie)
 			if response.Code != http.StatusForbidden || authorizationCalls != 1 || gotAction != test.action || repository.repositoryCalls != 0 {
 				t.Fatalf("browser authorization: status=%d calls=%d action=%q repository=%d: %s", response.Code, authorizationCalls, gotAction, repository.repositoryCalls, response.Body.String())
 			}
-		})
+[[if and .ScalableResources .Relationships]]			if repository.choiceCalls != 0 {
+				t.Fatalf("denied browser operation queried choices %d times: %s", repository.choiceCalls, response.Body.String())
+			}
+[[end]]		})
 	}
 }
 
