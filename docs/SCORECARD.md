@@ -208,8 +208,24 @@ Target:
   no attribute runtime machinery. Four executable artifacts were produced.
 - Tag workflow
   [39607483308](https://github.com/ShanilKoshitha/goforge/actions/runs/39607483308)
-  is additional verification of the same accepted merge; its result is not yet
-  recorded here. No feature work followed the two accepted implementation passes.
+  passed Linux/PostgreSQL in 21m05s and native Windows in 4m46s, including the
+  compatibility, fresh-app, and repeated PostgreSQL workflow gates. No feature
+  work followed the two accepted implementation passes.
+
+## Post-release roadmap review — 2026-10-21
+
+Status: **planning only**; no later milestone is claimed as implemented.
+
+- ROADMAP.md corrects minor-version ordering and proposes complete workflows
+  from v0.22 through v0.39, followed by explicit v1 prerelease qualification.
+- Independent data and developer-workflow reviews checked the established
+  baseline against current code. The final proposal passed an independent
+  consistency review after clarifying non-mutating migration diagnosis,
+  custom-type boundaries, transactional relationship authorization, adoption
+  provenance, and cumulative application integration.
+- No generator, runtime, template, dependency, or published artifact changed.
+  Existing accepted application and public-release evidence remains applicable;
+  this entry records planning review, not a new implementation test pass.
 
 ## v0.21.0 runtime-stage evidence — 2026-09-14
 
