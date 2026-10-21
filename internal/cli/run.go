@@ -240,5 +240,8 @@ reports all independent configuration, database, migration, ORM, view, and asset
 checks without repairs or raw subprocess errors. routes:list reads the actual
 constructed router without starting services or requiring reachable PostgreSQL.
 Older formats are not upgraded or injected with diagnostic support.
+Guarded diagnostics ignore ambient/persisted GOFLAGS to prevent build-tool
+output inside the application; other Go environment settings remain available.
+Use ordinary Go commands explicitly when custom build flags are required.
 `)
 }

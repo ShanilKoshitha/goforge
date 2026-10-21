@@ -14,6 +14,9 @@ Direct `go run -mod=readonly ./cmd/diagnostics doctor` and `routes:list` emit JS
 For the same direct build-tool nonmutation boundary, select external `GOCACHE`,
 `GOMODCACHE`, and `GOTMPDIR` and set `GOWORK=off`; ordinary compiler output is
 not sanitized by application code. The framework CLI supplies those guards.
+Its guarded diagnostics ignore process/persisted `GOFLAGS`, including linker
+profiling outputs, while retaining other Go settings such as private proxies.
+Custom build flags and their output paths remain the direct Go caller's choice.
 
 ## Quick start
 

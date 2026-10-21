@@ -1606,3 +1606,14 @@ Retain real recompilation in migration-source mutation tests: their SQL is
 embedded in the diagnostic command, so a stale prebuilt binary cannot prove
 source drift. Exact executable exit-code proofs use only the pristine and
 first healthy states, where embedded source is unchanged.
+
+Suppress ambient and persisted `GOFLAGS` for guarded diagnosis, but preserve the
+rest of `GOENV` so private-module/proxy configuration continues to work. A native
+normal-app probe proved that the ordinary linker's `-cpuprofile` flag created
+application-local files during both successful inventory and failed offline
+doctor, including when flags came from a separate Go environment file. This
+violates nonmutation without any custom application code. Supply one nonempty
+blank as the child-only flag value: Go parses zero flags, while an empty string
+would fall back to persisted flags. Never edit the caller's Go configuration.
+Direct Go commands remain the complete explicit path for custom build flags and
+caller-managed profiling/output targets.

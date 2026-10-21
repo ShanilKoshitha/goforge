@@ -34,7 +34,8 @@ shared caches/temporary builds, disabled workspaces, bounded process trees, and
 safe subprocess summaries. Direct `go run -mod=readonly ./cmd/diagnostics ...`
 is an ordinary escape hatch: the Go tool runs before application code, so the
 caller must select external caches and `GOWORK=off` when requiring the same
-build-tool nonmutation boundary. Direct compiler output retains ordinary Go
+build-tool nonmutation boundary, and deliberately control Go flags and output
+targets. Direct compiler output retains ordinary Go
 behavior; application diagnostic reports themselves never echo raw errors.
 
 Fresh applications will introduce format 17 only after any new runtime APIs
@@ -77,6 +78,9 @@ distribution; runtime publication alone does not accept the milestone.
    `GOWORK=off`; conventional shared user caches and temporary Go build files
    outside the project are allowed. Diagnostic subprocesses explicitly select
    external caches rather than inheriting app-local Go cache settings.
+   Suppress both process and persisted `GOFLAGS`, including linker-profile and
+   alternate-module/overlay flags, without disabling unrelated persisted private
+   module/proxy configuration or changing the caller's environment file.
    No source/lock/build publication, migration bookkeeping/domain writes, SMTP
    connection, server bind, job claim, or scheduler startup occurs. DB checks
    have finite deadlines; cancellation stops descendants through the existing

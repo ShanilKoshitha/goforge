@@ -206,7 +206,12 @@ func diagnosticProcessEnvironment() ([]string, error) {
 		{"GOMODCACHE", filepath.Join(homeDirectory, "go", "pkg", "mod")},
 		{"GOTMPDIR", filepath.Join(cache, "goforge", "tmp")},
 	}
-	environment := []string{"GOWORK=off"}
+	// Ordinary Go flags can publish linker profiles, select alternate module
+	// files, or install source overlays even with -mod=readonly. A nonempty
+	// whitespace value parses as zero flags and suppresses Go's persisted GOENV
+	// fallback; an empty value would not. Preserve GOENV itself so unrelated
+	// private-proxy, module-authentication, and toolchain settings still work.
+	environment := []string{"GOWORK=off", "GOFLAGS= "}
 	for _, path := range paths {
 		resolved, err := resolvedDiagnosticPath(path.value)
 		if err != nil {
