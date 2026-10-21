@@ -107,10 +107,11 @@ func (source *fakeDevelopmentSource) change(snapshot sourceSnapshot) {
 	source.mu.Lock()
 	changed := source.current != snapshot
 	source.current = snapshot
-	source.mu.Unlock()
+	// Match the production tracker: publish content and generation together.
 	if changed {
 		source.generation.Add(1)
 	}
+	source.mu.Unlock()
 	source.changes <- snapshot
 }
 
@@ -118,10 +119,10 @@ func (source *fakeDevelopmentSource) set(snapshot sourceSnapshot) {
 	source.mu.Lock()
 	changed := source.current != snapshot
 	source.current = snapshot
-	source.mu.Unlock()
 	if changed {
 		source.generation.Add(1)
 	}
+	source.mu.Unlock()
 }
 
 func (source *fakeDevelopmentSource) wait(ctx context.Context, previous sourceSnapshot, previousGeneration uint64) (sourceSnapshot, error) {
@@ -323,12 +324,17 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 	var buildCount int
 	var buildMu sync.Mutex
 	proxyReady := make(chan *fakeDevelopmentProxy, 1)
+	watchReady := make(chan struct{})
+	var watchReadyOnce sync.Once
 	var startedProxy *fakeDevelopmentProxy
 	dependencies := developmentServeDependencies{
-		snapshot:      source.snapshot,
-		waitForChange: source.wait,
-		stabilize:     source.stabilize,
-		generation:    source.generation.Load,
+		snapshot: source.snapshot,
+		waitForChange: func(ctx context.Context, previous sourceSnapshot, generation uint64) (sourceSnapshot, error) {
+			watchReadyOnce.Do(func() { close(watchReady) })
+			return source.wait(ctx, previous, generation)
+		},
+		stabilize:  source.stabilize,
+		generation: source.generation.Load,
 		build: func(context.Context) (*developmentBuild, error) {
 			buildMu.Lock()
 			buildCount++
@@ -375,6 +381,15 @@ func TestDevelopmentSupervisorDoesNotLoseEditDuringBuild(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- superviseDevelopmentServer(ctx, dependencies) }()
 	proxy := <-proxyReady
+	// Proxy construction precedes initial freshness checks and commit. Wait for
+	// the watch loop so this edit exercises a rebuild, not stale initial startup.
+	select {
+	case <-watchReady:
+	case err := <-result:
+		t.Fatalf("supervisor exited before watching source: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervisor did not enter source watch after proxy startup")
+	}
 
 	source.change(testSnapshot(2))
 	<-secondStarted

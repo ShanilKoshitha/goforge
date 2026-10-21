@@ -213,6 +213,27 @@ and public v0.22.1 distribution remain required. Earlier-head push
 completed its entire Linux/PostgreSQL and Windows matrix successfully; it is
 supporting evidence, not one of the final-head passes.
 
+Additional native PostgreSQL/race qualification exposed a supervisor-test
+startup race and later exhausted the 20-minute package budget (1203.345s) while
+formatting a generated view. This failed run is not acceptance evidence.
+A controlled startup gate reproduced the exact 10s failure: three builds,
+first-proxy target only, zero reloads, generation three. The test had injected
+an edit before initial startup committed, correctly causing replacement of the
+initial proxy rather than a reload. It now waits for the first source-watch
+entry, bounded by supervisor exit and a 5s failure deadline. Related stress
+also exposed the fake source publishing content before its generation; a
+controlled publication gate reproduced the missing promotion-crash diagnostic.
+Both fake setters now publish content and generation under one mutex, matching
+the production tracker. All diagnostic hooks were removed; production code and
+timeouts are unchanged. The two affected tests passed 6,000 race executions
+across CPUs 1/2/4 (12.434s); all 11 supervisor tests passed 3,300 race executions
+(4.882s). Fresh format-16 app tests and 22 legacy snapshots passed (15.824s).
+Lead supervisor/watch/fresh-app/escape/snapshot race verification passed
+(40.437s), with vet/diff checks and independent review clean. Final-head CI
+must pass twice again. A separate finite 30-minute native Windows all-package
+PostgreSQL/race qualification will account for the expensive nested builds;
+Linux CI retains its existing 20-minute budget and every acceptance group.
+
 # v0.21 component attributes and accessible forms scorecard
 
 Status: **accepted** — v0.21.0 runtime and v0.21.1 format-15 adoption published; public distribution verified — 2026-10-21
