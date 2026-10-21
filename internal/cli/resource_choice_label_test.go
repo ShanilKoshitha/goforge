@@ -107,9 +107,6 @@ func TestChoiceLabelDeclarationRejectsOldFormatWithoutPublication(t *testing.T) 
 }
 
 func TestFormatSixteenChoiceLabelCLIRejectsInvalidDeclarationsWithoutPublication(t *testing.T) {
-	if currentProjectFormat != 16 {
-		t.Fatalf("format-16 CLI acceptance requires current project format 16, got %d", currentProjectFormat)
-	}
 	directory := newChoiceLabelCLIFixture(t)
 	tests := []struct {
 		name   string
@@ -143,9 +140,6 @@ func TestFormatSixteenChoiceLabelCLIRejectsInvalidDeclarationsWithoutPublication
 }
 
 func TestFormatSixteenChoiceLabelCLIPreservesOneShotSourceAcrossRegeneration(t *testing.T) {
-	if currentProjectFormat != 16 {
-		t.Fatalf("format-16 CLI acceptance requires current project format 16, got %d", currentProjectFormat)
-	}
 	directory := newChoiceLabelCLIFixture(t)
 	runChoiceLabelCLI(t, "make:resource", "Ticket", "--field", "summary:string", "--belongs-to", "category:Category", "--belongs-to", "project:Project", "--choice-label", "category:title")
 	before := snapshotRelationshipProject(t, directory)
@@ -211,11 +205,14 @@ func TestFormatSixteenChoiceLabelCLIPreservesOneShotSourceAcrossRegeneration(t *
 
 func newChoiceLabelCLIFixture(t *testing.T) string {
 	t.Helper()
+	root := projectRoot(t)
 	directory := filepath.Join(t.TempDir(), "choice-label-app")
-	if err := createProject(newOptions{directory: directory, module: "example.com/choiceproof", replace: projectRoot(t)}); err != nil {
+	if err := createProject(newOptions{directory: directory, module: "example.com/choiceproof", replace: root}); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(directory)
+	preserveFormat16WorkflowFixture(t, directory)
+	assertFormat16WorkflowBoundaries(t, directory, root)
 	runChoiceLabelCLI(t, "make:resource", "Category", "--field", "title:string:nullable", "--field", "rank:integer")
 	runChoiceLabelCLI(t, "make:resource", "Project", "--field", "private_label:string")
 	return directory

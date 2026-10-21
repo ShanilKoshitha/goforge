@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.23.0"
+const Version = "0.23.1"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -172,6 +172,8 @@ Usage:
   forge test
   forge build
   forge assets:check
+  forge doctor
+  forge routes:list
   forge migrate
   forge queue:work
   forge queue:failed
@@ -209,28 +211,34 @@ Models accept the same scalar field grammar. A required
 relationship to an existing application model. Model options are one-shot;
 the generated Go and paired SQL migration remain authoritative.
 
-Format-10 through format-16 projects may add repeatable required relationships
+Format-10 through format-17 projects may add repeatable required relationships
 with --belongs-to <name>:<ExistingResource>. The target must already be a
 generated resource. Relationship IDs remain explicit, owner-scoped, and
 database-backed.
 
-Format-16 resources additionally accept --choice-label <relationship>:<field>.
+Format-16 and newer resources additionally accept --choice-label <relationship>:<field>.
 This explicit declaration exposes the target text field to actors allowed to
-create/edit the source resource; omitted labels remain ID-only. Fresh format-16
+create/edit the source resource; omitted labels remain ID-only. Fresh format-17
 applications include bounded list filtering/sorting and no-JavaScript choice
 search, ID lookup, and paging. Existing project formats retain their contracts.
 
-Format-13 through format-16 resources include an application-owned authorization
+Format-13 through format-17 resources include an application-owned authorization
 function shared by JSON and browser controllers. Owner access is the default;
 edit the generated Go to grant all-record access or deny individual typed
 actions.
 
-Fresh format-16 applications include named, expiring personal API tokens.
+Fresh format-17 applications include named, expiring personal API tokens.
 Signed-in users manage them through /settings/security or /auth/tokens. One
 exact Authorization: Bearer credential authenticates /auth/me and generated
 JSON resources through the same application-owned policy and SQL scope.
 
 Generators refuse to overwrite files. Generated applications keep routes,
 handlers, configuration, and SQL as ordinary source files you can edit.
+
+Format-17 applications own cmd/diagnostics and internal/diagnostics. doctor
+reports all independent configuration, database, migration, ORM, view, and asset
+checks without repairs or raw subprocess errors. routes:list reads the actual
+constructed router without starting services or requiring reachable PostgreSQL.
+Older formats are not upgraded or injected with diagnostic support.
 `)
 }

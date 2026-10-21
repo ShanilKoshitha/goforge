@@ -25,6 +25,7 @@ var format15WorkflowRuntimeSums = []string{
 // Keep ordinary local replacements and unrelated module dependencies intact.
 func preserveFormat15WorkflowFixture(t *testing.T, directory, forgeBinary string, environment []string) {
 	t.Helper()
+	removeDiagnosticWorkflowFixtureFiles(t, directory)
 	manifestPath := filepath.Join(directory, "forge.yaml")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -203,6 +204,7 @@ func TestFormat15WorkflowFixtureRestoresExplicitFormatBoundaries(t *testing.T) {
 
 func assertFormat15WorkflowBoundaries(t *testing.T, directory, runtimeRoot string) {
 	t.Helper()
+	assertNoDiagnosticWorkflowFixtureFiles(t, directory)
 	manifest, err := os.ReadFile(filepath.Join(directory, "forge.yaml"))
 	if err != nil || !bytes.HasPrefix(manifest, []byte("version: 15\n")) {
 		t.Fatalf("fixture must explicitly retain format 15: %v\n%s", err, manifest)

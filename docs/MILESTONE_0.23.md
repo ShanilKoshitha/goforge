@@ -1,6 +1,6 @@
 # v0.23 read-only diagnosis and application inventory
 
-Status: **runtime-first implementation in qualification; format-17 adoption pending** — 2026-10-21.
+Status: **public runtime verified; format-17 adoption implementation in qualification** — 2026-10-21.
 
 ## Runnable baseline
 
@@ -40,8 +40,11 @@ behavior; application diagnostic reports themselves never echo raw errors.
 Fresh applications will introduce format 17 only after any new runtime APIs
 are publicly available with verified checksums. Existing applications are not
 rewritten; older formats receive an explicit unsupported-command explanation.
-During runtime-first preparation, current fresh output stays format 16 and the
-new scaffold is exercised through explicit candidate fixtures.
+Runtime-first preparation retained format 16 while explicit candidate fixtures
+qualified the new scaffold. Runtime v0.23.0 is now published and publicly
+verified; this checkout's v0.23.1 candidate generates format 17 with its exact
+public sums. Adoption still needs its own complete qualification and public CLI
+distribution; runtime publication alone does not accept the milestone.
 
 ## Measurable acceptance criteria
 

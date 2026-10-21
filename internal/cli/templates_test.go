@@ -16,7 +16,7 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{".env", ".env.example", ".gitignore", ".forge/resources.json", ".forge/jobs.json"} {
+	for _, name := range []string{".env", ".env.example", ".gitignore", ".forge/resources.json", ".forge/jobs.json", "cmd/diagnostics/main.go", "cmd/diagnostics/main_test.go", "internal/diagnostics/diagnostics.go", "internal/diagnostics/diagnostics_test.go"} {
 		if _, ok := files[name]; !ok {
 			t.Errorf("missing embedded dotfile %s", name)
 		}
@@ -33,8 +33,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
 		t.Fatal("project name must be quoted YAML")
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 16") {
-		t.Fatal("fresh scaffold must declare format 16")
+	if !strings.Contains(files["forge.yaml"], "version: 17") {
+		t.Fatal("fresh scaffold must declare format 17")
 	}
 	for _, name := range []string{
 		"resources/views/components/input.forge.html",
@@ -45,12 +45,12 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 			t.Errorf("fresh scaffold component %s must expose exactly one compile-time attribute sink", name)
 		}
 	}
-	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.22.0") {
-		t.Fatal("fresh format-16 scaffold must pin the public v0.22.0 runtime")
+	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.23.0") {
+		t.Fatal("fresh format-17 scaffold must pin the public v0.23.0 runtime")
 	}
 	for _, checksum := range []string{
-		"github.com/ShanilKoshitha/goforge v0.22.0 h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=",
-		"github.com/ShanilKoshitha/goforge v0.22.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+		"github.com/ShanilKoshitha/goforge v0.23.0 h1:bjSSvFM3rBH/aJ2TesGxO7n8vcG0cPJUQVPgAT9SotY=",
+		"github.com/ShanilKoshitha/goforge v0.23.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 	} {
 		if !strings.Contains(files["go.sum"], checksum) {
 			t.Errorf("fresh scaffold omits public runtime checksum %q", checksum)
@@ -62,7 +62,7 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["go.mod"], `=> "`) {
 		t.Fatal("local replacement path must be quoted")
 	}
-	if strings.Contains(files["go.sum"], "github.com/ShanilKoshitha/goforge v0.21.0") {
+	if strings.Contains(files["go.sum"], "github.com/ShanilKoshitha/goforge v0.21.0") || strings.Contains(files["go.sum"], "github.com/ShanilKoshitha/goforge v0.22.0") {
 		t.Fatal("fresh scaffold retains a stale framework checksum")
 	}
 	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {

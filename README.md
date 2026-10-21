@@ -48,7 +48,12 @@ and [acceptance gates](docs/MILESTONE_0.22.md). Acceptance and
 public distribution evidence are recorded in the [scorecard](docs/SCORECARD.md).
 Existing applications are not
 rewritten automatically.
-Newly generated format-13 through format-16 resources own a typed action/access
+The v0.23.0 diagnostic runtime is now public and verified. This checkout's
+v0.23.1 adoption candidate generates format 17 on that runtime and adds read-only
+`forge doctor` and actual-router `forge routes:list`. Full adoption qualification
+and public CLI distribution are still pending; this is not v0.23 acceptance.
+See the [diagnostic workflow and boundaries](docs/diagnostics.md).
+Newly generated format-13 through format-17 resources own a typed action/access
 function shared by their JSON and browser
 controllers. Owner-only remains the default; application code can explicitly
 grant all-record access or deny an action, while repositories apply the derived
@@ -86,7 +91,7 @@ IANA civil time and DST behavior, bounded misfire coalescing, conservative
 active-job overlap suppression, fail-closed definition fingerprints,
 competing-process row coordination, read-only inspection, and payload-free
 observers.
-Fresh format-11 through format-16 scaffolds own the schedule registry, PostgreSQL
+Fresh format-11 through format-17 scaffolds own the schedule registry, PostgreSQL
 migration, isolated configuration, scheduler process, inspection command, and
 direct Go escape hatches. The v0.16.0 release pinned the immutable public
 v0.14.2 runtime and demonstrated its cancellation-aware dynamic schedule
@@ -230,12 +235,13 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (v0.22.1)
+## CLI (v0.23.1 adoption candidate)
 
 The command surface below describes this checkout. Fresh applications use
-format 16 while pinning the verified public v0.22.0 runtime. Install `v0.22.1`
-for this contract, or `go install ./cmd/forge` when working on framework source.
-The earlier v0.22.0 runtime-first CLI retains format 15.
+format 17 while pinning the verified public v0.23.0 runtime. Use
+`go install ./cmd/forge` for the adoption candidate; public v0.22.1 retains
+format 16/runtime v0.22.0, and public v0.23.0 is runtime-first with the same old
+scaffold. Do not assume a runtime release automatically upgrades generation.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
@@ -244,6 +250,8 @@ forge serve
 forge test
 forge build
 forge assets:check
+forge doctor
+forge routes:list
 forge migrate
 forge views:compile
 forge orm:generate [--check]
@@ -293,7 +301,7 @@ runtime schema. Updates replace the complete writable resource: a missing,
 `null`, or empty nullable value clears that column to SQL `NULL`, while numeric
 `0` and boolean `false` remain present values.
 
-Format-10 through format-16 applications can generate a required owner-scoped
+Format-10 through format-17 applications can generate a required owner-scoped
 relationship to an existing resource:
 
 ```sh
@@ -308,7 +316,7 @@ protected foreign key, association value, validation, eager loading, browser
 choices, and presentation; generated SQL owns the composite owner/target
 constraint. No relationship registry or runtime schema is added.
 
-Format-13 through format-16 resources also own `authorization.go`. Its `AuthorizeFunc` receives a
+Format-13 through format-17 resources also own `authorization.go`. Its `AuthorizeFunc` receives a
 typed list, create, view, update, or delete action and returns denied, owner, or
 all-record access. `Authorize` is the editable owner-only default, and the same
 function is visibly injected into both controllers in `routes/resources_gen.go`.
@@ -319,8 +327,8 @@ fetch-then-write race. Edit this ordinary Go file, inject another function, or
 replace the controller/repository wiring when the closed scope is insufficient.
 
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-16 projects in this checkout (the public v0.22.0 CLI
-supports formats 4–15). Both non-mutating preflights check the
+format-4 through format-17 projects in this checkout (the public v0.23.0 CLI
+supports formats 4–16). Both non-mutating preflights check the
 generated ORM first, compiled views second, and format-12-or-newer embedded assets third.
 Testing then runs exactly `go test ./...`. Building stages a trimmed
 `./cmd/server` executable and publishes
@@ -341,7 +349,7 @@ go run ./cmd/scheduler --once
 ```
 
 Use direct Go commands for custom packages, flags, tags, targets, output paths,
-or worker and console builds. `forge dev` is the complete format-11-through-16 development
+or worker and console builds. `forge dev` is the complete format-11-through-17 development
 default: it labels and supervises `forge serve`, the application-owned worker,
 and the scheduler under one cancellation boundary, and reports ready only after
 all three startup contracts succeed. Any service exit stops its peers. It does

@@ -12,36 +12,31 @@ import (
 	"testing"
 )
 
-// This candidate is deliberately separate from normal generation until the
-// added runtime APIs have a public immutable tag and verified module sums.
-func diagnosticCandidateProject(t *testing.T) string {
+// Exercise normal adopted generation. The runtime must already be public;
+// no template overlay or hand-edited format manifest may supply this contract.
+func adoptionDiagnosticProject(t *testing.T) string {
 	t.Helper()
+	if currentProjectFormat < minimumDiagnosticFormat {
+		t.Fatal("adoption proof requires normal format-17 generation after public-runtime verification")
+	}
 	directory := workflowProject(t)
 	t.Chdir(directory)
+	if format, err := projectFormat(); err != nil || format != currentProjectFormat || format < minimumDiagnosticFormat {
+		t.Fatalf("normal scaffold has no adopted diagnostic contract: format=%d error=%v", format, err)
+	}
+	for _, path := range []string{"cmd/diagnostics/main.go", "internal/diagnostics/diagnostics.go"} {
+		if _, err := os.Stat(filepath.FromSlash(path)); err != nil {
+			t.Fatalf("normal scaffold omitted %s: %v", path, err)
+		}
+	}
 	if err := RunContext(context.Background(), []string{"make:resource", "DiagnosticIssue", "--field", "title:string"}, nil, io.Discard, io.Discard); err != nil {
-		t.Fatalf("generate inspectable resource before candidate overlay: %v", err)
-	}
-	files, err := diagnosticScaffoldFiles("example.com/application")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, source := range files {
-		path := filepath.Join(directory, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(directory, "forge.yaml"), []byte("version: 17\nname: candidate\ndatabase: postgres\nlayout: standard\n"), 0o644); err != nil {
-		t.Fatal(err)
+		t.Fatalf("generate inspectable resource through the adopted CLI: %v", err)
 	}
 	return directory
 }
 
-func TestDiagnosticCandidateCompilesAndRunsOrdinaryGoChecks(t *testing.T) {
-	directory := diagnosticCandidateProject(t)
+func TestDiagnosticApplicationCompilesAndRunsOrdinaryGoChecks(t *testing.T) {
+	directory := adoptionDiagnosticProject(t)
 	t.Chdir(directory)
 	for key, value := range map[string]string{
 		"GOWORK": "off", "APP_ENV": "local", "APP_URL": "http://localhost:8080",
@@ -59,9 +54,9 @@ func TestDiagnosticCandidateCompilesAndRunsOrdinaryGoChecks(t *testing.T) {
 	}
 	before := diagnosticSnapshot(t, directory)
 	var output bytes.Buffer
-	err := diagnoseProject(context.Background(), &output, execProcessRunner{})
+	err := RunContext(context.Background(), []string{"doctor"}, nil, &output, &output)
 	if err == nil || !strings.Contains(output.String(), "fail\tdatabase") || !strings.Contains(output.String(), "skipped\tmigrations") {
-		t.Fatalf("offline candidate diagnosis = %v\n%s", err, &output)
+		t.Fatalf("offline adopted diagnosis = %v\n%s", err, &output)
 	}
 	for _, id := range []string{"config.http", "config.worker", "config.scheduler", "config.database", "application", "orm", "views", "assets"} {
 		if !strings.Contains(output.String(), "pass\t"+id+"\t") {
@@ -70,7 +65,7 @@ func TestDiagnosticCandidateCompilesAndRunsOrdinaryGoChecks(t *testing.T) {
 	}
 	assertDiagnosticPrivacy(t, output.String()+err.Error())
 	output.Reset()
-	if err := inspectProjectRoutes(context.Background(), &output, execProcessRunner{}); err != nil {
+	if err := RunContext(context.Background(), []string{"routes:list"}, nil, &output, &output); err != nil {
 		t.Fatalf("offline actual route inventory failed: %v", err)
 	}
 	for _, expected := range []string{`"/health"`, `"/ready"`, `"health.ready"`, `"/auth/tokens"`, `"/diagnostic_issues"`, `"/app/diagnostic_issues"`} {
@@ -108,7 +103,7 @@ func TestDiagnosticCandidateCompilesAndRunsOrdinaryGoChecks(t *testing.T) {
 		}
 		before := diagnosticSnapshot(t, directory)
 		output.Reset()
-		if err := inspectProjectRoutes(context.Background(), &output, execProcessRunner{}); err != nil {
+		if err := RunContext(context.Background(), []string{"routes:list"}, nil, &output, &output); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(output.String(), `"`+path+`"`) || !strings.Contains(output.String(), `"handwritten.show"`) {
@@ -129,7 +124,7 @@ func TestDiagnosticCandidateCompilesAndRunsOrdinaryGoChecks(t *testing.T) {
 		}
 		before := diagnosticSnapshot(t, directory)
 		output.Reset()
-		if err := diagnoseProject(context.Background(), &output, execProcessRunner{}); err == nil {
+		if err := RunContext(context.Background(), []string{"doctor"}, nil, &output, &output); err == nil {
 			t.Fatal("malformed configuration passed diagnosis")
 		}
 		for _, key := range []string{"APP_REQUEST_TIMEOUT", "JOB_CONCURRENCY", "SCHEDULE_OP_TIMEOUT"} {
@@ -171,7 +166,7 @@ func TestDiagnosticCandidateCompilesAndRunsOrdinaryGoChecks(t *testing.T) {
 			}
 			before := diagnosticSnapshot(t, directory)
 			output.Reset()
-			if err := diagnoseProject(context.Background(), &output, execProcessRunner{}); err == nil {
+			if err := RunContext(context.Background(), []string{"doctor"}, nil, &output, &output); err == nil {
 				t.Fatal("dirty artifacts passed diagnosis")
 			}
 			for _, id := range diagnosticArtifactIDs(indices) {
@@ -193,23 +188,4 @@ func diagnosticArtifactIDs(indices []int) []string {
 		result = append(result, []string{"orm", "views", "assets"}[index])
 	}
 	return result
-}
-
-func TestDiagnosticRuntimePreparationPreservesFormatSixteenScaffold(t *testing.T) {
-	if currentProjectFormat >= minimumDiagnosticFormat {
-		t.Skip("runtime preparation gate was superseded by explicit format-17 adoption")
-	}
-	directory := workflowProject(t)
-	for _, name := range []string{"cmd/diagnostics", "internal/diagnostics"} {
-		if _, err := os.Stat(filepath.Join(directory, filepath.FromSlash(name))); !os.IsNotExist(err) {
-			t.Fatalf("runtime-first preparation injected %s: %v", name, err)
-		}
-	}
-	t.Chdir(directory)
-	if format, err := projectFormat(); err != nil || format != 16 {
-		t.Fatalf("runtime-first preparation changed current format: %d %v", format, err)
-	}
-	if err := runProjectDoctor(context.Background(), io.Discard, execProcessRunner{}); err == nil {
-		t.Fatal("old application silently gained diagnostic support")
-	}
 }

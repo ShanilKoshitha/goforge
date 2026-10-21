@@ -103,8 +103,8 @@ func TestGeneratedPersonalTokenPostgresWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(manifest, []byte("version: 16")) {
-		t.Fatalf("fresh personal-token application is not format 16:\n%s", manifest)
+	if !bytes.Contains(manifest, []byte("version: 17")) {
+		t.Fatalf("fresh personal-token application is not format 17:\n%s", manifest)
 	}
 	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "make:resource", "Category", "--field", "name:string"); err != nil {
 		t.Fatalf("forge make:resource Category: %v\n%s", err, output)

@@ -1,9 +1,10 @@
 # v0.23 read-only diagnosis and inventory scorecard
 
-Status: **baseline established; implementation in progress** — 2026-10-21.
+Status: **public runtime verified; format-17 adoption in progress** — 2026-10-21.
 
-Acceptance is defined in [MILESTONE_0.23.md](MILESTONE_0.23.md). No v0.23
-capability is accepted or publicly released yet.
+Acceptance is defined in [MILESTONE_0.23.md](MILESTONE_0.23.md). Runtime v0.23.0
+is public and verified. The complete diagnostic workflow is not accepted yet;
+format-17/CLI v0.23.1 adoption and distribution remain in qualification.
 
 | Gate | Current evidence |
 | --- | --- |
@@ -19,8 +20,15 @@ capability is accepted or publicly released yet.
 | Windows temporary-build correction | Controlled distinct-source probe failed all 20 managed and 20 direct runs at the broad user-cache root; ordinary Temp and dedicated `goforge/tmp` each passed 40 cold executions. Selected the dedicated external child; corrected candidate requalification passed, with no retry, assertion change, or process-tree weakening |
 | Corrected repeated candidate qualification | Native race group passed in 288.661s with two fresh-scaffold, explicit candidate, 11-state PostgreSQL, and frozen-snapshot passes. Candidate all-app-race/offline/inventory/secret/artifact workflows took 51.65s and 59.30s; PostgreSQL journeys took 47.61s and 49.92s, no skips. Each journey preserves complete file/DB snapshots |
 | Diagnostic unit boundaries | All diagnostic/privacy/protocol/cache/environment/cancellation unit tests passed twice under race (23.427s); explicit full-name regex coverage includes first-use external temp creation and the io.Copy output-cap regression |
-| Compatibility and CI | Normal scaffold stays format 16 on public v0.22.0; candidate CLI reports 0.23.0. Added public v0.22.1 format-16 compatibility/nonmutation gate and repeated diagnostic PostgreSQL journey without removing prior groups |
-| Complete framework/two CI passes, public runtime, adoption/distribution | Pending; the repeated candidate group is not complete milestone acceptance |
+| Runtime preparation qualification | Complete native PostgreSQL/framework race passed (CLI 1204.454s), followed by vet/diff checks; Windows mode/permission skips recorded. Complete push 39648186861 and PR 39648253290 matrices passed. Independent log audit verified actual checkouts 36c7949/d4ca8f7 share tree 0db532b, all required product steps execute, and each final PostgreSQL stage passes 11 journeys twice, all 11 diagnostic states twice, and all six scale selections twice, without stage skips/failures |
+| Public runtime | PR44 merged at 8f92f31557d05920bcdef25376dcbd3b181c5b96 with exact qualified tree; immutable unsigned v0.23.0 published there. Fresh public proxy/SumDB origin/ref/hash, downloaded installer/binary metadata, safe typed API race proof twice (1.715s), readonly/vet/module checks, unchanged no-replace format-16 resource app tests/race/vet/artifacts/all four builds, and old-command refusal/nonmutation passed (session 59083 exit 0). Persistent user PATH unchanged |
+| Adoption compatibility baseline | Seven real production-definition format-16 profiles freeze all 21 emitted artifacts including browse source/tests, paired SQL, and actual source/target route registry. Capture authenticated renderer dependencies against immutable public v0.22.1 d71a93a (2.521s); comparisons passed twice under race (6.690s) before integration. Existing format-8–15 snapshots and authentic public format-16 CI remain |
+| Format-17 adoption | Checkout candidate CLI 0.23.1 now uses normal format-17 generation with verified public v0.23.0 and exact sums. Fresh public CLI entry points, compiler-failure privacy, active descendant cancellation, exact binary exits, explicit historical fixtures, and repeated PostgreSQL nonmutation are being qualified; no acceptance claim from preparation evidence |
+| Fresh scaffold and candidate public-runtime checks | Exact version/current-CI-version/fresh generation/scheduler/template/future-format group passed twice under native race (100.444s), followed by whole-framework vet and diff checks. A separate normal no-replace format-17 Category/Ticket app on verified public v0.23.0 passed tests/race/vet, module verify/tidy, server/worker/scheduler/console/diagnostics builds, offline actual-route inventory, safe doctor exit 1 with independent artifact passes, and whole-file/directory nonmutation (session 11114 exit 0); this is local-candidate evidence, not public v0.23.1 installation |
+| Repeated adopted diagnostic workflow | Native race count=2 group passed in 304.649s, zero skips: actual compiler-error privacy/independent continuation (8.09s/16.14s), active public doctor/go-run/compiled-app/descendant cancellation (7.10s/9.88s), normal fresh-app full workflow (67.66s/56.64s), and all 11 PostgreSQL states twice (78.41s/58.02s), including exact compiled CLI/direct-app exits and complete file/schema/ledger/domain/sequence nonmutation |
+| Historical adoption compatibility | Corrected full native historical-fixture/freeze/choice/scalable suite passed twice under race (186.456s), zero skips, followed by CLI vet/diff checks. Original six invalid-choice cases, one-shot source preservation, format-15/16 restoration, unknown-source protection, seven complete format-16 and 22 legacy snapshots, explicit format-16 compiled apps, and collision assertions all execute in both repetitions |
+| Adoption independent review | Integrated production, template, test, fixture, compatibility, CI, and documentation review found no remaining P0–P2 issue. A first concurrent compile saw incomplete historical helper integration before any test ran; complete adopted workflow repetition subsequently passed. Historical fixture tests separately caught a CWD-relative root assertion mistake (initial compiled group failed in 152.650s), corrected without changing production behavior or weakening old assertions; complete corrected repetition then passed in 186.456s |
+| Complete adoption/two final passes/public CLI distribution | Pending; runtime and candidate preparation passes do not substitute for these gates |
 
 The first restricted-runner diagnostic tests failed same-parent temporary
 scaffold publication with Windows Access denied; equivalent native tests passed

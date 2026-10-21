@@ -289,14 +289,18 @@ jobs:
           diff "$RUNNER_TEMP/format16-before.sha256" "$RUNNER_TEMP/format16-after.sha256"
       - name: Current checkout scaffold
         run: |
-          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.23.0'
+          test "$("$RUNNER_TEMP/forge" version)" = 'forge 0.23.1'
           "$RUNNER_TEMP/forge" new "$RUNNER_TEMP/current-app" --module example.com/currentapp
           cd "$RUNNER_TEMP/current-app"
-          grep -q 'github.com/ShanilKoshitha/goforge v0.22.0' go.mod
+          grep -q 'github.com/ShanilKoshitha/goforge v0.23.0' go.mod
           test -z "$(grep '^replace ' go.mod || true)"
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.22.0 h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=' go.sum
-          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.22.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
-          grep -q '^version: 16$' forge.yaml
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.23.0 h1:bjSSvFM3rBH/aJ2TesGxO7n8vcG0cPJUQVPgAT9SotY=' go.sum
+          grep -Fqx 'github.com/ShanilKoshitha/goforge v0.23.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=' go.sum
+          grep -q '^version: 17$' forge.yaml
+          test -f cmd/diagnostics/main.go
+          test -f cmd/diagnostics/main_test.go
+          test -f internal/diagnostics/diagnostics.go
+          test -f internal/diagnostics/diagnostics_test.go
           test -f internal/auth/personal_tokens.go
           test -f internal/auth/api_middleware.go
           test -f database/migrations/000006_create_personal_access_tokens.up.sql
@@ -329,6 +333,9 @@ jobs:
           grep -q 'ContainsFold' internal/resources/issue/browse.go
           grep -q 'name="intent" value="choice:category:search"' resources/views/pages/issues/form.forge.html
           "$RUNNER_TEMP/forge" make:mail AuditNotice
+          APP_ENV=local APP_URL=http://localhost:8080 DATABASE_URL=postgres://inventory@127.0.0.1:1/offline?sslmode=disable "$RUNNER_TEMP/forge" routes:list > "$RUNNER_TEMP/current-routes.log"
+          grep -Fq '"/app/issues"' "$RUNNER_TEMP/current-routes.log"
+          grep -Fq '"health.ready"' "$RUNNER_TEMP/current-routes.log"
           go mod verify
           go mod tidy -diff
           "$RUNNER_TEMP/forge" test
@@ -339,6 +346,8 @@ jobs:
           go build ./cmd/scheduler
           test -x bin/app
           APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 DATABASE_URL="$GOFORGE_TEST_DATABASE_URL" "$RUNNER_TEMP/forge" migrate
+          APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 DATABASE_URL="$GOFORGE_TEST_DATABASE_URL" "$RUNNER_TEMP/forge" doctor > "$RUNNER_TEMP/current-doctor.log"
+          test "$(grep -c '^pass[[:space:]]' "$RUNNER_TEMP/current-doctor.log")" -eq 10
           APP_ENV=local APP_URL=http://127.0.0.1:18082 APP_ADDRESS=127.0.0.1:18082 DATABASE_URL="$GOFORGE_TEST_DATABASE_URL" JOB_POLL_INTERVAL=100ms SCHEDULE_POLL_INTERVAL=1s "$RUNNER_TEMP/forge" dev >"$RUNNER_TEMP/current-dev.log" 2>&1 &
           dev_pid=$!
           descendant_pids() {
