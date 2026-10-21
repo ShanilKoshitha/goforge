@@ -51,6 +51,7 @@ func TestGeneratedPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(scratch, baseEnvironment, forgeBinary, "new", "issueboard", "--module", "example.com/issueboard", "--replace", root); err != nil {
 		t.Fatalf("forge new: %v\n%s", err, output)
 	}
+	preserveFormat15WorkflowFixture(t, directory, forgeBinary, baseEnvironment)
 	if output, err := generatedCommand(directory, baseEnvironment, forgeBinary, "make:component", "Notice"); err != nil {
 		t.Fatalf("forge make:component: %v\n%s", err, output)
 	}

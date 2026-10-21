@@ -1540,3 +1540,12 @@ rule; old project formats/components are not rewritten. Choice-label declaration
 accept only editable plain string/*string fields backed by PostgreSQL text or
 varchar storage; UUID-backed strings require an explicit application replacement
 rather than a broken generated ILIKE query.
+
+Runtime-first publication is now satisfied by immutable public v0.22.0 at
+5efd243. Proxy/SumDB, isolated CLI installation, and a no-replace format-15
+application were verified before enabling the v0.22.1 format-16 candidate.
+Historical request/choice journeys keep explicit format-15 fixtures; a separate
+public v0.21.1 no-replace CI gate proves immutable old-runtime compatibility.
+The new scale journey, current scaffold, and account/job/token workflows exercise
+format 16. This separation preserves released assertions rather than weakening
+them to accommodate new form intents.

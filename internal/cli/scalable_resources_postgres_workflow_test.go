@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/mod/modfile"
 )
 
 func TestGeneratedScalableResourcesPostgresWorkflow(t *testing.T) {
@@ -45,6 +47,7 @@ func TestGeneratedScalableResourcesPostgresWorkflow(t *testing.T) {
 	if output, err := generatedCommand(scratch, baseEnvironment, forgeBinary, "new", "scalable-resources", "--module", "example.com/scalable", "--replace", root); err != nil {
 		t.Fatalf("forge new: %v\n%s", err, output)
 	}
+	assertScalableFreshScaffoldContract(t, directory, root)
 	commands := [][]string{
 		{"make:resource", "Category", "--field", "title:string"},
 		{"make:resource", "Project", "--field", "private_label:string"},
@@ -85,7 +88,8 @@ func TestGeneratedScalableResourcesPostgresWorkflow(t *testing.T) {
 
 	schema := fmt.Sprintf("goforge_scalable_resources_%d", time.Now().UnixNano())
 	adminPath := filepath.Join(directory, ".forge", "acceptance_db.go")
-	if err := os.WriteFile(adminPath, []byte(postgresAdminProgram), 0o644); err != nil {
+	adminSource := strings.ReplaceAll(postgresAdminProgram, "example.com/issueboard", "example.com/scalable")
+	if err := os.WriteFile(adminPath, []byte(adminSource), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	adminEnvironment := append(baseEnvironment, "DATABASE_URL="+databaseURL)
@@ -155,6 +159,70 @@ func TestGeneratedScalableResourcesPostgresWorkflow(t *testing.T) {
 		t.Fatalf("real PostgreSQL scalable repository proof: %v\n%s", err, output)
 	} else if strings.TrimSpace(output) != "scalable resources acceptance passed" {
 		t.Fatalf("unexpected scalable repository proof output: %s", output)
+	}
+}
+
+func assertScalableFreshScaffoldContract(t *testing.T, directory, root string) {
+	t.Helper()
+	manifest, err := os.ReadFile(filepath.Join(directory, "forge.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(manifest), "version: 16\n") {
+		t.Fatalf("fresh scalable application is not format 16:\n%s", manifest)
+	}
+
+	moduleSource, err := os.ReadFile(filepath.Join(directory, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := modfile.Parse("go.mod", moduleSource, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runtimeModule = "github.com/ShanilKoshitha/goforge"
+	var runtimeVersion string
+	for _, requirement := range module.Require {
+		if requirement.Mod.Path == runtimeModule {
+			runtimeVersion = requirement.Mod.Version
+			break
+		}
+	}
+	if runtimeVersion != "v0.22.0" {
+		t.Fatalf("fresh scalable application runtime = %q, want public v0.22.0:\n%s", runtimeVersion, moduleSource)
+	}
+	var replacement string
+	for _, directive := range module.Replace {
+		if directive.Old.Path == runtimeModule && directive.Old.Version == "" {
+			replacement = directive.New.Path
+			break
+		}
+	}
+	if replacement == "" || filepath.Clean(replacement) != filepath.Clean(root) {
+		t.Fatalf("fresh scalable harness replacement = %q, want local source %q:\n%s", replacement, root, moduleSource)
+	}
+
+	sums, err := os.ReadFile(filepath.Join(directory, "go.sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSums := map[string]bool{
+		"github.com/ShanilKoshitha/goforge v0.22.0 h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=":        false,
+		"github.com/ShanilKoshitha/goforge v0.22.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=": false,
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(sums)), "\n") {
+		if !strings.HasPrefix(line, runtimeModule+" ") {
+			continue
+		}
+		if _, expected := wantSums[line]; !expected {
+			t.Fatalf("fresh scalable application contains an unexpected GoForge checksum %q", line)
+		}
+		wantSums[line] = true
+	}
+	for line, found := range wantSums {
+		if !found {
+			t.Errorf("fresh scalable application omits public runtime checksum %q", line)
+		}
 	}
 }
 
@@ -316,8 +384,8 @@ func testScalableChoiceReachability(t *testing.T, client *http.Client, baseURL s
 		!strings.Contains(body, `name="intent" value="choice:project:previous"`) {
 		t.Fatalf("project next-page refresh did not render page 2 and Previous: got %d: %s", response.StatusCode, body)
 	}
-	assertScalableChoice(t, body, seed.OwnerProject, "", true)
-	assertScalableChoice(t, body, seed.OwnerProjectLast, "", false)
+	assertScalableChoice(t, body, "project_id", seed.OwnerProject, "", true)
+	assertScalableChoice(t, body, "project_id", seed.OwnerProjectLast, "", false)
 	if strings.Contains(body, "PROJECT_PRIVATE_") {
 		t.Fatalf("ID-only project page disclosed private text: %s", body)
 	}
@@ -350,8 +418,8 @@ func testScalableChoiceReachability(t *testing.T, client *http.Client, baseURL s
 		scalableSelectedOption(t, body, "active") != "false" || scalableSelectedOption(t, body, "featured") != "" {
 		t.Fatalf("choice search did not preserve zero/false/empty/null scalar state: %s", body)
 	}
-	assertScalableChoice(t, body, seed.LastCategory, "Last searchable category", false)
-	assertScalableChoice(t, body, seed.FirstCategory, "First searchable category", true)
+	assertScalableChoice(t, body, "category_id", seed.LastCategory, "Last searchable category", false)
+	assertScalableChoice(t, body, "category_id", seed.FirstCategory, "First searchable category", true)
 	if got := scalableInputValue(t, body, "choice[category][id]"); got != "" {
 		t.Fatalf("text search retained stale category ID filter %q", got)
 	}
@@ -374,7 +442,7 @@ func testScalableChoiceReachability(t *testing.T, client *http.Client, baseURL s
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("text choice lookup %q: got %d: %s", target.query, response.StatusCode, body)
 		}
-		assertScalableChoice(t, body, target.id, target.query, target.id == seed.FirstCategory)
+		assertScalableChoice(t, body, "category_id", target.id, target.query, target.id == seed.FirstCategory)
 
 		values.Set("_token", browserCSRF(t, body))
 		values.Set("choice[category][q]", "stale text must clear")
@@ -384,7 +452,7 @@ func testScalableChoiceReachability(t *testing.T, client *http.Client, baseURL s
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("ID choice lookup %d: got %d: %s", target.id, response.StatusCode, body)
 		}
-		assertScalableChoice(t, body, target.id, target.query, target.id == seed.FirstCategory)
+		assertScalableChoice(t, body, "category_id", target.id, target.query, target.id == seed.FirstCategory)
 		if got := scalableInputValue(t, body, "choice[category][q]"); got != "" {
 			t.Fatalf("ID lookup retained stale category text filter %q", got)
 		}
@@ -397,8 +465,8 @@ func testScalableChoiceReachability(t *testing.T, client *http.Client, baseURL s
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("equal-label search: got %d: %s", response.StatusCode, body)
 	}
-	assertScalableChoice(t, body, seed.EqualCategoryOne, "Equal searchable category", false)
-	assertScalableChoice(t, body, seed.EqualCategoryTwo, "Equal searchable category", false)
+	assertScalableChoice(t, body, "category_id", seed.EqualCategoryOne, "Equal searchable category", false)
+	assertScalableChoice(t, body, "category_id", seed.EqualCategoryTwo, "Equal searchable category", false)
 
 	values.Set("_token", browserCSRF(t, body))
 	values.Set("choice[category][q]", "<b>")
@@ -406,7 +474,7 @@ func testScalableChoiceReachability(t *testing.T, client *http.Client, baseURL s
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("unsafe long-label search: got %d: %s", response.StatusCode, body)
 	}
-	label := assertScalableChoice(t, body, seed.UnsafeCategory, "<b>", false)
+	label := assertScalableChoice(t, body, "category_id", seed.UnsafeCategory, "<b>", false)
 	if strings.Contains(body, "<b>") || !strings.Contains(body, "&lt;b&gt;") || utf8.RuneCountInString(label) > 160 {
 		t.Fatalf("choice label was not escaped and bounded: runes=%d label=%q body=%s", utf8.RuneCountInString(label), label, body)
 	}
@@ -446,7 +514,7 @@ func testScalableChoiceSelectionPersistence(t *testing.T, client *http.Client, b
 				if response.StatusCode != http.StatusOK {
 					t.Fatalf("%s choice refresh for %s: got %d: %s", method, target.name, response.StatusCode, body)
 				}
-				assertScalableChoice(t, body, target.id, target.query, target.id == seed.FirstCategory)
+				assertScalableChoice(t, body, "category_id", target.id, target.query, target.id == seed.FirstCategory)
 
 				values.Set("_token", browserCSRF(t, body))
 				values.Set("category_id", strconv.FormatInt(target.id, 10))
@@ -616,9 +684,33 @@ func testScalableOwnerAndPrivilegedChoices(t *testing.T, owner, foreign, admin *
 			t.Fatalf("unavailable selection %d disclosed existence or label: got %d: %s", unavailable, response.StatusCode, formBody)
 		}
 	}
-	response, body := requestJSON(t, owner, http.MethodGet, baseURL+"/projects?q=PROJECT_PRIVATE", "")
-	if response.StatusCode != http.StatusBadRequest {
-		t.Fatalf("ID-only target accepted undeclared text search: got %d: %s", response.StatusCode, body)
+	// ID-only is a source-form disclosure boundary, not a restriction on an
+	// independently authorized Project resource index. The owner may search
+	// their own declared Project text field without exposing another owner.
+	response, body := requestJSON(t, owner, http.MethodGet, baseURL+"/projects?q=PROJECT_PRIVATE&per_page=100", "")
+	var projects struct {
+		Data []struct {
+			PrivateLabel string `json:"private_label"`
+		} `json:"data"`
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("authorized target resource search: got %d: %s", response.StatusCode, body)
+	}
+	if err := json.Unmarshal([]byte(body), &projects); err != nil {
+		t.Fatalf("decode authorized target resource search: %v: %s", err, body)
+	}
+	labels := make(map[string]bool, len(projects.Data))
+	for _, project := range projects.Data {
+		labels[project.PrivateLabel] = true
+	}
+	if len(projects.Data) != 30 || labels["FOREIGN_PROJECT_PRIVATE"] || labels["ADMIN_PROJECT_PRIVATE"] {
+		t.Fatalf("authorized target resource search crossed its owner boundary: rows=%d labels=%v", len(projects.Data), labels)
+	}
+	for index := 1; index <= 30; index++ {
+		label := fmt.Sprintf("PROJECT_PRIVATE_%02d", index)
+		if !labels[label] {
+			t.Errorf("authorized target resource search omitted %q", label)
+		}
 	}
 	response, hiddenBody := requestBrowser(t, foreign, http.MethodGet, baseURL+ownerPath, nil)
 	responseMissing, missingBody := requestBrowser(t, foreign, http.MethodGet, baseURL+"/app/tickets/9223372036854775000/edit", nil)
@@ -637,8 +729,8 @@ func testScalableOwnerAndPrivilegedChoices(t *testing.T, owner, foreign, admin *
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("privileged source editor unexpectedly had target Project list access: got %d: %s", response.StatusCode, body)
 	}
-	assertScalableChoice(t, adminBody, seed.MiddleCategory, "Middle searchable category", true)
-	assertScalableChoice(t, adminBody, seed.OwnerProject, "", true)
+	assertScalableChoice(t, adminBody, "category_id", seed.MiddleCategory, "Middle searchable category", true)
+	assertScalableChoice(t, adminBody, "project_id", seed.OwnerProject, "", true)
 	if strings.Contains(adminBody, "PROJECT_PRIVATE_") || strings.Contains(adminBody, "Admin private category") || strings.Contains(adminBody, "ADMIN_PROJECT_PRIVATE") {
 		t.Fatalf("privileged form used actor choices or disclosed ID-only target text: %s", adminBody)
 	}
@@ -820,22 +912,27 @@ func scalableBrowserTicketIDs(t *testing.T, body string) []int64 {
 	return ids
 }
 
-func assertScalableChoice(t *testing.T, body string, id int64, labelContains string, selected bool) string {
+func assertScalableChoice(t *testing.T, body, field string, id int64, labelContains string, selected bool) string {
 	t.Helper()
+	selectPattern := regexp.MustCompile(`(?s)<select[^>]*name="` + regexp.QuoteMeta(field) + `"[^>]*>(.*?)</select>`)
+	selectMatch := selectPattern.FindStringSubmatch(body)
+	if len(selectMatch) != 2 {
+		t.Fatalf("choice field %q is absent: %s", field, body)
+	}
 	pattern := regexp.MustCompile(fmt.Sprintf(`<option[^>]*value="%d"([^>]*)>([^<]*(?:&[^;]+;[^<]*)*)</option>`, id))
-	match := pattern.FindStringSubmatch(body)
+	match := pattern.FindStringSubmatch(selectMatch[1])
 	if len(match) != 3 {
-		t.Fatalf("choice %d is absent: %s", id, body)
+		t.Fatalf("choice %d is absent from %q: %s", id, field, selectMatch[0])
 	}
 	label := stdhtml.UnescapeString(match[2])
 	if labelContains != "" && !strings.Contains(label, labelContains) {
-		t.Fatalf("choice %d label %q does not contain %q", id, label, labelContains)
+		t.Fatalf("choice %d in %q label %q does not contain %q", id, field, label, labelContains)
 	}
 	if !strings.Contains(label, strconv.FormatInt(id, 10)) {
-		t.Fatalf("choice %d label does not retain its ID: %q", id, label)
+		t.Fatalf("choice %d in %q label does not retain its ID: %q", id, field, label)
 	}
 	if selected != strings.Contains(match[1], "selected") {
-		t.Fatalf("choice %d selected=%t, want %t: %s", id, strings.Contains(match[1], "selected"), selected, match[0])
+		t.Fatalf("choice %d in %q selected=%t, want %t: %s", id, field, strings.Contains(match[1], "selected"), selected, match[0])
 	}
 	return label
 }

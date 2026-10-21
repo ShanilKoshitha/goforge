@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.22.0"
+const Version = "0.22.1"
 
 var errUsage = errors.New("invalid command; run forge help")
 
@@ -199,22 +199,23 @@ Models accept the same scalar field grammar. A required
 relationship to an existing application model. Model options are one-shot;
 the generated Go and paired SQL migration remain authoritative.
 
-Format-10 through format-15 projects may add repeatable required relationships
+Format-10 through format-16 projects may add repeatable required relationships
 with --belongs-to <name>:<ExistingResource>. The target must already be a
 generated resource. Relationship IDs remain explicit, owner-scoped, and
 database-backed.
 
 Format-16 resources additionally accept --choice-label <relationship>:<field>.
 This explicit declaration exposes the target text field to actors allowed to
-create/edit the source resource; omitted labels remain ID-only. Format 16 is
-not enabled in the v0.22.0 runtime-first scaffold.
+create/edit the source resource; omitted labels remain ID-only. Fresh format-16
+applications include bounded list filtering/sorting and no-JavaScript choice
+search, ID lookup, and paging. Existing project formats retain their contracts.
 
-Format-13 through format-15 resources include an application-owned authorization
+Format-13 through format-16 resources include an application-owned authorization
 function shared by JSON and browser controllers. Owner access is the default;
 edit the generated Go to grant all-record access or deny individual typed
 actions.
 
-Fresh format-15 applications include named, expiring personal API tokens.
+Fresh format-16 applications include named, expiring personal API tokens.
 Signed-in users manage them through /settings/security or /auth/tokens. One
 exact Authorization: Bearer credential authenticates /auth/me and generated
 JSON resources through the same application-owned policy and SQL scope.

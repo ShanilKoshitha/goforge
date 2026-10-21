@@ -14,7 +14,7 @@ func TestVersionMatchesRelease(t *testing.T) {
 	if err := Run([]string{"version"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "forge 0.22.0\n" {
+	if output.String() != "forge 0.22.1\n" {
 		t.Fatalf("version output = %q", output.String())
 	}
 }
@@ -109,8 +109,8 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if !strings.Contains(string(manifest), `name: "orders"`) {
 		t.Fatalf("project name was not rendered in forge.yaml:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "version: 15") {
-		t.Fatalf("fresh scaffold is not format 15:\n%s", manifest)
+	if !strings.Contains(string(manifest), "version: 16") {
+		t.Fatalf("fresh scaffold is not format 16:\n%s", manifest)
 	}
 	compiledViews, err := os.ReadFile(filepath.Join(directory, "resources", "views", "views_gen.go"))
 	if err != nil {
@@ -139,16 +139,16 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.21.0") {
-		t.Fatalf("scaffold does not pin GoForge v0.21.0:\n%s", moduleFile)
+	if !strings.Contains(string(moduleFile), "github.com/ShanilKoshitha/goforge v0.22.0") {
+		t.Fatalf("scaffold does not pin GoForge v0.22.0:\n%s", moduleFile)
 	}
 	moduleSums, err := os.ReadFile(filepath.Join(directory, "go.sum"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"github.com/ShanilKoshitha/goforge v0.21.0 h1:i2oJUQaIbA3nbJJJUV6ewMm2Mds8kLYgmIC+50dBNU0=",
-		"github.com/ShanilKoshitha/goforge v0.21.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+		"github.com/ShanilKoshitha/goforge v0.22.0 h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=",
+		"github.com/ShanilKoshitha/goforge v0.22.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
 	} {
 		if !strings.Contains(string(moduleSums), want) {
 			t.Errorf("scaffold is missing public runtime checksum %q", want)
@@ -178,7 +178,7 @@ func TestRunNewCreatesInspectableApplication(t *testing.T) {
 		t.Fatalf("generated component is missing: %v", err)
 	}
 	if notice, err := os.ReadFile(noticePath); err != nil || !bytes.Contains(notice, []byte("@attributes(")) {
-		t.Fatalf("format-15 component does not expose its compile-time attribute sink: %v\n%s", err, notice)
+		t.Fatalf("format-16 component does not expose its compile-time attribute sink: %v\n%s", err, notice)
 	}
 	if err := Run([]string{"views:compile", "--check"}, &checkOutput, &checkOutput); err != nil {
 		t.Fatalf("fresh scaffold views are not current: %v\n%s", err, checkOutput.String())
@@ -330,7 +330,7 @@ func TestPrimitiveGeneratorsRefuseFutureFormatBeforeWriting(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			directory := t.TempDir()
 			t.Chdir(directory)
-			if err := os.WriteFile("forge.yaml", []byte("version: 16\n"), 0o644); err != nil {
+			if err := os.WriteFile("forge.yaml", []byte("version: 17\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer

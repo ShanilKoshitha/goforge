@@ -1,21 +1,22 @@
 # v0.22 resource browsing and relationship selection scorecard
 
-Status: **baseline established; implementation in progress** — 2026-10-21.
+Status: **runtime published and verified; format-16 adoption candidate in qualification** — 2026-10-21.
 
-Acceptance is defined in [MILESTONE_0.22.md](MILESTONE_0.22.md). No v0.22
-capability or public release is accepted yet.
+Acceptance is defined in [MILESTONE_0.22.md](MILESTONE_0.22.md). The runtime-first
+v0.22.0 release is verified; the complete milestone and v0.22.1 adoption are not
+accepted yet.
 
 | Gate | Current evidence |
 | --- | --- |
 | Runnable generator baseline | Native `go test ./internal/cli -run '^(TestFormatFifteenGeneratesAccessibleRecoverableResourceForms\|TestFormatsEightThroughFourteenRetainLegacyResourceGeneration)$' -count=1` passed in 4.709s |
 | Runnable public application baseline | The public v0.21.1 CLI's no-replace format-15 `example.com/releasedv0211` application passed `go test ./... -count=1`; Category, Ticket, and legacy resource tests passed |
 | Scale gap confirmed | Generated repository tests explicitly expect `ErrAssociationChoicesOverflow` above 100 related rows; browser rendering maps that state to 409 |
-| Runtime helper | `ContainsFold`/`ContainsFoldNullable` passed both corrected Linux/PostgreSQL and Windows matrices at `5cf1222`; PR #41 merged with an identical tree at `5efd243`; exact-main CI/publication pending |
-| Fresh candidate application | Native candidate CLI generated format 15 with Category, related Ticket, and legacy resource against a local runtime replacement; artifact checks, `forge test`, vet, and `forge build` passed; inspected module pin, scoped forms, and ordinary compiled views |
-| Format-16 implementation | Fresh explicit-format Category, boolean-only Project, all-scalar/two-relationship Ticket, and legacy resource app tests pass; CLI disclosure/rejection/source-recheck tests pass. No-relationship helper compile issue is fixed |
+| Runtime helper | Immutable public `v0.22.0` at `5efd243` passed both corrected matrices, exact-main CI, proxy/SumDB verification, isolated installer, and a no-replace format-15 application |
+| Fresh candidate application | Actual local v0.22.1 CLI generated a no-replace format-16 app against public v0.22.0 with nullable Category, boolean-only Project, all-scalar/two-relationship Ticket, and LegacyIssue; artifact/module checks, ordinary/race tests, vet, and four process builds passed |
+| Format-16 implementation | Actual CLI atomicity/one-shot regeneration tests passed (17.209s); explicit-format baseline/escape fixtures and activated fresh-scaffold contracts pass; first complete native scale journey passed (47.466s) |
 | Legacy output | All 22 legacy/typed/related format 8–15 render digests match the frozen pre-change revision, normalizing checkout newlines only |
 | Raw draft recovery | Actual HTML refresh-to-save tests pass for padded text, leading textarea newlines, CRLF, numeric/boolean/association lexemes, malformed values, and unchanged normalized persistence; the final gated fixture combined suite passed in 15.368s |
-| PostgreSQL acceptance harness | Dedicated 10,000-category browser/JSON and DB/Tx observation journey added, including six first/middle/last saves by text and ID; embedded proof compiles. Native database is available; full journey awaits format-16 activation |
+| PostgreSQL acceptance harness | Final strengthened scale journey passed twice consecutively (49.36s, 52.23s), including six first/middle/last saves and a broad matching owner-scope search; complete CI matrices still pending |
 | Independent review and two complete passes | Pending; baseline tests are not v0.22 acceptance |
 
 Read-only data and developer-workflow inventories identified the existing typed
@@ -29,16 +30,18 @@ state, hostile input, and label-size limits. Independent runtime review found
 no P0–P2 issue. These reviews do not substitute for the pending real database
 and complete two-pass qualification gates.
 
-Format 15 remains the public/default scaffold during runtime-first qualification.
-Future-format tests render application-owned source explicitly against a local
-runtime replacement; they are development evidence, not public format-16
-installation evidence. No later roadmap milestone has started.
+Format 15 remained the default during runtime-first qualification and remains
+the public v0.22.0 scaffold. This checkout now defaults to format 16 only after
+public runtime verification. Earlier explicit-format fixtures used a local
+runtime replacement; the candidate no-replace check below now proves the public
+runtime dependency. Published v0.22.1 CLI installation remains pending. No later
+roadmap milestone has started.
 
 Independent cross-review found and corrected UUID-backed label storage and raw
 draft-whitespace loss. Final focused review found no remaining P0–P2 issue.
-The complete native framework regression passed on the integrated branch:
+Before activation, the complete native framework regression passed:
 `go test ./... -count=1` (`internal/cli` 289.981s), plus `go vet ./...`.
-The local database URL remains unset, so real-PostgreSQL workflow tests skip;
+That local database URL was unset, so real-PostgreSQL workflow tests skipped;
 the embedded repository proof is separately compiled by the explicit-format
 fixture. These checks do not claim whole-milestone acceptance or public adoption.
 
@@ -96,6 +99,81 @@ The finalized focused help/choice/replacement/future-format suite separately
 passed in 29.099s, with only the two deliberately gated actual format-16 CLI
 tests skipped. Final `go vet ./...`, trimmed CLI build/version inspection, and
 `git diff --check` passed. Full format-16 acceptance is still pending.
+
+Runtime publication: exact-main
+[39621243237](https://github.com/ShanilKoshitha/goforge/actions/runs/39621243237)
+passed its complete Linux/PostgreSQL and Windows matrix, including repeated
+generated applications. Lightweight unsigned `v0.22.0` points permanently to
+`5efd243e07ffdcff0570439c035dfe9a8b3b45d1`; the
+[runtime-first release](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.22.0)
+is public. Its scaffold remains format 15 on public v0.21.0. Proxy/checksum and
+isolated installer/no-replace qualification are running before format-16 adoption.
+Native live-PostgreSQL ORM race checks also passed (`orm/postgres` 4.086s).
+
+Public runtime distribution verification completed: forced public proxy and
+`sum.golang.org` resolved v0.22.0 with module sum
+`h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=` and Go-module sum
+`h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=`. The isolated Windows
+installer verified exact binary metadata/version without changing persistent
+PATH. Its fresh no-replace `example.com/runtimeboard` app retained format 15 and
+public v0.21.0, generated Category/related Ticket/LegacyIssue, and passed artifact
+checks, module verify/tidy, `forge test`, vet, and server/worker/scheduler/console
+builds. Local v0.22.1 adoption now enables format 16 and pins that verified
+runtime with its exact public checksums; the adoption release remains unpublished.
+
+The real CLI's format-16 atomicity/source-preservation tests now execute rather
+than skip and passed in 17.2s. The activated fresh/unsupported-format/typed-form/
+escape-hatch group passed 20 tests in 87.727s. A separate no-replace format-16
+`example.com/publicadoption` application generated nullable Category, boolean-only
+Project, all-scalar/two-relationship Ticket with an explicit nullable label, and
+LegacyIssue against public v0.22.0. Artifact checks, module verify/tidy, ordinary
+and race tests, vet, and all four process builds passed. This uses the local
+candidate CLI and public runtime, not a published v0.22.1 CLI.
+
+Historical format-15 compatibility is explicit: the restored manifest, legacy
+textarea/compiled views, exact v0.21.0 requirement/sums, and retained local
+replacement pass independent baseline/neutrality/restoration checks. The final
+native PostgreSQL group passed in 220.847s: belongs-to 52.91s, fixture regression
+10.24s, main workflow 124.25s, authorization 30.57s. Existing negative requests
+were not changed. These journeys test current source; the additional public
+v0.21.1 no-replace CI gate separately proves immutable old-runtime provenance.
+
+Independent review found no P0–P2 activation/CI/public-documentation defect.
+The repeated PostgreSQL CI gate now includes the scale journey with `-count=2`
+and a finite 20-minute package timeout, retaining every existing journey.
+
+First real scale journey passed in 47.466s after correcting acceptance-harness
+module imports, independently authorized target-index expectations, and
+select-scoped option parsing for overlapping table IDs. No production defect
+was found. Review then identified that the Project index's privacy needle did
+not match foreign rows; final repetitions must use a shared matching needle
+and prove all 30 owner rows while excluding matching foreign/admin rows. Earlier
+repetitions are not counted as final evidence for that strengthened assertion.
+
+The strengthened final-source scale repeat passed twice (49.36s and 52.23s;
+package 105.070s). Both repetitions saved all first/middle/last choices via text
+and ID and verified exactly 30 owner Project labels while excluding matching
+foreign/admin labels. Independent review confirmed the stronger proof has no
+remaining P0–P2 issue. This is scale-journey repetition, not two whole-milestone
+qualification passes.
+
+Immutable old-runtime compatibility also passed locally: public v0.21.1 created
+a fresh no-replace format-15 application pinned to public v0.21.0; the candidate
+CLI added Category and related typed/integer RelatedIssue without new browse or
+intent contracts. Artifact/module checks, generated tests, vet, and server build
+passed. Format 15 kept its number controls and original module pin.
+
+Activated full native regression passed: `go test ./... -count=1 -timeout 20m`
+(`internal/cli` 352.511s), followed by successful vet/diff checks. Database tests
+were exercised in the separate native groups above rather than through this
+URL-unset invocation. Two complete adoption CI matrices and public v0.22.1 CLI
+distribution remain required before accepting the milestone.
+
+Fresh format-16 PostgreSQL integration also passed without skips: account
+recovery 42.67s, durable jobs 34.37s, and personal tokens 23.01s (group 105.216s).
+Each journey asserts the actual fresh manifest is format 16; these were not
+restored historical fixtures. This closes native fresh integration coverage,
+not the complete adoption two-pass gate.
 
 # v0.21 component attributes and accessible forms scorecard
 

@@ -19,7 +19,7 @@ Its contract is simple:
 
 ## Status
 
-The v0.21.1 release generates format-15 applications. Fresh
+The public v0.22.0 runtime-first release generates format-15 applications. Fresh
 applications pin the published v0.21.0 runtime without a local replace so their
 component attributes and explicit multi-form helpers are compiled by the same
 immutable release verified through the public Go proxy. GoForge includes explicit database wiring,
@@ -40,7 +40,14 @@ boundary adds typed composable validation, exact JSON/form failure semantics,
 bounded HTTP timeouts and headers, correlated completion logs, validated CORS
 and security policy, trusted-proxy parsing, and PostgreSQL authentication
 throttles shared across processes and restarts.
-Newly generated format-13 through format-15 resources own a typed action/access
+
+This checkout prepares **v0.22.1 / format 16**, not yet an accepted release. It
+pins verified public v0.22.0 and adds typed list filtering/sorting plus bounded,
+no-JavaScript relationship search/paging with explicit choice-safe labels. See
+the [candidate workflow](docs/building-an-app.md#candidate-browse-resources-and-select-relationships-at-scale)
+and [acceptance gates](docs/MILESTONE_0.22.md). Existing applications are not
+rewritten automatically.
+Newly generated format-13 through format-16 resources own a typed action/access
 function shared by their JSON and browser
 controllers. Owner-only remains the default; application code can explicitly
 grant all-record access or deny an action, while repositories apply the derived
@@ -78,7 +85,7 @@ IANA civil time and DST behavior, bounded misfire coalescing, conservative
 active-job overlap suppression, fail-closed definition fingerprints,
 competing-process row coordination, read-only inspection, and payload-free
 observers.
-Fresh format-11 through format-15 scaffolds own the schedule registry, PostgreSQL
+Fresh format-11 through format-16 scaffolds own the schedule registry, PostgreSQL
 migration, isolated configuration, scheduler process, inspection command, and
 direct Go escape hatches. The v0.16.0 release pinned the immutable public
 v0.14.2 runtime and demonstrated its cancellation-aware dynamic schedule
@@ -137,7 +144,7 @@ Get-Content $installer
 After reviewing it, run:
 
 ```powershell
-& $installer -Version v0.21.1
+& $installer -Version v0.22.0
 forge version
 forge new myapp --module example.com/myapp
 ```
@@ -152,7 +159,7 @@ On macOS and Linux, install the released CLI and verify it before generating an
 application:
 
 ```sh
-go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.21.1
+go install -v github.com/ShanilKoshitha/goforge/cmd/forge@v0.22.0
 gobin="$(go env GOBIN)"
 if [ -z "$gobin" ]; then gopath="$(go env GOPATH)"; gobin="${gopath%%:*}/bin"; fi
 export PATH="$gobin:$PATH"
@@ -219,11 +226,12 @@ cmd/server/main.go
 There is no annotation scanning, reflection-driven container, global application
 state, hidden route discovery, or ORM query language.
 
-## CLI (v0.21.1)
+## CLI (v0.22.1 candidate)
 
 The command surface below describes this checkout. Fresh applications use
-format 15 while pinning the public v0.21.0 runtime. Install `v0.21.1` for the
-accepted release, or `go install ./cmd/forge` when working on framework source.
+format 16 while pinning the verified public v0.22.0 runtime. Install `v0.22.0`
+for the accepted runtime-first release (format 15), or `go install ./cmd/forge`
+to evaluate this unreleased adoption candidate.
 
 ```text
 forge new <directory> [--module <path>] [--replace <goforge-path>]
@@ -236,7 +244,7 @@ forge migrate
 forge views:compile
 forge orm:generate [--check]
 forge make:model <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingModel>]...
-forge make:resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]...
+forge make:resource <name> [--field <name>:<type>[:required|nullable]]... [--belongs-to <name>:<ExistingResource>]... [--choice-label <relationship>:<field>]...
 forge make:controller <name>
 forge make:request <name>
 forge make:migration <name>
@@ -281,7 +289,7 @@ runtime schema. Updates replace the complete writable resource: a missing,
 `null`, or empty nullable value clears that column to SQL `NULL`, while numeric
 `0` and boolean `false` remain present values.
 
-Format-10 through format-15 applications can generate a required owner-scoped
+Format-10 through format-16 applications can generate a required owner-scoped
 relationship to an existing resource:
 
 ```sh
@@ -296,7 +304,7 @@ protected foreign key, association value, validation, eager loading, browser
 choices, and presentation; generated SQL owns the composite owner/target
 constraint. No relationship registry or runtime schema is added.
 
-Format-13 through format-15 resources also own `authorization.go`. Its `AuthorizeFunc` receives a
+Format-13 through format-16 resources also own `authorization.go`. Its `AuthorizeFunc` receives a
 typed list, create, view, update, or delete action and returns denied, owner, or
 all-record access. `Authorize` is the editable owner-only default, and the same
 function is visibly injected into both controllers in `routes/resources_gen.go`.
@@ -307,7 +315,8 @@ fetch-then-write race. Edit this ordinary Go file, inject another function, or
 replace the controller/repository wiring when the closed scope is insufficient.
 
 `forge test` and `forge build` are intentionally no-argument defaults for
-format-4 through format-15 projects. Both non-mutating preflights check the
+format-4 through format-16 projects in this checkout (the public v0.22.0 CLI
+supports formats 4–15). Both non-mutating preflights check the
 generated ORM first, compiled views second, and format-12-or-newer embedded assets third.
 Testing then runs exactly `go test ./...`. Building stages a trimmed
 `./cmd/server` executable and publishes

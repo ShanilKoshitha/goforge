@@ -44,7 +44,7 @@ templates under `resources/views/pages/issues` and regenerates the clearly
 marked route and compiled-view registries. Human-owned files are preflighted and
 never overwritten.
 
-Fresh format-13 through format-15 resources also contain `authorization.go`. Its
+Fresh format-13 through format-16 resources also contain `authorization.go`. Its
 typed `AuthorizeFunc` handles list, create, view, update, and delete decisions
 for both controllers. The generated function grants owner access for every known action;
 return `AccessAll` for a deliberate privileged action or `AccessDenied` to stop
@@ -63,7 +63,7 @@ forge dev
 ```
 
 `forge migrate` delegates to the application-owned console. Format-11 through
-format-15
+format-16
 `forge dev` starts the watched HTTP server, durable queue worker, and recurring
 scheduler together. It labels each service's output and reports the stack ready
 only after all three existing startup signals succeed. Any unexpected service
@@ -107,10 +107,11 @@ resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
 
 ## Candidate: browse resources and select relationships at scale
 
-This section describes the **unreleased v0.22.1 / format-16 candidate**. Public
-v0.21.1 still generates format 15. Format-16 adoption requires the public
-v0.22.0 runtime and passing acceptance/distribution checks; these examples do
-not upgrade an existing application. See the [milestone criteria](MILESTONE_0.22.md)
+This section describes the **unreleased v0.22.1 / format-16 candidate** in this
+checkout. Public v0.22.0 still generates format 15. The candidate pins the verified
+public v0.22.0 runtime, but full adoption acceptance/distribution checks remain
+pending. Build this checkout with `go install ./cmd/forge` to evaluate it; these
+examples do not upgrade an existing application. See the [milestone criteria](MILESTONE_0.22.md)
 for the release gate.
 
 The candidate adds paginated relationship choices with an ID-only default.
@@ -200,12 +201,13 @@ public selector and SHA-256 digest. Read the
 [personal API token guide](api-tokens.md) for lifecycle, revocation, and
 replacement seams.
 
-Fresh format-10 through format-15 JSON resource indexes are bounded and paginated. `GET /issues`
+Fresh format-10 through format-16 JSON resource indexes are bounded and paginated. `GET /issues`
 defaults to `page=1&per_page=20`; each parameter must appear at most once and be
 a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
 The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,
 "has_previous": false, "has_next": false}}`. Formats 8 and 9 retain their
-original complete-list JSON contract.
+original complete-list JSON contract. Format 16 adds the filtering and sorting
+contract described in the candidate section above.
 
 GoForge compiles layouts, sections, includes, static components, strict props
 and slots, control directives, page-local stacks, and explicit form helpers into
@@ -221,7 +223,7 @@ and production renderer use that same editable `template.FuncMap`. See the
 [view language reference](view-language.md) for the complete bounded grammar and
 standard-library escape hatches.
 
-Format-15 applications also own `components/input`, `components/textarea`, and
+Format-15 and format-16 applications also own `components/input`, `components/textarea`, and
 `components/select`. Each accepts an explicit `view.Form`, emits ordinary static
 HTML attributes, associates labels and help/error text with a page-unique ID,
 and groups every field message in one stable alert container. Resource forms
@@ -271,7 +273,8 @@ forge test
 forge build
 ```
 
-Both commands support project formats 4 through 13 and accept no arguments. They
+Both commands in this checkout support project formats 4 through 16 and accept
+no arguments; the public v0.22.0 runtime-first CLI supports formats 4 through 15. They
 first check `internal/models/zz_orm_gen.go`, then
 `resources/views/views_gen.go`, and for format 12 or newer the embedded asset inventory,
 without rewriting application files. A missing, stale, or invalid input stops

@@ -107,8 +107,8 @@ func TestChoiceLabelDeclarationRejectsOldFormatWithoutPublication(t *testing.T) 
 }
 
 func TestFormatSixteenChoiceLabelCLIRejectsInvalidDeclarationsWithoutPublication(t *testing.T) {
-	if currentProjectFormat < 16 {
-		t.Skip("actual format-16 CLI acceptance activates after public runtime adoption")
+	if currentProjectFormat != 16 {
+		t.Fatalf("format-16 CLI acceptance requires current project format 16, got %d", currentProjectFormat)
 	}
 	directory := newChoiceLabelCLIFixture(t)
 	tests := []struct {
@@ -143,8 +143,8 @@ func TestFormatSixteenChoiceLabelCLIRejectsInvalidDeclarationsWithoutPublication
 }
 
 func TestFormatSixteenChoiceLabelCLIPreservesOneShotSourceAcrossRegeneration(t *testing.T) {
-	if currentProjectFormat < 16 {
-		t.Skip("actual format-16 CLI acceptance activates after public runtime adoption")
+	if currentProjectFormat != 16 {
+		t.Fatalf("format-16 CLI acceptance requires current project format 16, got %d", currentProjectFormat)
 	}
 	directory := newChoiceLabelCLIFixture(t)
 	runChoiceLabelCLI(t, "make:resource", "Ticket", "--field", "summary:string", "--belongs-to", "category:Category", "--belongs-to", "project:Project", "--choice-label", "category:title")
@@ -216,16 +216,6 @@ func newChoiceLabelCLIFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Chdir(directory)
-	setChoiceLabelFixtureFormat(t, "16")
-	// Fixture-only opt-in leaves the production default scaffold untouched.
-	textareaPath := "resources/views/components/textarea.forge.html"
-	textarea, err := renderTemplate("templates/scaffold/"+textareaPath+".tmpl", textareaPath, scaffoldData{ScalableResources: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.FromSlash(textareaPath), []byte(textarea), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	runChoiceLabelCLI(t, "make:resource", "Category", "--field", "title:string:nullable", "--field", "rank:integer")
 	runChoiceLabelCLI(t, "make:resource", "Project", "--field", "private_label:string")
 	return directory

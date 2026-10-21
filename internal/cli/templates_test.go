@@ -33,8 +33,8 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["forge.yaml"], `name: "app: demo"`) {
 		t.Fatal("project name must be quoted YAML")
 	}
-	if !strings.Contains(files["forge.yaml"], "version: 15") {
-		t.Fatal("fresh scaffold must declare format 15")
+	if !strings.Contains(files["forge.yaml"], "version: 16") {
+		t.Fatal("fresh scaffold must declare format 16")
 	}
 	for _, name := range []string{
 		"resources/views/components/input.forge.html",
@@ -45,8 +45,16 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 			t.Errorf("fresh scaffold component %s must expose exactly one compile-time attribute sink", name)
 		}
 	}
-	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.21.0") {
-		t.Fatal("fresh format-15 scaffold must pin the public v0.21.0 compiler")
+	if !strings.Contains(files["go.mod"], "github.com/ShanilKoshitha/goforge v0.22.0") {
+		t.Fatal("fresh format-16 scaffold must pin the public v0.22.0 runtime")
+	}
+	for _, checksum := range []string{
+		"github.com/ShanilKoshitha/goforge v0.22.0 h1:NgjmTT++ejfa8dOkFmcvFc5SRT7FTuutR38d8JfnLk0=",
+		"github.com/ShanilKoshitha/goforge v0.22.0/go.mod h1:UQE0b3seoEHYB618VF1jcflF59zBrHJOEMdGEWkMpPM=",
+	} {
+		if !strings.Contains(files["go.sum"], checksum) {
+			t.Errorf("fresh scaffold omits public runtime checksum %q", checksum)
+		}
 	}
 	if !strings.Contains(files["resources/views/pages/welcome.forge.html"], "{{.Title}}") {
 		t.Fatal("HTML template expression was altered")
@@ -54,7 +62,7 @@ func TestScaffoldTemplatesProduceFormattedSourceAndDotfiles(t *testing.T) {
 	if !strings.Contains(files["go.mod"], `=> "`) {
 		t.Fatal("local replacement path must be quoted")
 	}
-	if strings.Contains(files["go.sum"], "github.com/ShanilKoshitha/goforge v0.17.0") {
+	if strings.Contains(files["go.sum"], "github.com/ShanilKoshitha/goforge v0.21.0") {
 		t.Fatal("fresh scaffold retains a stale framework checksum")
 	}
 	if !strings.Contains(files["compose.yaml"], "postgres-data:/var/lib/postgresql\n") {

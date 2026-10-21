@@ -41,6 +41,7 @@ func TestGeneratedResourceAuthorizationPostgresWorkflow(t *testing.T) {
 	if output, err := authorizationWorkflowCommand(scratch, baseEnvironment, forgeBinary, "new", "authorization", "--module", "example.com/issueboard", "--replace", root); err != nil {
 		t.Fatalf("forge new: %v\n%s", err, output)
 	}
+	preserveFormat15WorkflowFixture(t, directory, forgeBinary, baseEnvironment)
 	if output, err := authorizationWorkflowCommand(directory, baseEnvironment, forgeBinary, "make:resource", "Issue", "--field", "title:string"); err != nil {
 		t.Fatalf("forge make:resource Issue: %v\n%s", err, output)
 	}

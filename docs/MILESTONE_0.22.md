@@ -1,6 +1,6 @@
 # v0.22 — Resource browsing and relationship selection at scale
 
-Status: **acceptance defined; runtime and format-16 implementation in progress** — 2026-10-21.
+Status: **runtime published and verified; format-16 adoption candidate in qualification** — 2026-10-21.
 
 This milestone extends the accepted v0.21.1 application workflow. It does not
 reopen the completed component/form milestone or claim the rest of ROADMAP.md.
