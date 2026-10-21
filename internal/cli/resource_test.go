@@ -1065,7 +1065,7 @@ func TestFormatFifteenGeneratesAccessibleRecoverableResourceForms(t *testing.T) 
 	}
 	request := generated["internal/resources/ticket/request.go"]
 	for _, fragment := range []string{
-		"formErrors       validation.Errors", "func (request WriteRequest) FormErrors() validation.Errors",
+		"formErrors       validation.Errors", "func (request WriteRequest) FormErrors(report validation.Report) validation.Errors",
 		`decodeAccessibleFormInt64(form, "priority")`, `decodeAccessibleFormBoolean(form, "active")`,
 		`decodeAccessibleFormInt64(form, "category_id")`, `"must be an integer"`, `"must be true or false"`,
 		"append([]string(nil), messages...)",
@@ -1075,7 +1075,7 @@ func TestFormatFifteenGeneratesAccessibleRecoverableResourceForms(t *testing.T) 
 		}
 	}
 	controller := generated["internal/resources/ticket/web_controller.go"]
-	if got := strings.Count(controller, "if problems := request.FormErrors(); len(problems) > 0"); got != 2 {
+	if got := strings.Count(controller, "request.FormErrors(request.Validate"); got != 2 {
 		t.Fatalf("format-15 browser controller has %d recoverable form-error boundaries, want 2:\n%s", got, controller)
 	}
 

@@ -107,10 +107,13 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	}
 [[end]][[if .AccessibleForms]][[range .Fields]][[if or .Integer .Boolean]]	invalid[[.GoName]]Values := accessibleEdgeResourceFormValues()
 	invalid[[.GoName]]Values.Set("_token", token)
+	invalid[[.GoName]]Values.Set("version", "1") // Also report this independent semantic error.
 	invalid[[.GoName]]Values.Set("[[.Name]]", "not-a-[[if .Integer]]number[[else]]boolean[[end]]")
 	invalid[[.GoName]] := browserRequest(router, http.MethodPost, "/app/[[$.Plural]]", invalid[[.GoName]]Values, cookie)
 	if invalid[[.GoName]].Code != http.StatusUnprocessableEntity || repository.item.ID != 0 || !reflect.DeepEqual(repository.createdAttributes, resource.Attributes{}) ||
-		!strings.Contains(invalid[[.GoName]].Body.String(), "must be [[if .Integer]]an integer[[else]]true or false[[end]]") {
+		!strings.Contains(invalid[[.GoName]].Body.String(), "must be [[if .Integer]]an integer[[else]]true or false[[end]]") ||
+		!strings.Contains(invalid[[.GoName]].Body.String(), "must not be provided when creating a resource") ||
+		strings.Contains(invalid[[.GoName]].Body.String(), "<p>is required</p>") {
 		t.Fatalf("malformed [[.Name]] reached persistence or was not recoverable: %d item=%+v attributes=%+v: %s", invalid[[.GoName]].Code, repository.item, repository.createdAttributes, invalid[[.GoName]].Body.String())
 	}
 	assertResourceFormValues(t, invalid[[.GoName]].Body.String(), invalid[[.GoName]]Values)
@@ -315,7 +318,48 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	repository.updateError = nil
 	token = browserCSRFToken(t, invalidUpdate.Body.String())
 	cookie = responseCookie(invalidUpdate, cookie)
-[[end]][[if .SchemaDriven]]	versionlessValues := updatedResourceFormValues()
+[[end]][[if .AccessibleForms]]	for _, invalidVersion := range []string{"missing", "", "not-an-integer", "0", "-1"} {
+		before := repository.item
+		values := updatedResourceFormValues()
+		values.Set("_token", token)
+		values.Set("_method", http.MethodPut)
+		if invalidVersion != "missing" {
+			values.Set("version", invalidVersion)
+		}
+		rejected := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", values, cookie)
+		if rejected.Code != http.StatusUnprocessableEntity || !reflect.DeepEqual(repository.item, before) ||
+			!strings.Contains(rejected.Body.String(), `id="[[.Package]]-version-errors"`) {
+			t.Fatalf("invalid version %q was not recoverable without writing: %d: %s", invalidVersion, rejected.Code, rejected.Body.String())
+		}
+		if recovered := browserVersion(t, rejected.Body.String()); recovered != version {
+			t.Fatalf("invalid version %q recovered %q, want %q", invalidVersion, recovered, version)
+		}
+		assertResourceFormValues(t, rejected.Body.String(), updatedResourceFormValues())
+		cookie = responseCookie(rejected, cookie)
+		token = browserCSRFToken(t, rejected.Body.String())
+		values.Set("_token", token)
+		values.Set("version", browserVersion(t, rejected.Body.String()))
+		corrected := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", values, cookie)
+		if corrected.Code != http.StatusSeeOther || !reflect.DeepEqual(repository.updatedAttributes, updatedWebAttributes()) {
+			t.Fatalf("corrected version %q did not persist: %d: %s", invalidVersion, corrected.Code, corrected.Body.String())
+		}
+		cookie = responseCookie(corrected, cookie)
+		repository.item = before
+		repository.updatedAttributes = resource.Attributes{}
+	}
+
+	// A scoped lookup must precede any validation form or relationship choices.
+	repository.item.UserID = 27
+	foreignValues := updatedResourceFormValues()
+	foreignValues.Set("_token", token)
+	foreignValues.Set("_method", http.MethodPut)
+	foreignValues.Set("version", "not-an-integer")
+	foreign := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", foreignValues, cookie)
+	if foreign.Code != http.StatusNotFound || strings.Contains(foreign.Body.String(), `name="version"`) || !reflect.DeepEqual(repository.updatedAttributes, resource.Attributes{}) {
+		t.Fatalf("cross-owner malformed update exposed a form or wrote: %d: %s", foreign.Code, foreign.Body.String())
+	}
+	repository.item.UserID = 9
+[[else if .SchemaDriven]]	versionlessValues := updatedResourceFormValues()
 	versionlessValues.Set("_token", token)
 	versionlessValues.Set("_method", http.MethodPut)
 	versionless := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", versionlessValues, cookie)
@@ -326,7 +370,19 @@ func TestBrowserResourceLifecycle(t *testing.T) {
 	}
 	cookie = responseCookie(versionless, cookie)
 [[end]]	repository.item.Version++ // Simulate another request winning after the edit page was loaded.
-	staleValues := updatedResourceFormValues()
+[[if .AccessibleForms]][[$first := index .Fields 0]]	invalidStaleValues := updatedResourceFormValues()
+	invalidStaleValues.Set("_token", token)
+	invalidStaleValues.Set("_method", http.MethodPut)
+	invalidStaleValues.Set("version", version)
+	invalidStaleValues.Set("[[$first.Name]]", [[if $first.Integer]]"not-an-integer"[[else if $first.Boolean]]"not-a-boolean"[[else]]"bad\x00text"[[end]])
+	invalidStale := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", invalidStaleValues, cookie)
+	if invalidStale.Code != http.StatusUnprocessableEntity || browserVersion(t, invalidStale.Body.String()) != version ||
+		!reflect.DeepEqual(webAttributesFromModel(repository.item), sampleWebAttributes()) {
+		t.Fatalf("validation silently refreshed a valid stale version: %d: %s", invalidStale.Code, invalidStale.Body.String())
+	}
+	token = browserCSRFToken(t, invalidStale.Body.String())
+	cookie = responseCookie(invalidStale, cookie)
+[[end]]	staleValues := updatedResourceFormValues()
 	staleValues.Set("_token", token)
 	staleValues.Set("_method", http.MethodPut)
 	staleValues.Set("version", version)
@@ -625,7 +681,9 @@ func TestBrowserAuthorizationMatchesJSONAndRunsAfterValidCSRF(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := httpx.NewRouter()
-	router.GET("/app/[[.Plural]]/{id}/edit", web.Sessions(manager)(auth.RequireWeb(users)(web.CSRF()(controller.Edit))))
+	[[if .AccessibleForms]]router.Use(httpx.MethodOverride("/app/"))
+	router.PUT("/app/[[.Plural]]/{id}", web.Sessions(manager)(auth.RequireWeb(users)(web.CSRF()(controller.Update))))
+	[[end]]router.GET("/app/[[.Plural]]/{id}/edit", web.Sessions(manager)(auth.RequireWeb(users)(web.CSRF()(controller.Edit))))
 	current, err := manager.Load(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -645,6 +703,17 @@ func TestBrowserAuthorizationMatchesJSONAndRunsAfterValidCSRF(t *testing.T) {
 	if response.Code != http.StatusOK || repository.repositoryCalls != 1 || !repository.lastScope.AllRecords() || repository.choiceUserID != 27 {
 		t.Fatalf("privileged edit choice scope: status=%d calls=%d all=%t choice_owner=%d: %s", response.Code, repository.repositoryCalls, repository.lastScope.AllRecords(), repository.choiceUserID, response.Body.String())
 	}
+[[if .AccessibleForms]]	repository.choiceUserID = 0
+	values := updatedResourceFormValues()
+	values.Set("_token", browserCSRFToken(t, response.Body.String()))
+	values.Set("_method", http.MethodPut)
+	values.Set("version", "not-an-integer")
+	invalid := browserRequest(router, http.MethodPost, "/app/[[.Plural]]/1", values, responseCookie(response, seed.Result().Cookies()[0]))
+	if invalid.Code != http.StatusUnprocessableEntity || repository.choiceUserID != 27 || browserVersion(t, invalid.Body.String()) != "1" ||
+		!reflect.DeepEqual(repository.updatedAttributes, resource.Attributes{}) {
+		t.Fatalf("privileged invalid update lost record-owner choices or wrote: %d owner=%d: %s", invalid.Code, repository.choiceUserID, invalid.Body.String())
+	}
+[[end]]
 }
 
 [[end]]

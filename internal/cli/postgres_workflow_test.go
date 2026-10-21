@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -1671,6 +1672,25 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 		"priority": {"not-an-integer"}, "estimate": {"0"}, "active": {"false"}, "featured": {""},
 		"category_id": {strconv.FormatInt(categoryID, 10)},
 	}
+	combinedValues := url.Values{}
+	for field, values := range invalidValues {
+		combinedValues[field] = append([]string(nil), values...)
+	}
+	combinedValues.Set("title", "")
+	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+"/app/tickets", combinedValues)
+	titleErrors := regexp.MustCompile(`(?s)<div id="ticket-title-errors"[^>]*>.*?</div>`).FindString(body)
+	priorityErrors := regexp.MustCompile(`(?s)<div id="ticket-priority-errors"[^>]*>.*?</div>`).FindString(body)
+	if response.StatusCode != http.StatusUnprocessableEntity ||
+		!strings.Contains(body, `aria-describedby="ticket-title-help ticket-title-errors"`) ||
+		!strings.Contains(body, `aria-describedby="ticket-priority-help ticket-priority-errors"`) ||
+		!strings.Contains(titleErrors, "<p>is required</p>") || !strings.Contains(priorityErrors, "<p>must be an integer</p>") ||
+		strings.Contains(priorityErrors, "is required") {
+		t.Fatalf("combined semantic and scalar form errors were incomplete or duplicated: %d: %s", response.StatusCode, body)
+	}
+	if afterInvalid := typedTicketCount(t, baseURL, owner); afterInvalid != beforeInvalid {
+		t.Fatalf("combined invalid typed form wrote a row: before=%d after=%d", beforeInvalid, afterInvalid)
+	}
+	invalidValues.Set("_token", browserCSRF(t, body))
 	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+"/app/tickets", invalidValues)
 	if response.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "must be an integer") ||
 		!strings.Contains(body, `<label for="ticket-priority">Priority</label>`) ||
@@ -1741,10 +1761,54 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 		t.Fatalf("cross-owner typed browser update: expected 404 without version disclosure, got %d: %s", response.StatusCode, body)
 	}
 	response, body = requestBrowser(t, other, http.MethodPost, baseURL+browserPath, url.Values{
+		"_token": {otherToken}, "_method": {http.MethodPut}, "title": {""}, "notes": {"stolen"},
+		"priority": {"not-an-integer"}, "estimate": {"2"}, "active": {"true"}, "featured": {"false"}, "version": {"not-an-integer"},
+		"category_id": {strconv.FormatInt(categoryID, 10)},
+	})
+	if response.StatusCode != http.StatusNotFound || strings.Contains(body, `name="version"`) || strings.Contains(body, "must be an integer") {
+		t.Fatalf("cross-owner malformed browser update disclosed form state: %d: %s", response.StatusCode, body)
+	}
+	response, body = requestBrowser(t, other, http.MethodPost, baseURL+browserPath, url.Values{
 		"_token": {otherToken}, "_method": {http.MethodDelete},
 	})
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-owner typed browser delete: expected 404, got %d: %s", response.StatusCode, body)
+	}
+
+	for index, invalidVersion := range []string{"missing", "", "not-an-integer", "0", "-1"} {
+		response, body = requestBrowser(t, owner, http.MethodGet, baseURL+browserPath+"/edit", nil)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("version correction edit: %d: %s", response.StatusCode, body)
+		}
+		values := url.Values{
+			"_token": {browserCSRF(t, body)}, "_method": {http.MethodPut}, "title": {created.Title}, "notes": {*created.Notes},
+			"priority": {"23"}, "estimate": {"34"}, "active": {"true"}, "featured": {"false"},
+			"category_id": {strconv.FormatInt(categoryID, 10)},
+		}
+		if invalidVersion != "missing" {
+			values.Set("version", invalidVersion)
+		}
+		response, body = requestBrowser(t, owner, http.MethodPost, baseURL+browserPath, values)
+		if response.StatusCode != http.StatusUnprocessableEntity || browserVersion(t, body) != created.Version ||
+			!strings.Contains(body, `id="ticket-version-errors"`) {
+			t.Fatalf("invalid version %q did not produce a usable correction form: %d: %s", invalidVersion, response.StatusCode, body)
+		}
+		values.Set("_token", browserCSRF(t, body))
+		values.Set("version", fmt.Sprint(browserVersion(t, body)))
+		response, body = requestJSON(t, owner, http.MethodGet, baseURL+apiPath, "")
+		if response.StatusCode != http.StatusOK || !reflect.DeepEqual(decodeTypedTicket(t, body), created) {
+			t.Fatalf("invalid version %q changed persisted data: %d: %s", invalidVersion, response.StatusCode, body)
+		}
+		response, body = requestBrowser(t, owner, http.MethodPost, baseURL+browserPath, values)
+		if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != browserPath {
+			t.Fatalf("corrected version %q did not persist: %d: %s", invalidVersion, response.StatusCode, body)
+		}
+		response, body = requestJSON(t, owner, http.MethodGet, baseURL+apiPath, "")
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("read corrected version %q: %d: %s", invalidVersion, response.StatusCode, body)
+		}
+		created = decodeTypedTicket(t, body)
+		assertTypedTicket(t, created, "<em>Browser ticket</em>", "<script>Browser notes</script>\nSecond line", 23, 34, true, false, int64(index)+2)
 	}
 
 	response, body = requestBrowser(t, owner, http.MethodGet, baseURL+browserPath+"/edit", nil)
@@ -1760,6 +1824,16 @@ func exerciseTypedTicketBrowser(t *testing.T, baseURL string, owner, other *http
 	}
 	winner := decodeTypedTicket(t, body)
 	assertTypedTicket(t, winner, "Concurrent typed ticket", "winner", 99, 100, true, true, staleVersion+1)
+	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+browserPath, url.Values{
+		"_token": {csrfToken}, "_method": {http.MethodPut}, "title": {""}, "notes": {"stale notes"},
+		"priority": {"not-an-integer"}, "estimate": {"45"}, "active": {"false"}, "featured": {"true"}, "version": {fmt.Sprint(staleVersion)},
+		"category_id": {strconv.FormatInt(categoryID, 10)},
+	})
+	if response.StatusCode != http.StatusUnprocessableEntity || browserVersion(t, body) != staleVersion ||
+		!strings.Contains(body, "is required") || !strings.Contains(body, "must be an integer") {
+		t.Fatalf("invalid stale form silently advanced version or lost errors: %d: %s", response.StatusCode, body)
+	}
+	csrfToken = browserCSRF(t, body)
 	response, body = requestBrowser(t, owner, http.MethodPost, baseURL+browserPath, url.Values{
 		"_token": {csrfToken}, "_method": {http.MethodPut}, "title": {"Stale browser ticket"}, "notes": {"stale notes"},
 		"priority": {"44"}, "estimate": {"45"}, "active": {"false"}, "featured": {"true"}, "version": {fmt.Sprint(staleVersion)},

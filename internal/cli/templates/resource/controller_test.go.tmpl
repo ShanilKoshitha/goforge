@@ -78,10 +78,13 @@ func (repository *fakeRepository) Create(_ context.Context, [[if .AuthorizationP
 	return repository.item, nil
 }
 
-[[if .AuthorizationPolicies]]func (repository *fakeRepository) Find(_ context.Context, scope resource.Scope, _ int64) (resource.[[.Name]], error) {
+[[if .AuthorizationPolicies]]func (repository *fakeRepository) Find(_ context.Context, scope resource.Scope, [[if .AccessibleForms]]id[[else]]_[[end]] int64) (resource.[[.Name]], error) {
 	repository.repositoryCalls++
 	repository.lastScope = scope
-	return repository.item, nil
+[[if .AccessibleForms]]	if repository.item.ID != id || (!scope.AllRecords() && scope.ActorID() != repository.item.UserID) {
+		return resource.[[.Name]]{}, resource.ErrNotFound
+	}
+[[end]]	return repository.item, nil
 }
 [[else]]func (repository *fakeRepository) Find(context.Context, int64, int64) (resource.[[.Name]], error) {
 	return repository.item, nil
