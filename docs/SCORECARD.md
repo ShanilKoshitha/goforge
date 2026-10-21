@@ -181,6 +181,23 @@ qualification status. No runtime or generated-source contract changed. Two
 complete CI passes remain required for this final release-content head; the
 versioned instructions do not claim the adoption release is already published.
 
+Hosted qualification correction: PR run
+[39628695332](https://github.com/ShanilKoshitha/goforge/actions/runs/39628695332)
+failed `TestWaitForChangedSourceSnapshotDebouncesBursts` in the framework race
+step; later gates were not reached, so this is not a complete acceptance pass.
+A controlled delayed-write reproduction showed the watcher correctly completed
+100 ms of actual quiet while the test's next edit was descheduled. The test now
+uses Go 1.25's isolated `testing/synctest` clock, retaining real file edits,
+snapshot comparison, and an explicit 100–105 ms final debounce assertion.
+Production watcher code and timeouts are unchanged. The focused race test
+passed 100 repetitions (5.921s) and 300 executions across CPU settings 1/2/4
+(11.169s); all 17 related watch/snapshot/tracker tests passed ten race-tested
+repetitions (12.055s). Lead verification combined the corrected watcher with
+fresh format-16 compilation and application-owned escape-hatch tests under the
+race detector (47.708s); `go vet ./...` and diff checks passed. Independent
+review found no remaining P0–P2 issue. Final complete matrices must pass again
+on this correction; earlier Windows passes do not replace those gates.
+
 # v0.21 component attributes and accessible forms scorecard
 
 Status: **accepted** — v0.21.0 runtime and v0.21.1 format-15 adoption published; public distribution verified — 2026-10-21

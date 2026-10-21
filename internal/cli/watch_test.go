@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -280,36 +281,50 @@ func TestSourceSnapshotTracksContentCreateDeleteAndRename(t *testing.T) {
 }
 
 func TestWaitForChangedSourceSnapshotDebouncesBursts(t *testing.T) {
-	root := t.TempDir()
-	writeWatchFile(t, root, "main.go", "package main\n")
-	baseline := mustSourceSnapshot(t, root)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	resultChannel := make(chan sourceWatchResult, 1)
-	go func() {
-		snapshot, err := waitForChangedSourceSnapshot(ctx, root, baseline, 5*time.Millisecond, 100*time.Millisecond)
-		resultChannel <- sourceWatchResult{snapshot: snapshot, err: err}
-	}()
+	// Keep real file writes and snapshots, but advance time only when the test
+	// and watcher are blocked. Scheduler delays must not turn a burst into a
+	// genuinely quiet interval before the test can perform its next write.
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchFile(t, root, "main.go", "package main\n")
+		baseline := mustSourceSnapshot(t, root)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		resultChannel := make(chan sourceWatchResult, 1)
+		const poll = 5 * time.Millisecond
+		const debounce = 100 * time.Millisecond
+		go func() {
+			snapshot, err := waitForChangedSourceSnapshot(ctx, root, baseline, poll, debounce)
+			resultChannel <- sourceWatchResult{snapshot: snapshot, err: err}
+		}()
+		synctest.Wait()
 
-	writeWatchFile(t, root, "main.go", "package main\n// first\n")
-	assertWatchStillWaiting(t, resultChannel, 35*time.Millisecond)
-	writeWatchFile(t, root, "nested/new.go", "package nested\n")
-	assertWatchStillWaiting(t, resultChannel, 35*time.Millisecond)
-	writeWatchFile(t, root, "nested/new.go", "package nested\n// final\n")
-	assertWatchStillWaiting(t, resultChannel, 70*time.Millisecond)
+		writeWatchFile(t, root, "main.go", "package main\n// first\n")
+		assertWatchStillWaiting(t, resultChannel, 35*time.Millisecond)
+		synctest.Wait()
+		writeWatchFile(t, root, "nested/new.go", "package nested\n")
+		assertWatchStillWaiting(t, resultChannel, 35*time.Millisecond)
+		synctest.Wait()
+		writeWatchFile(t, root, "nested/new.go", "package nested\n// final\n")
+		lastChange := time.Now()
+		assertWatchStillWaiting(t, resultChannel, 70*time.Millisecond)
 
-	want := mustSourceSnapshot(t, root)
-	select {
-	case result := <-resultChannel:
-		if result.err != nil {
-			t.Fatal(result.err)
+		want := mustSourceSnapshot(t, root)
+		select {
+		case result := <-resultChannel:
+			if result.err != nil {
+				t.Fatal(result.err)
+			}
+			if result.snapshot != want {
+				t.Fatal("watch returned a stale snapshot from within the change burst")
+			}
+			if elapsed := time.Since(lastChange); elapsed < debounce || elapsed > debounce+poll {
+				t.Fatalf("watch returned %s after final change, want %s to %s", elapsed, debounce, debounce+poll)
+			}
+		case <-ctx.Done():
+			t.Fatal("watch did not return after source became quiet")
 		}
-		if result.snapshot != want {
-			t.Fatal("watch returned a stale snapshot from within the change burst")
-		}
-	case <-ctx.Done():
-		t.Fatal("watch did not return after source became quiet")
-	}
+	})
 }
 
 func TestWaitForChangedSourceSnapshotHonorsCancellation(t *testing.T) {
