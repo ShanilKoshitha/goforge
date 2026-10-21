@@ -1498,3 +1498,36 @@ introducing a parallel abstraction.
 Reason: a numbered feature list neither establishes product completeness nor
 proves operational readiness. Keep the release runway and evidence visible,
 without adding speculative parity features to a closed milestone.
+
+## D050 — Scale resource browsing without abandoning plain HTML forms
+
+**Status:** accepted design — 2026-10-21; implementation pending acceptance
+
+v0.22 replaces the generated form's hard 100-choice failure with bounded,
+owner-scoped search pages and an independent authorized selected-value lookup.
+Refreshes post the entire form through an explicit allowlisted non-mutating
+intent, retaining dirty values, validation correction, and optimistic versions.
+Save also requires an explicit intent; absence must never fall through to a
+write during implicit search-field submission.
+CSRF, operation authorization, scoped member lookup, and database write
+constraints remain authoritative. Do not persist drafts or put unsaved fields
+into GET links. JSON indexes share the typed resource browse contract; an AJAX
+choice endpoint is not required for the no-JavaScript workflow.
+
+Literal case-insensitive contains search is a fixed typed ORM predicate, not a
+caller-provided SQL operator/pattern. Resolve useful display/search fields at
+generation time only when explicitly declared choice-safe, include IDs in
+bounded labels, and retain exact-ID reachability. Default to ID-only rather
+than inferring a potentially private target field. Sort
+keys map to generated typed descriptors with ID tie-breaking and documented
+PostgreSQL null ordering. Limits bound results, not scanned database work.
+
+New source contracts require format 16; previously generated source remains
+human-owned and older registry/controller contracts remain unchanged. Publish
+and verify any added runtime API before generated applications pin it. Written
+scope and measurable gates are in MILESTONE_0.22.md; none is accepted merely
+because its baseline or one helper test passes.
+
+Reason: normal data growth must not disable create/edit, and adding search must
+not trade away form recovery, authorization, ordinary Go, or a reproducible
+public installation path.

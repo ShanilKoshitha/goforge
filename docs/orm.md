@@ -103,6 +103,31 @@ query := store.Invoices().Select().Where(
 Import `github.com/ShanilKoshitha/goforge/orm` for the `orm` identifiers in
 this guide.
 
+### Literal case-insensitive contains (v0.22 runtime candidate)
+
+`ContainsFold` accepts literal user text, unlike `Like`, whose argument is an
+application-owned SQL pattern:
+
+```go
+query := store.Invoices().Select().Where(
+	orm.ContainsFold(models.InvoiceColumns.Number, "invoice_100%"),
+)
+```
+
+It binds `%invoice!_100!%%` as a parameter and emits a fixed
+`ILIKE ... ESCAPE '!'` predicate. Percent, underscore, exclamation, and backslash
+are literal data; no supplied text becomes SQL. Matching follows PostgreSQL's
+case/collation rules, not locale-independent Go folding. Leading-wildcard
+searches can scan many rows; a result limit is not a query-cost guarantee.
+
+Use `ContainsFoldNullable` for a `Column[Model, *string]`. Both helpers also
+support named string types (and pointers to named strings). SQL NULL does not
+match; an empty literal matches non-NULL strings. Application transport code
+should validate search size/text policy and omit an empty-search predicate when
+it means "no filter." Existing `Like` behavior is unchanged. These are candidate
+runtime APIs; generated applications still pin the last published runtime until
+the runtime-first release is verified.
+
 ### Count and exists
 
 `Count` and `Exists` use the same visible filter. Ordering, pagination, and row

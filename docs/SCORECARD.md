@@ -1,3 +1,31 @@
+# v0.22 resource browsing and relationship selection scorecard
+
+Status: **baseline established; implementation in progress** — 2026-10-21.
+
+Acceptance is defined in [MILESTONE_0.22.md](MILESTONE_0.22.md). No v0.22
+capability or public release is accepted yet.
+
+| Gate | Current evidence |
+| --- | --- |
+| Runnable generator baseline | Native `go test ./internal/cli -run '^(TestFormatFifteenGeneratesAccessibleRecoverableResourceForms\|TestFormatsEightThroughFourteenRetainLegacyResourceGeneration)$' -count=1` passed in 4.709s |
+| Runnable public application baseline | The public v0.21.1 CLI's no-replace format-15 `example.com/releasedv0211` application passed `go test ./... -count=1`; Category, Ticket, and legacy resource tests passed |
+| Scale gap confirmed | Generated repository tests explicitly expect `ErrAssociationChoicesOverflow` above 100 related rows; browser rendering maps that state to 409 |
+| Runtime helper | `ContainsFold`/`ContainsFoldNullable` implemented; `go test ./orm/...` and independent `go test -race ./orm/... -count=1` plus vet passed; actual PostgreSQL execution is pending because the local database URL is unset |
+| Fresh candidate application | Native candidate CLI generated format 15 with Category, related Ticket, and legacy resource against a local runtime replacement; artifact checks, `forge test`, vet, and `forge build` passed; inspected module pin, scoped forms, and ordinary compiled views |
+| Implementation boundary | Generator/browser contracts remain unchanged; format-16 generation has not started |
+| Independent review and two complete passes | Pending; baseline tests are not v0.22 acceptance |
+
+Read-only data and developer-workflow inventories identified the existing typed
+query, scope, selected-value, and version boundaries. The milestone preserves
+plain HTML editing and application-owned Go, and requires explicit format gating
+and mandatory runtime-first publication of the search API. See D050.
+
+The acceptance contract passed adversarial review after resolving target-field
+disclosure, implicit-save intents, exact filter/transport behavior, presentation
+state, hostile input, and label-size limits. Independent runtime review found
+no P0–P2 issue. These reviews do not substitute for the pending real database
+and complete two-pass qualification gates.
+
 # v0.21 component attributes and accessible forms scorecard
 
 Status: **accepted** — v0.21.0 runtime and v0.21.1 format-15 adoption published; public distribution verified — 2026-10-21
