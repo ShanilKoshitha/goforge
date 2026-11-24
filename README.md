@@ -6,19 +6,16 @@ Go, SQL, and templates that you own and can edit.
 
 **[Quick Start](docs/quick-start.md)** · **[Documentation](docs/index.md)**
 
-## What you can build
+## Guides
 
-- Web apps and APIs with explicit `net/http` routing, authentication, and
-  CSRF-protected forms.
-- PostgreSQL-backed features with paired SQL migrations, typed queries, and
-  generated CRUD for browser and JSON clients.
-- Background workflows with durable jobs, retries, and recurring schedules.
+- [Build routes, forms, and authenticated CRUD](docs/building-an-app.md)
+- [Write typed PostgreSQL queries](docs/orm.md)
+- [Run background jobs](docs/jobs.md) and [schedule recurring work](docs/schedules.md)
+- [Look up Forge commands](docs/cli.md)
 
 ## Release and contribution
 
-GoForge is pre-v1. CLI v0.23.1 generates format-17 applications that use GoForge
-runtime v0.23.0. See the [v0.23.1 release](https://github.com/ShanilKoshitha/goforge/releases/tag/v0.23.1)
-and [release history](docs/release-history.md).
+GoForge is pre-v1. See [Releases and compatibility](docs/release-history.md).
 
 See [Contributing](CONTRIBUTING.md) for repository setup and verification
 and [Security](SECURITY.md) for reporting vulnerabilities.

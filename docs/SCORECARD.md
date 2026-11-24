@@ -2779,3 +2779,6 @@ P2 findings were fixed before the final two runs above.
 Docker was unavailable in the verification environment. The application flow
 used a disposable native PostgreSQL instance on loopback. The Compose services
 and Mailpit delivery were outside that live run.
+
+The README now links directly to the application, ORM, jobs, schedules, CLI,
+and release guides. All ten README links resolve to tracked repository files.
