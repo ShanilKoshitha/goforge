@@ -1627,3 +1627,18 @@ and database snapshots; the proof completed exact owned-schema cleanup and
 process-environment restoration. The scorecard retains intermediate failures
 and the unidentified Windows filesystem boundary without claiming that a
 successful proof establishes general host reliability.
+
+## D052 — Put the first application workflow in Quick Start
+
+**Status:** accepted — 2026-11-24
+
+The root README introduces GoForge and links to a documentation home. Quick
+Start follows one format-17 application from installing the released CLI through
+creating a signed-in Issue and building the server. It uses the generated
+Compose services and an explicit typed field so readers see the current resource
+workflow. The application guide builds on that example.
+
+Use repository Markdown for the documentation so readers can follow it in
+GitHub or a local checkout. Keep command contracts in the CLI reference and
+historical changes in the release history. The scorecard and milestone documents
+continue to record acceptance evidence.

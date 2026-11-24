@@ -2764,3 +2764,18 @@ Final verification also passed `go test -race ./...`, `go vet ./...`, and
 passed `go test ./...`, `go vet ./...`, and builds of both generated commands.
 Independent architecture review reported no P0 or P1 blockers; its remaining
 P2 findings were fixed before the final two runs above.
+
+# Documentation quick start — 2026-11-24
+
+| Check | Result |
+| --- | --- |
+| Documentation navigation | Reduced the root README from 424 to 24 lines and checked relative links and heading anchors across the entry pages, application guide, and new reference pages. |
+| Released CLI and installer URL | Downloaded the exact tagged PowerShell script and installed v0.23.1 with the documented Go command. The installed binary reported `forge 0.23.1`. |
+| Fresh application | Generated a format-17 app without a module replacement and inspected its Issue model, both controllers, authorization, migration, and views. Compose configuration validated. |
+| Quick Start app flow | Applied the migrations on disposable PostgreSQL 18. `forge dev` reported all three services ready. Exercised registration and Issue creation through the browser routes and confirmed the watched server served the edited Issue heading. `forge test` and `forge build` passed. |
+| Application guide examples | Generated the documented Reports controller and request, Task resource, and relationship resources. Generated package tests passed. The Reports routes returned the documented 200, 400, 415, and 422 responses. |
+| Framework checks | Focused scaffold, generator, and command tests passed. `git diff --check` passed. |
+
+Docker was unavailable in the verification environment. The application flow
+used a disposable native PostgreSQL instance on loopback. The Compose services
+and Mailpit delivery were outside that live run.

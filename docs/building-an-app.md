@@ -1,19 +1,19 @@
 # Building an application
 
-Create a PostgreSQL application with `forge new`. The generated server loads
-typed settings, connects through pgx's visible `database/sql` adapter, constructs
-the application explicitly, installs middleware, and registers routes.
+Use this guide to add features to the PostgreSQL application you created in the
+[Quick Start](quick-start.md). Run the commands from the application directory.
 
-The generated `.env` targets the PostgreSQL service in `compose.yaml` and contains
-a unique local session secret. Start that service explicitly when needed:
-
-```sh
-docker compose up -d
-```
+- Add [routes](#add-an-endpoint), [CRUD resources](#generate-an-authenticated-crud-resource),
+  [input validation](#validate-input), and [migrations](#migrations).
+- Build browser features with [resource browsing](#browse-resources-and-select-relationships-at-scale),
+  [views](#render-views), [assets](#ship-frontend-assets), and [sessions](#sessions).
+- API clients use [personal API tokens](#authenticate-a-machine-client).
+- Run [diagnostics](#inspect-without-repairing), [tests and builds](#test-and-build),
+  and [background jobs](#run-durable-background-work).
 
 ## Inspect without repairing
 
-Format-17 applications from the v0.23.1 adoption candidate own `cmd/diagnostics`
+Format-17 applications from the v0.23.1 release own `cmd/diagnostics`
 and `internal/diagnostics`. Run `forge doctor` to collect independent safe
 configuration, database/migration, ORM, view, and asset verdicts without changing
 the application. Run `forge routes:list` to inspect the actual constructed router,
@@ -24,114 +24,118 @@ boundaries, and explicit application-owned replacement seams.
 
 ## Add an endpoint
 
-Generate a controller:
+Generate a controller for a reports endpoint.
 
 ```sh
-forge make:controller Users
+forge make:controller Reports
 ```
 
-Edit `internal/http/controllers/users_controller.go`, inject dependencies into
-`NewUsersController`, and add the route in `routes/routes.go`:
+In `routes/routes.go`, add these two lines inside `Register`, alongside the
+built-in `/health` route.
 
 ```go
-users := controllers.NewUsersController(repository)
-router.GET("/users", users.Index)
+reports := controllers.NewReportsController()
+router.GET("/reports", reports.Index)
 ```
 
-That explicit line is intentional: it is searchable, checked by the compiler,
-debuggable without framework tooling, and trivial to replace.
+Open `http://localhost:8080/reports` when the development server is running. The
+generated `Index` in `internal/http/controllers/reports_controller.go` returns
+`{"data":[]}`. To load reports from your own data source, pass the dependency to
+`NewReportsController` and call it in `Index`.
+
+### Follow a request through the application
+
+The server wires the application together once at startup.
+
+```text
+cmd/server/main.go
+  -> internal/config.Load()       reads typed environment settings
+  -> internal/database.Open()     opens PostgreSQL through database/sql and pgx
+  -> internal/application.New()   constructs the application and middleware
+  -> routes.Register()            registers handlers on the router
+```
+
+For each request, the router matches the method and path, runs the applicable
+middleware, and calls the registered handler. The controller uses
+`*httpx.Context` to read the request and write the response.
 
 ## Generate an authenticated CRUD resource
 
-```sh
-forge make:resource Issue
-```
-
-This creates an application-owned vertical slice under
-`internal/resources/issue`: model, owner-scoped PostgreSQL repository, request
-validation, JSON and browser controllers, controller tests, and paired SQL
-migration. It also creates `.forge.html` index, new, show, edit, and shared form
-templates under `resources/views/pages/issues` and regenerates the clearly
-marked route and compiled-view registries. Human-owned files are preflighted and
-never overwritten.
-
-Fresh format-13 through format-17 resources also contain `authorization.go`. Its
-typed `AuthorizeFunc` handles list, create, view, update, and delete decisions
-for both controllers. The generated function grants owner access for every known action;
-return `AccessAll` for a deliberate privileged action or `AccessDenied` to stop
-an authenticated action with HTTP 403. The controller derives the repository
-scope from the authenticated user, and update/delete apply it in their SQL rather
-than trusting a prior fetch. Unknown decisions and invalid scopes fail closed.
-The policy, route injection, repository predicates, and tests are ordinary
-application Go and can be edited or replaced directly.
-
-Run the generated migrations and development server through the project
-commands:
+Generate an authenticated browser and JSON resource with explicit fields.
 
 ```sh
+forge make:resource Task --field title:string --field notes:text:nullable --field priority:integer --field active:boolean
 forge migrate
-forge dev
 ```
 
-`forge migrate` delegates to the application-owned console. Format-11 through
-format-17
-`forge dev` starts the watched HTTP server, durable queue worker, and recurring
-scheduler together. It labels each service's output and reports the stack ready
-only after all three existing startup signals succeed. Any unexpected service
-exit stops its peers, and Ctrl-C waits for the complete owned process tree.
+The model lives in `internal/models/task.go`. Open `internal/resources/task` to
+edit the owner-scoped PostgreSQL repository, requests, JSON and browser
+controllers, and controller tests. Edit browser pages and forms in
+`resources/views/pages/tasks` and SQL in `database/migrations`. The CLI checks
+for existing files before generation and updates the route and compiled-view
+registries.
 
-`forge serve` remains the HTTP-only development command. It
-compiles views with the application's own function map, stages an ordinary Go
-server binary outside the repository, and keeps one public address while it
-watches Go, `.forge.html`, SQL, module, environment, project-manifest, and every
-regular format-12-or-newer file below `resources/assets/files`. Eligible full HTML browser pages carry a development-only same-origin
-client and reload automatically after a valid replacement is completely
-committed. Failed edits leave the last-good page and server in place. The proxy
-does not rewrite compressed, streamed, ranged, downloadable, `no-transform`,
-or non-document responses.
+With `forge dev` running, register at `/register` or sign in at `/login`, then
+open `/app/tasks`. The JSON API uses separate `/auth/*` and `/tasks` routes.
+See the [development commands](cli.md#development).
 
-A broken view or Go edit prints its normal diagnostic while the last-good
-server remains reachable. Correcting the source rebuilds automatically. View
-compilation is serialized with generators, stable edit bursts converge on the
-newest source, and Ctrl-C stops every owned process. `go run ./cmd/server`
-remains the exact one-shot escape hatch when watching or the development proxy
-does not fit.
+### Choose fields and relationships
 
-`forge dev` does not start Compose/PostgreSQL/Mailpit, apply migrations,
-generate a stale ORM artifact, change `.env`, or run a hidden frontend build. Its
-browser reload client exists only at the development proxy; generated source
-and production binaries remain unchanged. Worker and scheduler source or
-registry changes require restarting `forge dev`; the server retains its
-last-good hot replacement loop.
-Candidate promotion checks `/health` liveness;
-`/ready` continues to report PostgreSQL and exact migration readiness. A changed
-migration may therefore leave `/ready` at 503 until you run `forge migrate`.
-Run those operations explicitly.
+Repeat `--field` in the order you want the fields to appear. Each field uses
+`<name>:<string|text|integer|boolean>[:required|nullable]` and defaults to
+`required`. With any explicit field, the generated JSON and browser update
+handlers require a positive optimistic `version`. A stale version returns HTTP
+409. Sending an update replaces all writable fields. Missing, null, or empty
+nullable inputs clear the column to SQL `NULL`, while `0` and `false` are values.
+Running `make:resource` with no field or relationship flags generates a single
+required `name:string` field with backward-compatible versionless updates.
 
-Candidate listener ownership is checked without extra tools on Linux and
-Windows, and with the system `lsof` on macOS and other supported Unix targets.
-If `lsof` is unavailable on those targets, use `go run ./cmd/server` directly.
+For a resource that needs a required owner-scoped relationship, generate its
+target first. Format 10 and later support this example.
 
-Register at `/register`, sign in at `/login`, and use the generated browser
-resource at `/app/issues`. Existing JSON endpoints remain at `/auth/*` and
-`/issues`; handlers do not silently switch behavior based on content negotiation.
+```sh
+forge make:resource Team --field name:string
+forge make:resource Project --field title:string --belongs-to team:Team
+forge migrate
+```
+
+The generated Go code owns the foreign key, validation, eager loading, and form
+choices. The migration enforces the owner and target together with a composite
+foreign key. Field and relationship flags are used once during generation. To
+change the result, edit the generated Go, SQL, and templates in your application.
+For persistence without HTTP routes, see the [typed ORM guide](orm.md).
+
+### Customize who can access a resource
+
+Resources generated in formats 13 through 17 include `authorization.go`.
+`Authorize` defaults to `AccessOwner` for the typed list, create, view, update,
+and delete actions. Return `AccessAll` for an authorized action across owners or
+`AccessDenied` to stop an authenticated action with HTTP 403 before repository
+work. For owner-scoped actions, missing and cross-owner records both return
+404. Update and delete queries apply the validated scope in their SQL predicates.
+
+Edit `Authorize` to keep the generated route wiring. Both controllers receive
+the same `AuthorizeFunc` through `routes/resources_gen.go`. You can also wire
+your own controller or policy in an application-owned route registration.
+
+### Page through JSON results
+
+Formats 10 through 17 paginate resource indexes such as `GET /tasks`. The
+defaults are `page=1&per_page=20`, with a maximum page of 10,000 and a maximum
+size of 100. Each parameter accepts one positive integer. Responses include
+`data` and a `pagination` object with `page`, `per_page`, `has_previous`, and
+`has_next`. Formats 8 and 9 keep their original complete-list JSON contract.
 
 ## Browse resources and select relationships at scale
 
-These examples target fresh format-16 applications generated by v0.22.1 and
-pinned to the verified public v0.22.0 runtime. The earlier v0.22.0 runtime-first
-CLI still generates format 15; these examples do not upgrade an existing
-application. See the [milestone criteria](MILESTONE_0.22.md) and
-[scorecard](SCORECARD.md) for acceptance and public distribution evidence.
-
-Format 16 adds paginated relationship choices with an ID-only default.
+Formats 16 and 17 add paginated relationship choices with an ID-only default.
 Declare a target field explicitly when it is safe to expose its text through
-the source resource's create/edit forms:
+the source resource's create and edit forms.
 
 ```sh
 forge make:resource Category --field title:string
-forge make:resource Ticket --field title:string --field notes:text:nullable \
-  --belongs-to category:Category --choice-label category:title
+forge make:resource Ticket --field title:string --field notes:text:nullable --belongs-to category:Category --choice-label category:title
+forge migrate
 ```
 
 `--choice-label category:title` permits actors authorized to create or edit a
@@ -211,13 +215,7 @@ public selector and SHA-256 digest. Read the
 [personal API token guide](api-tokens.md) for lifecycle, revocation, and
 replacement seams.
 
-Fresh format-10 through format-17 JSON resource indexes are bounded and paginated. `GET /issues`
-defaults to `page=1&per_page=20`; each parameter must appear at most once and be
-a positive integer. Page numbers are capped at 10,000 and page sizes at 100.
-The response is `{"data": [...], "pagination": {"page": 1, "per_page": 20,
-"has_previous": false, "has_next": false}}`. Formats 8 and 9 retain their
-original complete-list JSON contract. Format 16 adds the filtering and sorting
-contract described in the browsing section above.
+## Render views
 
 GoForge compiles layouts, sections, includes, static components, strict props
 and slots, control directives, page-local stacks, and explicit form helpers into
@@ -283,48 +281,11 @@ forge test
 forge build
 ```
 
-Both commands in this checkout support project formats 4 through 17 and accept
-no arguments; the public v0.23.0 runtime-first CLI supports formats 4 through 16. They
-first check `internal/models/zz_orm_gen.go`, then
-`resources/views/views_gen.go`, and for format 12 or newer the embedded asset inventory,
-without rewriting application files. A missing, stale, or invalid input stops
-before tests or compilation and reports the explicit repair or check command.
-
-After preflight, `forge test` executes exactly:
-
-```sh
-go test ./...
-```
-
-`forge build` compiles `./cmd/server` with `-trimpath` into a temporary file and
-publishes it only after success as `bin/app` on Unix or `bin/app.exe` on Windows.
-A failed or cancelled build leaves any existing canonical binary byte-identical.
-
-Nothing prevents using the underlying tools directly. The equivalent explicit
-checks and commands are:
-
-```sh
-forge orm:generate --check
-forge views:compile --check
-forge assets:check
-go test ./...
-go build -trimpath -o bin/app ./cmd/server
-go build -trimpath -o bin/scheduler ./cmd/scheduler
-go run ./cmd/server
-go run ./cmd/scheduler --once
-```
-
-Use direct `go test` or `go build` for custom packages, flags, build tags,
-targets, cross-compilation, or output paths. Build the generated worker with
-`go build -trimpath -o bin/worker ./cmd/worker`, the scheduler with `go build
--trimpath -o bin/scheduler ./cmd/scheduler`, and the console with `go build
--trimpath -o bin/console ./cmd/console` when those deployment processes are
-needed.
-
-Test and build do not start services, provision a database, change `.env`, or
-apply migrations. Run `docker compose up -d` and `forge migrate` explicitly when
-the application workflow requires them. Browser LiveReload/HMR, frontend asset
-compilation, and environment diagnosis remain separate milestones.
+Both commands check the generated ORM, compiled views, and embedded assets
+before running. If a check fails, follow the repair command printed by the CLI
+and retry. The server binary is written to `bin/app` or `bin/app.exe` on
+Windows. For additional build targets and direct Go commands, see
+[Test and build in the CLI reference](cli.md#test-and-build).
 
 ## Run durable background work
 
@@ -348,23 +309,38 @@ default. The worker, migration, registry, dispatcher, store, and observer all
 remain visible and replaceable. See [durable jobs](jobs.md) for policy,
 configuration, failure behavior, observability, and escape hatches.
 
+To dispatch jobs on a recurring timetable, define them in the application’s
+`internal/schedules/registry.go`. See the [scheduling guide](schedules.md).
+
 ## Validate input
 
-Generate a request and bind JSON in the controller:
+Generate a request for a handler that expects a report name.
 
-Clients must send `Content-Type: application/json` (parameters such as
-`charset=utf-8` are accepted). Missing or other media types receive HTTP 415;
-invalid JSON receives HTTP 400, and validation errors receive HTTP 422.
+```sh
+forge make:request CreateReport
+```
+
+Import your application's `internal/http/requests` package in the reports
+controller from [Add an endpoint](#add-an-endpoint), then add this method.
 
 ```go
-var request requests.CreateUserRequest
-if err := ctx.BindJSON(&request); err != nil {
-    return err
-}
-if errors := request.Validate(); !errors.Empty() {
-    return httpx.NewHTTPError(422, "validation failed").WithDetails(errors)
+func (controller *ReportsController) Preview(ctx *httpx.Context) error {
+    var request requests.CreateReportRequest
+    if err := ctx.BindJSON(&request); err != nil {
+        return err
+    }
+    if problems := request.Validate(); !problems.Empty() {
+        return httpx.NewHTTPError(http.StatusUnprocessableEntity, "validation failed").WithDetails(problems)
+    }
+    return ctx.JSON(http.StatusOK, map[string]string{"name": request.Name})
 }
 ```
+
+Register `router.POST("/reports/preview", reports.Preview)` beside the GET
+route. A request with `Content-Type: application/json` and a body such as
+`{"name":"Quarterly report"}` returns the validated name. Missing or unsupported
+media types receive HTTP 415. Malformed JSON receives HTTP 400, and invalid
+field values receive HTTP 422.
 
 ## Change the HTTP stack
 
@@ -374,20 +350,34 @@ helpers are conveniences, not a required host.
 
 ## Migrations
 
-Migration files are paired and ordered:
+Generate a migration with `forge make:migration create_orders` and edit the
+resulting `.up.sql` and `.down.sql` files in `database/migrations`. The prefix
+determines the order.
 
 ```text
 20260904120000_create_orders.up.sql
 20260904120000_create_orders.down.sql
 ```
 
-Embed the directory and construct `migrate.Migrator` with the application's
-`*sql.DB`. Generated v0.3 applications explicitly import pgx's `database/sql`
-adapter, so the selected driver remains visible in `go.mod` and
-`internal/database/database.go`; replace that ordinary code to choose a different
-driver.
+Run `forge migrate` to apply the forward migrations. The application's console
+uses `database/migrations/embed.go` and passes the application's `*sql.DB` to
+the migrator. See `internal/database/database.go` for the pgx adapter and
+connection setup.
 
 ## Sessions
+
+The scaffold's browser routes use PostgreSQL-backed sessions and protect HTML
+form submissions with CSRF tokens. Users can change their password or revoke
+sessions from `/settings/security`. JSON clients can use `PUT /auth/password`
+or `POST /auth/logout-all` with a signed-in session. Password changes revoke
+prior sessions across processes. Configure the inactivity and hard deadlines
+with `SESSION_IDLE_LIFETIME` and `SESSION_ABSOLUTE_LIFETIME` in `.env`.
+
+To exercise account recovery locally, run `forge dev`, submit the form at
+`/forgot-password`, then open Mailpit at `http://localhost:8025` to follow the
+reset link. The generated worker delivers the message through the durable mail
+outbox. The routes, controllers, and templates live in `routes/routes.go`,
+`internal/http/controllers/password_recovery.go`, and `resources/views/auth`.
 
 `session.Manager` keeps data in an explicit `session.Store`; the browser receives
 only a cryptographically signed random ID. Use `session.MemoryStore` for local
@@ -402,8 +392,8 @@ development must opt out explicitly with `UnsafeAllowHTTP`.
 
 Generated applications use the visible PostgreSQL session adapter in
 `internal/auth/session_store.go`. Registration and login rotate the signed random
-session ID; resource routes are wrapped with the explicit auth middleware and
-repositories scope every query by the authenticated user ID.
+session ID. Auth middleware in `routes/routes.go` protects the resource routes,
+and resource policies determine the database scope for an authenticated actor.
 
 Session writes prune up to 100 expired rows, including abandoned sessions. An
 expired session presented by a client is also removed on access.
