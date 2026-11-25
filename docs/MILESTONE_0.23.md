@@ -1,6 +1,6 @@
 # v0.23 read-only diagnosis and application inventory
 
-Status: **public runtime verified; format-17 adoption implementation in qualification** — 2026-10-21.
+Status: **accepted** — v0.23.0 runtime and v0.23.1 format-17 adoption published; public distribution verified — 2026-10-21.
 
 ## Runnable baseline
 
@@ -38,14 +38,16 @@ build-tool nonmutation boundary, and deliberately control Go flags and output
 targets. Direct compiler output retains ordinary Go
 behavior; application diagnostic reports themselves never echo raw errors.
 
-Fresh applications will introduce format 17 only after any new runtime APIs
+Fresh applications introduce format 17 only after the new runtime APIs
 are publicly available with verified checksums. Existing applications are not
 rewritten; older formats receive an explicit unsupported-command explanation.
 Runtime-first preparation retained format 16 while explicit candidate fixtures
 qualified the new scaffold. Runtime v0.23.0 is now published and publicly
-verified; this checkout's v0.23.1 candidate generates format 17 with its exact
-public sums. Adoption still needs its own complete qualification and public CLI
-distribution; runtime publication alone does not accept the milestone.
+verified before v0.23.1 adopted format 17 with its exact public sums. Adoption
+passed two complete independently audited final-content matrices and a fresh
+public installer/no-replace application proof. Runtime publication alone was
+not acceptance. Final evidence and retained failures are in the
+[scorecard](SCORECARD.md).
 
 ## Measurable acceptance criteria
 
